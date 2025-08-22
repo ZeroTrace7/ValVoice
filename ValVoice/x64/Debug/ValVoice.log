@@ -1,0 +1,9 @@
+﻿  ValVoice.cpp
+C:\Users\HP\source\repos\ValVoice\Resource.h(71,9): warning C4005: 'IDC_NARRATOR_VOICE_COMBO': macro redefinition
+  (compiling source file 'ValVoice.cpp')
+      C:\Users\HP\source\repos\ValVoice\Resource.h(44,9):
+      see previous definition of 'IDC_NARRATOR_VOICE_COMBO'
+  
+C:\Users\HP\source\repos\ValVoice\ValVoice.cpp(656,18): warning C4267: 'argument': conversion from 'size_t' to 'DWORD', possible loss of data
+C:\Users\HP\source\repos\ValVoice\ValVoice.cpp(655,18): warning C4267: 'argument': conversion from 'size_t' to 'DWORD', possible loss of data
+  ValVoice.vcxproj -> C:\Users\HP\source\repos\ValVoice\x64\Debug\ValVoice.exe
