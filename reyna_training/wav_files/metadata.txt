@@ -198,33 +198,33 @@ Reyna_197|reyna|Needs Scouting.
 Reyna_198|reyna|Gun hear.
 Reyna_199|reyna|Spikes Spotted.
 Reyna_200|reyna|See nothing.
-Reyna_201|reyna|mhm-
+Reyna_201|reyna|Agh!
 Reyna_202|reyna|Not ready yet.
-Reyna_203|reyna|finished.
+Reyna_203|reyna|Finished.
 Reyna_204|reyna|Yes.
 Reyna_205|reyna|Take control.
 Reyna_206|reyna|Hush!
 Reyna_207|reyna|Those fools just wasted their advantage.
-Reyna_208|reyna|pathetic.
-Reyna_209|reyna|burnt resist.
+Reyna_208|reyna|Pathetic.
+Reyna_209|reyna|Don't resist.
 Reyna_210|reyna|You're nothing.
 Reyna_211|reyna|Rotating.
-Reyna_212|reyna|ah
+Reyna_212|reyna|Ah
 Reyna_213|reyna|Oh.
 Reyna_214|reyna|The enemy only looks composed. Their hearts tell a different story.
 Reyna_215|reyna|Yes.
-Reyna_216|reyna|
+Reyna_216|reyna|Ugh!
 Reyna_217|reyna|What do you need?
 Reyna_218|reyna|Forgive me.
 Reyna_219|reyna|We win, we survive.
-Reyna_220|reyna|have stood over so many corpses. A few more does not matter.
+Reyna_220|reyna|I have stood over so many corpses. A few more does not matter.
 Reyna_221|reyna|I'm taking point.
 Reyna_222|reyna|Die!
-Reyna_223|reyna|Gonna hear.
+Reyna_223|reyna|Gonna here.
 Reyna_224|reyna|more, more!
 Reyna_225|reyna|Thank you.
 Reyna_226|reyna|Neared this rubbed.
-Reyna_227|reyna|there.
+Reyna_227|reyna|There.
 Reyna_228|reyna|Oh, do your little machines need help? Take your time. We radiant as we'll start without you.
 Reyna_229|reyna|Who's the hunter now?
 Reyna_230|reyna|Return to me!
@@ -234,70 +234,70 @@ Reyna_233|reyna|HAHAHAHA
 Reyna_234|reyna|push forward.
 Reyna_235|reyna|For dead.
 Reyna_236|reyna|Need help.
-Reyna_237|reyna|Carnivation!
+Reyna_237|reyna|Cutting their vision.
 Reyna_238|reyna|Reloading.
 Reyna_239|reyna|Hola
 Reyna_240|reyna|I'm watching here.
 Reyna_241|reyna|We are ready for them.
-Reyna_242|reyna|I have this bike.
-Reyna_243|reyna|Glit them dry.
-Reyna_244|reyna|They're just playing hard to get. All right, I'll play.
+Reyna_242|reyna|I have the Spike.
+Reyna_243|reyna|Bleed them dry.
+Reyna_244|reyna|They're Jet playing hard to get. All right, I'll play.
 Reyna_245|reyna|por mis rabel criaturas.
 Reyna_246|reyna|going to be.
 Reyna_247|reyna|saving.
 Reyna_248|reyna|You're done.
 Reyna_249|reyna|Hola
 Reyna_250|reyna|I'm watching here.
-Reyna_251|reyna|It's backdroped.
-Reyna_252|reyna|It will immediately be done.
+Reyna_251|reyna|Spiked droped.
+Reyna_252|reyna|Pikaboo.
 Reyna_253|reyna|I get what I want.
-Reyna_254|reyna|to this sub-bind me.
+Reyna_254|reyna|You Disapoint me.
 Reyna_255|reyna|going mid.
 Reyna_256|reyna|Adios.
 Reyna_257|reyna|impressive
 Reyna_258|reyna|Never saw me.
-Reyna_259|reyna|Brush them.
+Reyna_259|reyna|Rush them.
 Reyna_260|reyna|All mine!
-Reyna_261|reyna|help you
+Reyna_261|reyna|Need help! 
 Reyna_262|reyna|My reflection is here. Do my favor, Ganinho? Kill her.
 Reyna_263|reyna|Return!
-Reyna_264|reyna|enemy spotted.
-Reyna_265|reyna|Let the wave in X.
+Reyna_264|reyna|Enemy spotted.
+Reyna_265|reyna|Light the wave Phoenix.
 Reyna_266|reyna|Hola
-Reyna_267|reyna|Bye.
-Reyna_268|reyna|other rush
-Reyna_269|reyna|exp 많이 dense pecs butod
+Reyna_267|reyna|Buying.
+Reyna_268|reyna|Agh! the rush
+Reyna_269|reyna|Spike spotted.
 Reyna_270|reyna|I'm the last thing they'll see before they die. Lucky them.
-Reyna_271|reyna|My else not ready.
+Reyna_271|reyna|My ult not ready.
 Reyna_272|reyna|Rotating.
-Reyna_273|reyna|Ei!
+Reyna_273|reyna|A!
 Reyna_274|reyna|going B.
 Reyna_275|reyna|rotating.
-Reyna_276|reyna|Trump installed me!
-Reyna_277|reyna|My old ready.
-Reyna_278|reyna|W how?
+Reyna_276|reyna|Dont't insult me!
+Reyna_277|reyna|My Ult is ready.
+Reyna_278|reyna|Ugh?
 Reyna_279|reyna|Never saw me.
 Reyna_280|reyna|on my way.
 Reyna_281|reyna|Don't rush me.
-Reyna_282|reyna|Не отговор.
+Reyna_282|reyna|Need cover.
 Reyna_283|reyna|You see, they're flood or the nary.
 Reyna_284|reyna|Don't be cheap. Spend it all before it's gone.
 Reyna_285|reyna|You disappoint me.
-Reyna_286|reyna|Color! Brun!
-Reyna_287|reyna|I have this bike.
+Reyna_286|reyna|Coword! Run!
+Reyna_287|reyna|I have this Spike.
 Reyna_288|reyna|Let's rotate.
 Reyna_289|reyna|I'm taking point.
-Reyna_290|reyna|Insegta.
-Reyna_291|reyna|ゴインエイ!
+Reyna_290|reyna|Insecto.
+Reyna_291|reyna|Going A!
 Reyna_292|reyna|The hunt begins!
-Reyna_293|reyna|spectrapt
+Reyna_293|reyna|Spike dropped.
 Reyna_294|reyna|Thank you.
 Reyna_295|reyna|Play for a fix.
 Reyna_296|reyna|Ugh.
 Reyna_297|reyna|need help.
 Reyna_298|reyna|Don't insult me.
 Reyna_299|reyna|Ugh.
-Reyna_300|reyna|MOR! MOR!
+Reyna_300|reyna|MORE! MORE!
 Reyna_301|reyna|Oh.
 Reyna_302|reyna|Oh, no.
 Reyna_303|reyna|It's nothing.
