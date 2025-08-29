@@ -35,6 +35,9 @@
 #define IDC_SETTINGS_IGNORE_ADD         2007
 #define IDC_SETTINGS_IGNORE_LIST        2008
 #define IDC_SETTINGS_SYNC_BTN           2009
+#define IDC_SETTINGS_API_KEY            2010
+#define IDC_SETTINGS_API_KEY_LABEL      2011
+#define IDC_SETTINGS_TEST_TTS          2012
 
 // ---------------------------
 // Narrator UI Controls
