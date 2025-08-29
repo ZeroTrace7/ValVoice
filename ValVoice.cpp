@@ -1,4 +1,4 @@
-﻿#include "framework.h"
+#include "framework.h"
 
 #include "Resource.h"
 
@@ -27,7 +27,10 @@
 
 #define MAX_LOADSTRING 100
 
-
+// Control IDs
+#define IDC_SETTINGS_API_KEY            2010
+#define IDC_SETTINGS_API_KEY_LABEL      2011
+#define IDC_SETTINGS_TEST_TTS          2012
 
 // Global Variables
 HINSTANCE hInst;
@@ -49,6 +52,10 @@ HWND g_hTabDialogs[3] = { nullptr, nullptr, nullptr };
 const int g_tabDialogIds[3] = { IDD_TAB_MAIN, IDD_TAB_INFO, IDD_TAB_SETTINGS };
 
 HFONT g_hSegoeUIFont = nullptr;
+
+// Cartesia.ai Configuration
+std::string g_cartesiaApiKey = "sk_car_iA8HBqFwq5GoAE3Pc5Pykz"; // Will be loaded from settings
+std::wstring g_cartesiaVoiceId = L"cedb5081-4c32-4e5a-818f-f3b3bc0b2401"; // ReynaVoice (Cartesia)
 
 // Forward Declarations
 ATOM MyRegisterClass(HINSTANCE hInstance);
@@ -81,11 +88,21 @@ struct AgentProfile {
 };
 
 AgentProfile agents[] = {
-    { L"JetVoice",  4 },
-    { L"SovaVoice", 0 },
-    { L"BrimGuy",  -2 },
-    { L"ReynaVoice", 2 }, // Added Reyna
+    { L"ReynaVoice", 2 }
 };
+
+// Add a struct for voice mapping at the top (after AgentProfile)
+struct VoiceProfile {
+    std::wstring displayName;
+    std::wstring cartesiaVoiceId;
+};
+
+// Example: Add more voices as needed
+VoiceProfile voiceProfiles[] = {
+    { L"ReynaVoice", L"cedb5081-4c32-4e5a-818f-f3b3bc0b2401" }
+    // Add more voices here if needed
+};
+const int kVoiceCount = sizeof(voiceProfiles) / sizeof(voiceProfiles[0]);
 
 void ResetStatsIfNeeded(HWND hWnd) {
     SYSTEMTIME now;
@@ -113,12 +130,37 @@ void ExportSettingsToFile() {
     ofs.imbue(std::locale(std::locale::empty(), new std::codecvt_utf8<wchar_t>));
     ofs << L"UserID=" << g_userId << std::endl;
     ofs << L"Premium=" << (g_isPremium ? L"1" : L"0") << std::endl;
-    // Remove these lines if you remove the variables:
-    // ofs << L"VoiceSource=" << g_voiceSource << std::endl;
-    // ofs << L"MicStreaming=" << (g_micStreaming ? L"1" : L"0") << std::endl;
     ofs << L"PTTKey=" << (wchar_t)g_pttKey << std::endl;
-    // Add more settings as needed (rate, volume, etc.)
+    
+    // Add Cartesia API Key (convert to wide string)
+    std::wstring wApiKey(g_cartesiaApiKey.begin(), g_cartesiaApiKey.end());
+    ofs << L"CartesiaApiKey=" << wApiKey << std::endl;
+    
     if (ofs.is_open()) ofs.close();
+}
+
+void LoadSettingsFromFile() {
+    std::wifstream ifs(L"ValVoiceSettings.txt");
+    if (!ifs) return; // No settings file yet
+    
+    std::wstring line;
+    while (std::getline(ifs, line)) {
+        if (line.find(L"UserID=") == 0) {
+            std::wstring value = line.substr(7);
+            wcscpy_s(g_userId, value.c_str());
+        }
+        else if (line.find(L"Premium=") == 0) {
+            g_isPremium = (line.substr(8) == L"1");
+        }
+        else if (line.find(L"PTTKey=") == 0) {
+            std::wstring value = line.substr(7);
+            if (!value.empty()) g_pttKey = value[0];
+        }
+        // else if (line.find(L"CartesiaApiKey=") == 0) {
+        //     std::wstring wApiKey = line.substr(15);
+        //     g_cartesiaApiKey = std::string(wApiKey.begin(), wApiKey.end());
+        // }
+    }
 }
 
 void SaveBlockedIds() {
@@ -145,23 +187,24 @@ void SpeakFromUI(HWND hTabWnd) {
         return;
     }
 
-    // Get selected agent/voice
+    // Get selected voice index
     HWND hVoiceCombo = GetDlgItem(hTabWnd, IDC_NARRATOR_VOICE_COMBO);
     int sel = (int)SendMessage(hVoiceCombo, CB_GETCURSEL, 0, 0);
-    std::wstring agentName = (sel >= 0) ? agents[sel].name : L"";
+    if (sel < 0 || sel >= kVoiceCount) sel = 0; // Fallback to first voice
 
-    // Copy text and agent for thread safety
+    std::wstring cartesiaVoiceId = voiceProfiles[sel].cartesiaVoiceId;
+
+    // Copy text and voice ID for thread safety
     std::wstring textCopy(text);
-    std::wstring agentCopy(agentName);
+    std::wstring voiceIdCopy(cartesiaVoiceId);
 
-    std::thread([hTabWnd, textCopy, agentCopy]() {
-        // Connect to cloud TTS server (update with your cloud TTS endpoint and port)
-        HINTERNET hConnect = CreateTtsConnection(L"api.cartesia.ai", 443); // Example: Cartesia.ai cloud TTS
+    std::thread([hTabWnd, textCopy, voiceIdCopy]() {
+        HINTERNET hConnect = CreateTtsConnection(L"api.cartesia.ai", 443);
         const wchar_t* audioFile = L"tts_output.wav";
         if (hConnect) {
             std::vector<BYTE> audioData;
-            // Send request to cloud TTS
-            if (SendTtsRequest(hConnect, textCopy, agentCopy, audioData)) {
+            // Pass the selected Cartesia voice ID
+            if (SendTtsRequest(hConnect, textCopy, voiceIdCopy, audioData)) {
                 if (SaveAudioToFile(audioData, audioFile)) {
                     PlayAudioFile(audioFile);
                     DeleteAudioFile(audioFile);
@@ -270,6 +313,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
     }
 
     LoadBlockedIds();
+    LoadSettingsFromFile(); // Add this line
 
     hInst = hInstance;
     HWND hWnd = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_VALVOICE_DIALOG), NULL, WndProc);
@@ -421,6 +465,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         // Settings Tab
         HWND hTabSettings = g_hTabDialogs[2];
         if (hTabSettings) {
+            // Initialize API Key field with loaded value
+            HWND hApiKey = GetDlgItem(hTabSettings, IDC_SETTINGS_API_KEY);
+            if (hApiKey) {
+                std::wstring wApiKey(g_cartesiaApiKey.begin(), g_cartesiaApiKey.end());
+                SetWindowTextW(hApiKey, wApiKey.c_str());
+            }
+
             // Initialize "Narrator Source" combo box
             HWND hNarratorSource = GetDlgItem(hTabSettings, IDC_SETTINGS_NARRATOR_SOURCE);
             if (hNarratorSource) {
@@ -462,8 +513,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
 
             HWND hNarratorVoiceCombo = GetDlgItem(hTabSettings, IDC_NARRATOR_VOICE_COMBO);
-            //PopulateNarratorVoices(hNarratorVoiceCombo);
-            SendMessage(hNarratorVoiceCombo, CB_SETCURSEL, 0, 0); // Select first voice by default
+            if (hNarratorVoiceCombo) {
+                SendMessage(hNarratorVoiceCombo, CB_SETCURSEL, 0, 0); // Select first voice by default
+            }
         }
 
         return TRUE;
@@ -532,9 +584,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         case IDC_SYNC_SETTINGS:
             ExportSettingsToFile();
             MessageBoxW(hWnd, L"Settings exported to ValVoiceSettings.txt.\nYou can use this file with a companion tool or overlay.", L"Sync Complete", MB_OK | MB_ICONINFORMATION);
-            break;
-        case IDC_SETTINGS_SYNC_BTN:
-            MessageBoxW(hTabWnd, L"Sync voice settings to valorant clicked.\n(Implement sync logic here.)", L"Settings", MB_OK | MB_ICONINFORMATION);
             break;
         }
         break;
@@ -608,15 +657,21 @@ INT_PTR CALLBACK LoginDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
     return (INT_PTR)FALSE;
 }
 
-// Comment above TabDialogProc
-// Handles messages for all tab dialogs (extend as needed)
+// Replace your existing TabDialogProc function
 INT_PTR CALLBACK TabDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_INITDIALOG:
         LoadBlockedIds();
         return TRUE;
     case WM_COMMAND:
-        // Add cases for WM_COMMAND, etc., if needed.
+        // Handle API key changes
+        if (LOWORD(wParam) == IDC_SETTINGS_API_KEY && HIWORD(wParam) == EN_CHANGE) {
+            // Auto-save API key when it changes
+            WCHAR apiKeyBuffer[256];
+            GetWindowTextW((HWND)lParam, apiKeyBuffer, 256);
+            std::wstring wApiKey(apiKeyBuffer);
+            g_cartesiaApiKey = std::string(wApiKey.begin(), wApiKey.end());
+        }
         break;
     }
     return FALSE;
@@ -624,44 +679,87 @@ INT_PTR CALLBACK TabDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
 
 HINTERNET CreateTtsConnection(const wchar_t* server, INTERNET_PORT port) {
     HINTERNET hSession = WinHttpOpen(L"ValVoice/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
-    if (!hSession) return NULL;
-
-    HINTERNET hConnect = WinHttpConnect(hSession, server, port, 0);
-    if (!hConnect) {
-        WinHttpCloseHandle(hSession);
+    if (!hSession) {
+        LogTtsError(L"Connection", L"Failed to create HTTP session");
         return NULL;
     }
 
-    // Close hSession after hConnect is closed in your thread
-    // Store hSession in a struct if you want to close it later
+    HINTERNET hConnect = WinHttpConnect(hSession, L"api.cartesia.ai", 443, 0);
+    if (!hConnect) {
+        LogTtsError(L"Connection", L"Failed to connect to Cartesia.ai");
+        WinHttpCloseHandle(hSession);
+        return NULL;
+    }
+    WinHttpCloseHandle(hSession);
     return hConnect;
 }
 
-bool SendTtsRequest(HINTERNET hConnect, const std::wstring& text, const std::wstring& voice, std::vector<BYTE>& audioData) {
-    const wchar_t* path = L"/api/tts";
+// Replace your existing SendTtsRequest function
+bool SendTtsRequest(HINTERNET hConnect, const std::wstring& text, const std::wstring& voiceId, std::vector<BYTE>& audioData) {
+    if (g_cartesiaApiKey.empty()) {
+        LogTtsError(L"API", L"Cartesia API key not configured");
+        MessageBoxW(NULL, L"Please configure your Cartesia API key in settings.", L"API Key Required", MB_ICONWARNING);
+        return false;
+    }
+
+    const wchar_t* path = L"/tts/bytes";
     HINTERNET hRequest = WinHttpOpenRequest(
-        hConnect, L"POST", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-    if (!hRequest) return false;
+        hConnect, L"POST", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+        WINHTTP_FLAG_SECURE);
+    if (!hRequest) {
+        LogTtsError(L"Request", L"Failed to create HTTP request");
+        return false;
+    }
 
     std::string utf8Text = WideToUtf8(text);
-    std::string utf8Voice = WideToUtf8(voice);
-    std::string json = "{\"text\": \"" + utf8Text + "\", \"voice\": \"" + utf8Voice + "\"}";
+    std::string utf8VoiceId = WideToUtf8(voiceId);
 
-    BOOL bResult = WinHttpSendRequest(
-        hRequest,
-        L"Content-Type: application/json\r\n",
-        0,
-        (LPVOID)json.c_str(),
-        json.size(),
-        json.size(),
-        0
-    );
+    // Use "sonic-2" model as in your cURL
+    std::string json = R"({
+        "model_id": "sonic-2",
+        "transcript": ")" + utf8Text + R"(",
+        "voice": {
+            "mode": "id",
+            "id": ")" + utf8VoiceId + R"("
+        },
+        "output_format": {
+            "container": "wav",
+            "encoding": "pcm_f32le",
+            "sample_rate": 44100
+        },
+        "language": "en"
+    })";
+
+    // Use correct Cartesia-Version header
+    std::wstring headers = L"Content-Type: application/json\r\n";
+    headers += L"Cartesia-Version: 2024-06-10\r\n";
+    std::wstring wApiKey(g_cartesiaApiKey.begin(), g_cartesiaApiKey.end());
+    headers += L"X-API-Key: " + wApiKey + L"\r\n";
+
+    BOOL bResult = WinHttpSendRequest(hRequest, headers.c_str(), 0,
+        (LPVOID)json.c_str(), json.size(), json.size(), 0);
+
     if (!bResult) {
+        LogTtsError(L"Request", L"Failed to send HTTP request");
         WinHttpCloseHandle(hRequest);
         return false;
     }
 
     if (!WinHttpReceiveResponse(hRequest, NULL)) {
+        LogTtsError(L"Response", L"Failed to receive HTTP response");
+        WinHttpCloseHandle(hRequest);
+        return false;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
+
+    if (statusCode != 200) {
+        WCHAR errorMsg[128];
+        wsprintf(errorMsg, L"HTTP Error: %d", statusCode);
+        LogTtsError(L"API", errorMsg);
         WinHttpCloseHandle(hRequest);
         return false;
     }
@@ -676,7 +774,13 @@ bool SendTtsRequest(HINTERNET hConnect, const std::wstring& text, const std::wst
     } while (dwSize > 0);
 
     WinHttpCloseHandle(hRequest);
-    return !audioData.empty();
+
+    if (audioData.empty()) {
+        LogTtsError(L"Response", L"Received empty audio data");
+        return false;
+    }
+
+    return true;
 }
 
 bool SaveAudioToFile(const std::vector<BYTE>& audioData, const wchar_t* filename) {
