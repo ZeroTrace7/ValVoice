@@ -18,9 +18,9 @@
 
 #define IDD_ABOUTBOX            106
 #define IDD_VALVOICE_DIALOG     102
-#define IDD_TAB_MAIN            2001
-#define IDD_TAB_INFO            2002
-#define IDD_TAB_SETTINGS        2003
+#define IDD_TAB_MAIN            1001
+#define IDD_TAB_INFO            1002
+#define IDD_TAB_SETTINGS        1003
 #define IDD_LOGIN               111
 
 // ---------------------------
@@ -35,45 +35,19 @@
 #define IDC_SETTINGS_IGNORE_ADD         2007
 #define IDC_SETTINGS_IGNORE_LIST        2008
 #define IDC_SETTINGS_SYNC_BTN           2009
-#define IDC_SETTINGS_API_KEY            2010
-#define IDC_SETTINGS_API_KEY_LABEL      2011
-#define IDC_SETTINGS_TEST_TTS          2012
 
 // ---------------------------
 // Narrator UI Controls
 // ---------------------------
 #define IDC_NARRATOR_LABEL              2100
 #define IDC_NARRATOR_VOICE_LABEL        2101
-#define IDC_NARRATOR_VOICE_COMBO        2102  // This stays for Settings tab
+#define IDC_NARRATOR_VOICE_COMBO        2102
 #define IDC_NARRATOR_VOICE_DESC         2103
-#define IDC_NARRATOR_RATE_LABEL         2104
-#define IDC_NARRATOR_RATE_SLIDER        2105
-#define IDC_NARRATOR_RATE_DESC          2106
-#define IDC_NARRATOR_RATE_MIN           2107
-#define IDC_NARRATOR_RATE_MAX           2108
-#define IDC_NARRATOR_STATS_LABEL        2109
-#define IDC_NARRATOR_STATS_MSGS_LBL     2110
-#define IDC_NARRATOR_STATS_MSGS_VAL     2111
-#define IDC_NARRATOR_STATS_CHARS_LBL    2112
-#define IDC_NARRATOR_STATS_CHARS_VAL    2113
-#define IDC_LINE1                       2120
-#define IDC_LINE2                       2121
-#define IDC_LINE3                       2122
 
 // ---------------------------
 // Main Tab Controls
 // ---------------------------
 #define IDC_TAB_MAIN            3000
-#define IDC_TEXT_INPUT          3001
-#define IDC_SPEAK_BUTTON        3002
-#define IDC_RATE_SLIDER         3004
-#define IDC_VOLUME_SLIDER       3005
-#define IDC_AGENT_COMBO         3006
-#define IDC_MAIN_TAB_VOICE_COMBO        3007
-#define IDC_QUOTA_BAR           3008
-#define IDC_QUOTA_VALUE         3009
-#define IDC_STATS_MSGS          3010
-#define IDC_STATS_CHARS         3011
 
 // ---------------------------
 // Info Tab Controls
@@ -103,4 +77,3 @@
 #define IDC_STATIC              -1
 
 #endif // RESOURCE_H
-
