@@ -188,7 +188,7 @@ void SpeakFromUI(HWND hTabWnd) {
     }
 
     // Get selected voice index
-    HWND hVoiceCombo = GetDlgItem(hTabWnd, IDC_NARRATOR_VOICE_COMBO);
+    HWND hVoiceCombo = GetDlgItem(hTabWnd, IDC_MAIN_TAB_VOICE_COMBO);
     int sel = (int)SendMessage(hVoiceCombo, CB_GETCURSEL, 0, 0);
     if (sel < 0 || sel >= kVoiceCount) sel = 0; // Fallback to first voice
 
@@ -419,7 +419,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SendMessage(hQuotaBar, PBM_SETPOS, g_dailyQuota - g_messagesToday, 0);
             SetDlgItemInt(hTabMain, IDC_QUOTA_VALUE, g_dailyQuota - g_messagesToday, FALSE);
 
-            HWND hVoiceCombo = GetDlgItem(hTabMain, IDC_NARRATOR_VOICE_COMBO);
+            HWND hVoiceCombo = GetDlgItem(hTabMain, IDC_MAIN_TAB_VOICE_COMBO);
             SendMessage(hVoiceCombo, CB_RESETCONTENT, 0, 0);
             for (auto& agent : agents) {
                 SendMessage(hVoiceCombo, CB_ADDSTRING, 0, (LPARAM)agent.name);
@@ -440,7 +440,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
             SendMessageW(GetDlgItem(hTabMain, IDC_TEXT_INPUT), WM_SETFONT, (WPARAM)g_hSegoeUIFont, TRUE);
             SendMessageW(GetDlgItem(hTabMain, IDC_SPEAK_BUTTON), WM_SETFONT, (WPARAM)g_hSegoeUIFont, TRUE);
-            SendMessageW(GetDlgItem(hTabMain, IDC_STOP_BUTTON), WM_SETFONT, (WPARAM)g_hSegoeUIFont, TRUE);
             // ...repeat for other controls as needed
         }
 
@@ -512,7 +511,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 Button_SetCheck(hSyncVoice, BST_UNCHECKED);
             }
 
-            HWND hNarratorVoiceCombo = GetDlgItem(hTabSettings, IDC_NARRATOR_VOICE_COMBO);
+            HWND hNarratorVoiceCombo = GetDlgItem(hTabSettings, IDC_MAIN_TAB_VOICE_COMBO);
             if (hNarratorVoiceCombo) {
                 SendMessage(hNarratorVoiceCombo, CB_SETCURSEL, 0, 0); // Select first voice by default
             }
@@ -531,61 +530,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         break;
     }
     case WM_COMMAND: {
-        HWND hTabWnd = g_hTabDialogs[currentTab];
         int id = LOWORD(wParam);
 
-        // Handle global commands (menu, etc.)
+        // Handle global menu commands only
         if (id == IDM_ABOUT) {
             DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-            break;
+            return FALSE;
         }
         if (id == IDM_EXIT) {
             DestroyWindow(hWnd);
-            break;
+            return FALSE;
         }
 
-        // Now handle tab-specific controls using hTabWnd
-        switch (id) {
-            // --- Main Tab ---
-        case IDC_SPEAK_BUTTON:
-            SpeakFromUI(hTabWnd);
-            break;
-
-            // --- Info Tab (now also handles settings controls) ---
-        case IDC_INFO_PREMIUM_BTN:
-            MessageBoxW(hTabWnd, L"Redirecting to premium purchase...", L"Get Premium", MB_OK | MB_ICONINFORMATION);
-            // Optionally, open a URL or show a premium dialog
-            break;
-        case IDC_INFO_DISCORD_BTN:
-            ShellExecuteW(NULL, L"open", L"https://discord.gg/yourserver", NULL, NULL, SW_SHOWNORMAL);
-            break;
-        case IDC_BLOCK_ADD: {
-            wchar_t buf[64];
-            GetDlgItemTextW(hTabWnd, IDC_BLOCK_INPUT, buf, 64);
-            if (wcslen(buf) > 0) {
-                g_blockedIds.push_back(buf);
-                HWND hList = GetDlgItem(hTabWnd, IDC_BLOCK_LIST);
-                SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)buf);
-                SetDlgItemTextW(hTabWnd, IDC_BLOCK_INPUT, L"");
-                SaveBlockedIds();
-            }
-            break;
-        }
-        case IDC_BLOCK_REMOVE: {
-            HWND hList = GetDlgItem(hTabWnd, IDC_BLOCK_LIST);
-            int sel = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR) {
-                SendMessageW(hList, LB_DELETESTRING, sel, 0);
-                g_blockedIds.erase(g_blockedIds.begin() + sel);
-                SaveBlockedIds();
-            }
-            break;
-        }
-        case IDC_SYNC_SETTINGS:
-            ExportSettingsToFile();
-            MessageBoxW(hWnd, L"Settings exported to ValVoiceSettings.txt.\nYou can use this file with a companion tool or overlay.", L"Sync Complete", MB_OK | MB_ICONINFORMATION);
-            break;
-        }
+        // DO NOT handle any tab control buttons here
+        // Let the tab dialogs handle their own controls
         break;
     }
     case WM_KEYDOWN:
@@ -663,16 +621,64 @@ INT_PTR CALLBACK TabDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
     case WM_INITDIALOG:
         LoadBlockedIds();
         return TRUE;
-    case WM_COMMAND:
-        // Handle API key changes
-        if (LOWORD(wParam) == IDC_SETTINGS_API_KEY && HIWORD(wParam) == EN_CHANGE) {
-            // Auto-save API key when it changes
-            WCHAR apiKeyBuffer[256];
-            GetWindowTextW((HWND)lParam, apiKeyBuffer, 256);
-            std::wstring wApiKey(apiKeyBuffer);
-            g_cartesiaApiKey = std::string(wApiKey.begin(), wApiKey.end());
+    
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        int notifyCode = HIWORD(wParam);
+
+        switch (id) {
+            case IDC_SPEAK_BUTTON:
+                SpeakFromUI(hDlg);
+                return TRUE;
+
+            case IDC_INFO_PREMIUM_BTN:
+                MessageBoxW(hDlg, L"Redirecting to premium purchase...", L"Get Premium", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+
+            case IDC_INFO_DISCORD_BTN:
+                ShellExecuteW(NULL, L"open", L"https://discord.gg/yourserver", NULL, NULL, SW_SHOWNORMAL);
+                return TRUE;
+
+            case IDC_BLOCK_ADD: {
+                wchar_t buf[64];
+                GetDlgItemTextW(hDlg, IDC_BLOCK_INPUT, buf, 64);
+                if (wcslen(buf) > 0) {
+                    g_blockedIds.push_back(buf);
+                    HWND hList = GetDlgItem(hDlg, IDC_BLOCK_LIST);
+                    SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)buf);
+                    SetDlgItemTextW(hDlg, IDC_BLOCK_INPUT, L"");
+                    SaveBlockedIds();
+                }
+                return TRUE;
+            }
+
+            case IDC_BLOCK_REMOVE: {
+                HWND hList = GetDlgItem(hDlg, IDC_BLOCK_LIST);
+                int sel = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
+                if (sel != LB_ERR) {
+                    SendMessageW(hList, LB_DELETESTRING, sel, 0);
+                    g_blockedIds.erase(g_blockedIds.begin() + sel);
+                    SaveBlockedIds();
+                }
+                return TRUE;
+            }
+
+            case IDC_SYNC_SETTINGS:
+                ExportSettingsToFile();
+                MessageBoxW(hDlg, L"Settings exported to ValVoiceSettings.txt.\nYou can use this file with a companion tool or overlay.", L"Sync Complete", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+
+            case IDC_SETTINGS_API_KEY:
+                if (notifyCode == EN_CHANGE) {
+                    WCHAR apiKeyBuffer[256];
+                    GetWindowTextW((HWND)lParam, apiKeyBuffer, 256);
+                    std::wstring wApiKey(apiKeyBuffer);
+                    g_cartesiaApiKey = std::string(wApiKey.begin(), wApiKey.end());
+                }
+                return TRUE;
         }
         break;
+    }
     }
     return FALSE;
 }
@@ -703,7 +709,7 @@ bool SendTtsRequest(HINTERNET hConnect, const std::wstring& text, const std::wst
     }
 
     const wchar_t* path = L"/tts/bytes";
-    HINTERNET hRequest = WinHttpOpenRequest(
+    HINTERNET hRequest = WinHttpOpenRequest(    
         hConnect, L"POST", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
         WINHTTP_FLAG_SECURE);
     if (!hRequest) {
