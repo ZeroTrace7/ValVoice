@@ -44,7 +44,7 @@
 // ---------------------------
 #define IDC_NARRATOR_LABEL              2100
 #define IDC_NARRATOR_VOICE_LABEL        2101
-#define IDC_NARRATOR_VOICE_COMBO        2102
+#define IDC_NARRATOR_VOICE_COMBO        2102  // This stays for Settings tab
 #define IDC_NARRATOR_VOICE_DESC         2103
 #define IDC_NARRATOR_RATE_LABEL         2104
 #define IDC_NARRATOR_RATE_SLIDER        2105
@@ -59,7 +59,6 @@
 #define IDC_LINE1                       2120
 #define IDC_LINE2                       2121
 #define IDC_LINE3                       2122
-#define IDC_NARRATOR_SPEAK_BUTTON       1010 // Unique ID
 
 // ---------------------------
 // Main Tab Controls
@@ -67,11 +66,10 @@
 #define IDC_TAB_MAIN            3000
 #define IDC_TEXT_INPUT          3001
 #define IDC_SPEAK_BUTTON        3002
-#define IDC_STOP_BUTTON         3003
 #define IDC_RATE_SLIDER         3004
 #define IDC_VOLUME_SLIDER       3005
 #define IDC_AGENT_COMBO         3006
-#define IDC_NARRATOR_VOICE_COMBO        3007
+#define IDC_MAIN_TAB_VOICE_COMBO        3007
 #define IDC_QUOTA_BAR           3008
 #define IDC_QUOTA_VALUE         3009
 #define IDC_STATS_MSGS          3010
@@ -105,3 +103,4 @@
 #define IDC_STATIC              -1
 
 #endif // RESOURCE_H
+
