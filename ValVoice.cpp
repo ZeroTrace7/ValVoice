@@ -16,11 +16,15 @@
 #include <thread>
 #include <sapi.h>
 #include <winhttp.h>
+#include <mmsystem.h>    // NEW: waveOut device enumeration
+#include <atomic> // for watcher flags
+#include <algorithm> // For std::min
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "Shell32.lib")  // Link against Shell32.lib
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "sapi.lib")
+#pragma comment(lib, "winmm.lib") // NEW
 
 #define MAX_LOADSTRING 100
 
@@ -52,20 +56,36 @@ ISpVoice* g_spVoice = nullptr;
 std::vector<ISpObjectToken*> g_voiceTokens;
 bool g_comInitialized = false;
 
-// Forward Declarations
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    LoginDlgProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    TabDialogProc(HWND, UINT, WPARAM, LPARAM);
+// NEW: SAPI audio output via waveOut (VB-CABLE)
+ISpMMSysAudio* g_spAudioOut = nullptr;
 
-// Forward declarations for TTS/audio helper functions
-void LogTtsError(const wchar_t* context, const wchar_t* message);
+// Forward declarations for functions used before their definitions
+ATOM MyRegisterClass(HINSTANCE hInstance);
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow);
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK LoginDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK TabDialogProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
+void StartValorantLogWatcher();
+void StopValorantLogWatcher();
+
+// Declarations
 HRESULT TtsInit();
 void TtsShutdown();
 void PopulateNarratorVoices(HWND hCombo);
 void TtsSetVoiceByIndex(int index);
+
+// NEW: VB-CABLE binding helpers
+int FindVBCableRenderDeviceId();
+HRESULT TtsBindToVBCable();
+void TtsStopAll();
+HRESULT TtsSpeakAsync(const std::wstring& text);
+
+// --- Valorant chat log watcher (safe: file tail) ---
+std::thread g_logThread;
+std::atomic<bool> g_logStop{ false };
+std::wstring g_activeLogFile;
+std::wstring g_lineCarry; // partial line carry-over
 
 // Helper: Show only the selected tab dialog
 void ShowTabDialog(HWND hParent, int tabIndex) {
@@ -244,8 +264,20 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
             L"Failed to initialize system Text-to-Speech (SAPI). The app will continue without TTS.",
             L"ValVoice",
             MB_OK | MB_ICONWARNING);
-        // Continue running without TTS
+    } else {
+        // Bind to VB-CABLE output so Valorant can hear the TTS
+        HRESULT hrBind = TtsBindToVBCable();
+        if (FAILED(hrBind)) {
+            MessageBoxW(NULL,
+                L"VB-CABLE (CABLE Input) not found. Install/enable VB-Audio Virtual Cable, "
+                L"then set Valorant Input Device to 'CABLE Output'.",
+                L"ValVoice",
+                MB_OK | MB_ICONWARNING);
+        }
     }
+
+    // NEW: Start watching Valorant logs after initializing TTS
+    StartValorantLogWatcher();
 
     hInst = hInstance;
     HWND hWnd = CreateDialog(hInstance, MAKEINTRESOURCE(IDD_VALVOICE_DIALOG), NULL, WndProc);
@@ -487,6 +519,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         DestroyWindow(hWnd);
         break;
     case WM_DESTROY:
+        StopValorantLogWatcher();
         TtsShutdown();
         PostQuitMessage(0);
         break;
@@ -589,6 +622,8 @@ HRESULT TtsInit() {
         LogTtsError(L"TTS", L"CoCreateInstance(CLSID_SpVoice) failed");
         return hr;
     }
+
+    // Note: Binding to VB-CABLE is done in TtsBindToVBCable() (called from InitInstance).
     return S_OK;
 }
 
@@ -597,6 +632,11 @@ void TtsShutdown() {
         if (tok) tok->Release();
     }
     g_voiceTokens.clear();
+
+    if (g_spAudioOut) {           // NEW
+        g_spAudioOut->Release();
+        g_spAudioOut = nullptr;
+    }
 
     if (g_spVoice) {
         g_spVoice->Release();
@@ -654,4 +694,242 @@ void TtsSetVoiceByIndex(int index) {
     if (!g_spVoice) return;
     if (index < 0 || index >= (int)g_voiceTokens.size()) return;
     g_spVoice->SetVoice(g_voiceTokens[index]);
+}
+
+// NEW: VB-CABLE binding helpers
+int FindVBCableRenderDeviceId() {
+    UINT n = waveOutGetNumDevs();
+    for (UINT i = 0; i < n; ++i) {
+        WAVEOUTCAPS caps{};
+        if (waveOutGetDevCaps(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+#ifdef UNICODE
+            std::wstring name = caps.szPname;
+#else
+            std::wstring name;
+            int len = MultiByteToWideChar(CP_ACP, 0, caps.szPname, -1, nullptr, 0);
+            name.resize(len ? len - 1 : 0);
+            MultiByteToWideChar(CP_ACP, 0, caps.szPname, -1, &name[0], len);
+#endif
+            if (name.find(L"CABLE Input") != std::wstring::npos ||
+                name.find(L"VB-Audio Virtual Cable") != std::wstring::npos) {
+                return static_cast<int>(i);
+            }
+        }
+    }
+    return -1;
+}
+
+HRESULT TtsBindToVBCable() {
+    if (!g_spVoice) return E_FAIL;
+
+    // Release previous if any
+    if (g_spAudioOut) { g_spAudioOut->Release(); g_spAudioOut = nullptr; }
+
+    int devId = FindVBCableRenderDeviceId();
+    if (devId < 0) {
+        LogTtsError(L"TTS", L"VB-CABLE device not found (CABLE Input).");
+        return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    }
+
+    HRESULT hr = CoCreateInstance(CLSID_SpMMAudioOut, nullptr, CLSCTX_ALL, IID_ISpMMSysAudio, (void**)&g_spAudioOut);
+    if (FAILED(hr) || !g_spAudioOut) {
+        LogTtsError(L"TTS", L"CoCreateInstance(CLSID_SpMMAudioOut) failed");
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    hr = g_spAudioOut->SetDeviceId(devId);
+    if (FAILED(hr)) {
+        LogTtsError(L"TTS", L"ISpMMSysAudio::SetDeviceId failed");
+        g_spAudioOut->Release(); g_spAudioOut = nullptr;
+        return hr;
+    }
+
+    // Prefer 48kHz/16-bit/mono (typical for voice chat). Use helper to get GUID+WAVEFORMATEX.
+    GUID fmtId = GUID_NULL;
+    WAVEFORMATEX* pwfx = nullptr;
+    HRESULT hrFmt = SpConvertStreamFormatEnum(SPSF_48kHz16BitMono, &fmtId, &pwfx);
+    if (SUCCEEDED(hrFmt)) {
+        hr = g_spAudioOut->SetFormat(fmtId, pwfx);
+        CoTaskMemFree(pwfx);
+    } else {
+        hr = E_FAIL;
+    }
+
+    // Fallback to 44.1kHz/16-bit/mono if 48k failed.
+    if (FAILED(hr)) {
+        fmtId = GUID_NULL;
+        pwfx = nullptr;
+        hrFmt = SpConvertStreamFormatEnum(SPSF_44kHz16BitMono, &fmtId, &pwfx);
+        if (SUCCEEDED(hrFmt)) {
+            hr = g_spAudioOut->SetFormat(fmtId, pwfx);
+            CoTaskMemFree(pwfx);
+        }
+        if (FAILED(hr)) {
+            LogTtsError(L"TTS", L"ISpAudio::SetFormat failed");
+            g_spAudioOut->Release(); g_spAudioOut = nullptr;
+            return hr;
+        }
+    }
+
+    // Route voice to VB-CABLE
+    hr = g_spVoice->SetOutput(g_spAudioOut, TRUE);
+    if (FAILED(hr)) {
+        LogTtsError(L"TTS", L"ISpVoice::SetOutput failed");
+        g_spAudioOut->Release(); g_spAudioOut = nullptr;
+        return hr;
+    }
+
+    LogTtsError(L"TTS", L"VB-CABLE bound for audio output");
+    return S_OK;
+}
+
+HRESULT TtsSpeakAsync(const std::wstring& text) {
+    if (!g_spVoice) return E_FAIL;
+    ULONG streamNum = 0;
+    return g_spVoice->Speak(text.c_str(), SPF_ASYNC | SPF_IS_NOT_XML, &streamNum);
+}
+
+void TtsStopAll() {
+    if (!g_spVoice) return;
+    // Purge any queued speech
+    g_spVoice->Speak(L"", SPF_ASYNC | SPF_PURGEBEFORESPEAK, nullptr);
+    // Quick pause/resume to ensure immediate stop
+    g_spVoice->Pause();
+    g_spVoice->Resume();
+}
+
+// Decls
+std::wstring FindLatestValorantLog();
+void StartValorantLogWatcher();
+void StopValorantLogWatcher();
+void TailLogFileLoop(const std::wstring& filePath);
+void ProcessLogChunk(const std::wstring& textChunk);
+void HandlePotentialChatLine(const std::wstring& line);
+
+std::wstring FindLatestValorantLog() {
+    wchar_t* localAppData = _wgetenv(L"LOCALAPPDATA");
+    if (!localAppData) return L"";
+    std::wstring dir = std::wstring(localAppData) + L"\\VALORANT\\Saved\\Logs\\*.log";
+
+    WIN32_FIND_DATAW fd{};
+    HANDLE hFind = FindFirstFileW(dir.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return L"";
+
+    FILETIME bestTime{};
+    std::wstring bestFile;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            if (CompareFileTime(&fd.ftLastWriteTime, &bestTime) > 0) {
+                bestTime = fd.ftLastWriteTime;
+                bestFile = std::wstring(localAppData) + L"\\VALORANT\\Saved\\Logs\\" + fd.cFileName;
+            }
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    return bestFile;
+}
+
+void StartValorantLogWatcher() {
+    if (g_logThread.joinable()) return;
+    g_activeLogFile = FindLatestValorantLog();
+    if (g_activeLogFile.empty()) {
+        LogTtsError(L"VAL-LOG", L"No Valorant log found. Is the game running?");
+        return;
+    }
+    g_logStop = false;
+    g_lineCarry.clear();
+    g_logThread = std::thread([path = g_activeLogFile]() { TailLogFileLoop(path); });
+}
+
+void StopValorantLogWatcher() {
+    g_logStop = true;
+    if (g_logThread.joinable()) g_logThread.join();
+}
+
+void TailLogFileLoop(const std::wstring& filePath) {
+    HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        LogTtsError(L"VAL-LOG", L"Failed to open log file.");
+        return;
+    }
+
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(hFile, &size)) size.QuadPart = 0;
+    LARGE_INTEGER pos = size; // start at end; only new lines
+
+    const DWORD bufCap = 64 * 1024;
+    std::vector<char> buf(bufCap);
+
+    while (!g_logStop) {
+        LARGE_INTEGER cur{};
+        if (!GetFileSizeEx(hFile, &cur)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
+        if (cur.QuadPart > pos.QuadPart) {
+            LARGE_INTEGER toRead;
+            toRead.QuadPart = cur.QuadPart - pos.QuadPart;
+            while (toRead.QuadPart > 0 && !g_logStop) {
+                DWORD chunk = std::min<DWORD>(static_cast<DWORD>(toRead.QuadPart), bufCap);
+                SetFilePointerEx(hFile, pos, nullptr, FILE_BEGIN);
+                DWORD got = 0;
+                if (!ReadFile(hFile, buf.data(), chunk, &got, nullptr) || got == 0) break;
+
+                // Convert UTF-8 bytes to wide
+                int wlen = MultiByteToWideChar(CP_UTF8, 0, buf.data(), got, nullptr, 0);
+                std::wstring wchunk(wlen, L'\0');
+                if (wlen > 0) {
+                    MultiByteToWideChar(CP_UTF8, 0, buf.data(), got, &wchunk[0], wlen);
+                    ProcessLogChunk(wchunk);
+                }
+
+                pos.QuadPart += got;
+                toRead.QuadPart -= got;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    CloseHandle(hFile);
+}
+
+void ProcessLogChunk(const std::wstring& textChunk) {
+    std::wstring data = g_lineCarry + textChunk;
+    size_t start = 0;
+    while (true) {
+        size_t nl = data.find_first_of(L"\r\n", start);
+        if (nl == std::wstring::npos) break;
+        std::wstring line = data.substr(start, nl - start);
+        if (!line.empty()) HandlePotentialChatLine(line);
+        // skip CRLF sequences
+        if (nl + 1 < data.size() && (data[nl] == L'\r' && data[nl + 1] == L'\n')) start = nl + 2;
+        else start = nl + 1;
+    }
+    g_lineCarry = data.substr(start);
+}
+
+void HandlePotentialChatLine(const std::wstring& line) {
+    // Heuristics for Valorant log chat lines (adjust if needed)
+    // Examples we try to match:
+    // "[Team] PlayerName: hello"
+    // "[All] PlayerName: gl hf"
+    size_t tagPos = std::wstring::npos;
+    bool isTeam = false;
+    if ((tagPos = line.find(L"[Team]")) != std::wstring::npos) isTeam = true;
+    else if ((tagPos = line.find(L"[All]")) != std::wstring::npos) isTeam = false;
+    else return; // not a chat line we care about
+
+    size_t colon = line.find(L": ", tagPos);
+    if (colon == std::wstring::npos) return;
+
+    std::wstring msg = line.substr(colon + 2);
+    // Optionally: ignore empty/short
+    if (msg.empty()) return;
+
+    // Speak it via SAPI -> VB-CABLE
+    if (g_spVoice) {
+        TtsSpeakAsync(msg);
+    }
 }
