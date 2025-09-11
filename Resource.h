@@ -18,9 +18,9 @@
 
 #define IDD_ABOUTBOX            106
 #define IDD_VALVOICE_DIALOG     102
-#define IDD_TAB_MAIN            1001
-#define IDD_TAB_INFO            1002
-#define IDD_TAB_SETTINGS        1003
+#define IDD_TAB_MAIN            2001
+#define IDD_TAB_INFO            2002
+#define IDD_TAB_SETTINGS        2003
 #define IDD_LOGIN               111
 
 // ---------------------------
@@ -47,7 +47,7 @@
 // ---------------------------
 // Main Tab Controls
 // ---------------------------
-#define IDC_TAB_MAIN            3000
+#define IDC_TAB_MAIN            1001
 
 // ---------------------------
 // Info Tab Controls
