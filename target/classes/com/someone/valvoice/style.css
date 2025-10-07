@@ -8,7 +8,7 @@
 .top-bar {
     -fx-background-color: linear-gradient(to right, #1a1a2e, #16213e);
     -fx-background-radius: 15 15 0 0;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 10, 0, 0, 2);
+    -fx-effect: none;
 }
 
 .window-title {
@@ -20,7 +20,7 @@
 .sidebar {
     -fx-background-color: linear-gradient(to bottom, #0f3460, #16213e);
     -fx-background-radius: 0 0 0 15;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.2), 8, 0, 2, 0);
+    -fx-effect: none;
 }
 
 .nav-item {
@@ -78,7 +78,7 @@
 /* ========== CONTENT PANELS ========== */
 .content-panel {
     -fx-background-color: #0f0f1e;
-    -fx-background-radius: 0 0 15 0;
+    -fx-background-radius: 0;
 }
 
 .scroll-pane {

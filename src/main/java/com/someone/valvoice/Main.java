@@ -4,16 +4,21 @@ import javafx.application.Application;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.RandomAccessFile;
+import java.io.*;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
@@ -24,6 +29,20 @@ public class Main {
     public static final String LOCK_FILE = Paths.get(CONFIG_DIR, LOCK_FILE_NAME).toString();
     public static double currentVersion;
     private static Properties properties;
+
+    // Node.js XMPP process management
+    private static Process xmppNodeProcess;
+    private static ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "xmpp-node-io");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static final Pattern IQ_ID_PATTERN = Pattern.compile("<iq[^>]*id=([\"\'])_xmpp_bind1\\1", Pattern.CASE_INSENSITIVE);
+    private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MESSAGE_START_PATTERN = Pattern.compile("^<message", Pattern.CASE_INSENSITIVE);
+    private static final Pattern IQ_START_PATTERN = Pattern.compile("^<iq", Pattern.CASE_INSENSITIVE);
+    private static final String XMPP_EXE_NAME = "valorantNarrator-xmpp.exe"; // Preferred external bridge
 
     private static boolean lockInstance() {
         try {
@@ -58,9 +77,147 @@ public class Main {
         return true;
     }
 
+    private static void startXmppNodeProcess() {
+        if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
+            logger.warn("Xmpp-Node process already running");
+            return;
+        }
+
+        // 1. Prefer external compiled executable if present in working directory
+        Path workingDir = Paths.get(System.getProperty("user.dir"));
+        Path exeCandidate = workingDir.resolve(XMPP_EXE_NAME);
+        boolean useExternalExe = Files.isRegularFile(exeCandidate) && Files.isReadable(exeCandidate);
+
+        Path tempScriptPath = null; // only used when falling back to script
+        ProcessBuilder pb;
+        if (useExternalExe) {
+            logger.info("Using external XMPP bridge executable: {}", exeCandidate.toAbsolutePath());
+            pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
+        } else {
+            logger.info("External {} not found; falling back to embedded xmpp-node.js stub", XMPP_EXE_NAME);
+            String resourceName = "/com/someone/valvoice/xmpp-node.js";
+            try (InputStream in = Main.class.getResourceAsStream(resourceName)) {
+                if (in == null) {
+                    logger.error("Could not find resource {} (XMPP bridge unavailable)", resourceName);
+                    return;
+                }
+                byte[] bytes = in.readAllBytes();
+                tempScriptPath = Files.createTempFile("xmpp-node-", ".js");
+                Files.write(tempScriptPath, bytes);
+            } catch (IOException e) {
+                logger.error("Failed to extract xmpp-node.js", e);
+                return;
+            }
+            String nodeCommand = "node"; // Assumes Node.js is on PATH
+            pb = new ProcessBuilder(nodeCommand, tempScriptPath.toAbsolutePath().toString());
+        }
+
+        pb.redirectErrorStream(true);
+        pb.directory(workingDir.toFile());
+        try {
+            xmppNodeProcess = pb.start();
+            logger.info("Started XMPP bridge (mode: {})", useExternalExe ? "external-exe" : "embedded-script");
+        } catch (IOException e) {
+            logger.error("Failed to start XMPP bridge process", e);
+            return;
+        }
+
+        final Path scriptRef = tempScriptPath; // may be null if external exe used
+        xmppIoPool.submit(() -> {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(xmppNodeProcess.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.isBlank()) continue;
+                    JsonElement parsed;
+                    try {
+                        parsed = JsonParser.parseString(line);
+                        if (!parsed.isJsonObject()) {
+                            logger.debug("[XmppBridge raw] {}", line);
+                            continue;
+                        }
+                        JsonObject obj = parsed.getAsJsonObject();
+                        String type = obj.has("type") && !obj.get("type").isJsonNull() ? obj.get("type").getAsString() : "";
+                        switch (type) {
+                            case "incoming" -> handleIncomingStanza(obj);
+                            case "error" -> {
+                                String err = obj.has("error") ? obj.get("error").getAsString() : "(unknown)";
+                                logger.warn("XMPP error event: {}", err);
+                            }
+                            case "close-riot" -> logger.info("Riot client closed event received");
+                            case "close-valorant" -> logger.info("Valorant closed event received");
+                            case "startup", "heartbeat", "shutdown" -> logger.debug("[XmppBridge:{}] {}", type, obj);
+                            default -> logger.debug("[XmppBridge:?] {}", obj);
+                        }
+                    } catch (Exception ex) {
+                        logger.info("[XmppBridge log] {}", line);
+                    }
+                }
+            } catch (IOException e) {
+                logger.warn("XMPP bridge stdout reader terminating", e);
+            } finally {
+                logger.info("XMPP bridge output closed ({})", useExternalExe ? "external-exe" : ("script=" + scriptRef));
+            }
+        });
+
+        xmppIoPool.submit(() -> {
+            try {
+                int code = xmppNodeProcess.waitFor();
+                logger.warn("XMPP bridge process exited with code {}", code);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
+                logger.info("Destroying XMPP bridge process");
+                xmppNodeProcess.destroy();
+                try { xmppNodeProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+        }, "xmpp-bridge-shutdown"));
+    }
+
+    private static void handleIncomingStanza(JsonObject obj) {
+        if (!obj.has("data") || obj.get("data").isJsonNull()) return;
+        String xml = obj.get("data").getAsString();
+        if (xml == null || xml.isBlank()) return;
+        try {
+            if (MESSAGE_START_PATTERN.matcher(xml).find()) {
+                Message msg = new Message(xml);
+                logger.info("Received message: {}", msg);
+                ChatDataHandler.getInstance().message(msg);
+            } else if (IQ_START_PATTERN.matcher(xml).find()) {
+                detectSelfIdFromIq(xml);
+            } else {
+                // presence/other stanzas ignored currently
+            }
+        } catch (Exception e) {
+            logger.debug("Failed handling incoming stanza", e);
+        }
+    }
+
+    private static void detectSelfIdFromIq(String xml) {
+        try {
+            Matcher idMatcher = IQ_ID_PATTERN.matcher(xml);
+            if (!idMatcher.find()) return; // not the bind response
+            Matcher jidMatcher = JID_TAG_PATTERN.matcher(xml);
+            if (jidMatcher.find()) {
+                String fullJid = jidMatcher.group(1);
+                if (fullJid != null && fullJid.contains("@")) {
+                    String userPart = fullJid.substring(0, fullJid.indexOf('@'));
+                    if (!userPart.isBlank()) {
+                        ChatDataHandler.getInstance().updateSelfId(userPart);
+                        logger.info("Self ID (bind) detected: {}", userPart);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to parse bind iq for self ID", e);
+        }
+    }
+
     public static void main(String[] args) {
         logger.info("Starting {} Application", APP_NAME);
-
         try (InputStream inputStream = Main.class.getResourceAsStream("config.properties")) {
             if (inputStream == null) {
                 throw new FileNotFoundException("config.properties not found on classpath (expected in same package)");
@@ -88,6 +245,7 @@ public class Main {
         }
 
         lockInstance();
+        startXmppNodeProcess();
 
         logger.info("Launching JavaFX Application");
         Application.launch(ValVoiceApplication.class, args);

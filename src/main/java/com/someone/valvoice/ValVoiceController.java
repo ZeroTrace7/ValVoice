@@ -10,6 +10,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import static com.someone.valvoice.ValVoiceApplication.*;
 
@@ -73,6 +76,34 @@ public class ValVoiceController {
     private boolean isAppDisabled = false;
     private AnchorPane lastAnchorPane;
 
+    private TtsEngine ttsEngine; // Text-to-speech engine
+    private ChatListenerService chatListenerService; // polls local Riot chat REST
+    private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
+
+    private static final boolean SIMULATE_CHAT = false; // set true for local TTS demo without Valorant
+    /**
+     * External XMPP Handler Executable
+     * Name: valorantNarrator-xmpp.exe
+     * Purpose: Connects to Riot's XMPP server and streams chat messages as JSON lines (type=incoming, data=<stanza>)
+     * Critical: Without this executable present in the working directory, only the fallback embedded stub runs and you will NOT
+     *           receive real Valorant chat messages.
+     * Original documentation referenced this constant around line 182 in ValNarratorController.java; this codebase uses
+     * ValVoiceController instead. Keep the executable beside the launched JAR or adjust working directory accordingly.
+     */
+    private static final String XMPP_BRIDGE_EXE = "valorantNarrator-xmpp.exe";
+    /**
+     * Audio Routing Tool
+     * Name: SoundVolumeView.exe
+     * Purpose: Programmatically routes the application's (PowerShell / TTS) audio output device to the VB-Audio Virtual Cable
+     *          ("CABLE Input") so Valorant can capture narrated speech as microphone input.
+     * Expected Location (original reference ~ line 161 in ValNarratorController.java): Working directory OR
+     *    %ProgramFiles%/ValorantNarrator/.
+     * Why Needed: Without routing, TTS may play through default speakers and NOT reach the virtual mic path (CABLE Input → Valorant).
+     * Behavior: If present, routing is attempted by InbuiltVoiceSynthesizer after persistent PowerShell session launch.
+     * Fallback: If absent, user must manually set default output or per-app device to CABLE Input.
+     */
+    private static final String SOUND_VOLUME_VIEW_EXE = "SoundVolumeView.exe";
+
     public ValVoiceController() {
         latestInstance = this;
     }
@@ -88,6 +119,13 @@ public class ValVoiceController {
     public void initialize() {
         logger.info("Initializing ValVoiceController");
 
+        // Register listener for self ID changes (immediate invoke to show current value)
+        ChatDataHandler.getInstance().registerSelfIdListener(id -> {
+            if (id != null) {
+                Platform.runLater(() -> setUserIDLabel(id));
+            }
+        }, true);
+
         // Set initial visible panel
         lastAnchorPane = panelUser;
 
@@ -100,6 +138,83 @@ public class ValVoiceController {
         // Simulate loading process
         simulateLoading();
         // Removed enforceNoShrinkEffects as it caused perceived shrinking flicker
+
+        ttsEngine = new TtsEngine();
+        // Initialize persistent inbuilt synthesizer (Windows-only)
+        inbuiltSynth = new InbuiltVoiceSynthesizer();
+        if (inbuiltSynth.isReady()) {
+            logger.info("InbuiltVoiceSynthesizer ready with {} voices", inbuiltSynth.getAvailableVoices().size());
+        }
+        if (SIMULATE_CHAT) {
+            startChatSimulation();
+        }
+        // New: attempt to auto-initialize Riot local API and resolve self player ID.
+        initRiotLocalApiAsync();
+
+        // After synthesizer initialization, verify external tool availability
+        verifyExternalDependencies();
+    }
+
+    private void initRiotLocalApiAsync() {
+        Thread t = new Thread(() -> {
+            try {
+                updateLoadingStatus("Locating Riot lockfile...");
+                String path = LockFileHandler.findDefaultLockfile();
+                if (path == null) {
+                    logger.warn("Riot lockfile not found in default locations; Valorant integration inactive");
+                    return;
+                }
+                logger.info("Found Riot lockfile: {}", path);
+                updateLoadingStatus("Reading Riot lockfile...");
+                boolean loaded = ChatDataHandler.getInstance().initializeFromLockfile(path);
+                if (!loaded) {
+                    logger.warn("Failed to read Riot lockfile; Valorant integration inactive");
+                    return;
+                }
+                updateLoadingStatus("Resolving player identity...");
+                // Self ID resolution happens inside initializeFromLockfile; reflect it in UI if set later.
+                String selfId = ChatDataHandler.getInstance().getProperties().getSelfID();
+                if (selfId != null) {
+                    Platform.runLater(() -> setUserIDLabel(selfId));
+                }
+                // Fetch extended client details (version / region)
+                APIHandler.getInstance().fetchClientDetails().ifPresent(details ->
+                        logger.info("Riot client details: {}", details)
+                );
+                // Start polling chat messages for TTS
+                startChatListener();
+                startSelfIdRefreshTask();
+                logger.info("Riot local API initialized (self ID: {})", selfId);
+            } catch (Exception e) {
+                logger.debug("Riot local API initialization failed", e);
+            }
+        }, "RiotInitThread");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void startChatListener() {
+        if (chatListenerService != null) return; // already started
+        chatListenerService = new ChatListenerService(this::handleIncomingChatXml);
+        chatListenerService.start();
+        logger.info("Valorant chat listener started");
+    }
+
+    private void startSelfIdRefreshTask() {
+        Thread refresher = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(60_000); // 1 minute
+                    ChatDataHandler.getInstance().refreshSelfId();
+                } catch (InterruptedException e) {
+                    return; // stop on interrupt
+                } catch (Exception e) {
+                    logger.trace("Self ID refresh encountered an error", e);
+                }
+            }
+        }, "SelfIdRefreshThread");
+        refresher.setDaemon(true);
+        refresher.start();
     }
 
     private void populateComboBoxes() {
@@ -116,6 +231,124 @@ public class ValVoiceController {
             "SELF+PARTY+ALL",
             "SELF+PARTY+TEAM+ALL"
         );
+
+        // Async load voices to avoid blocking FX thread
+        loadVoicesAsync(false);
+    }
+
+    private void loadVoicesAsync(boolean isRefresh) {
+        if (voices == null) return;
+        Platform.runLater(() -> {
+            if (!isRefresh && (voices.getItems() == null || voices.getItems().isEmpty())) {
+                voices.setPromptText("Loading voices...");
+            } else if (isRefresh) {
+                voices.setPromptText("Refreshing voices...");
+            }
+        });
+        Thread t = new Thread(() -> {
+            java.util.List<String> list = enumerateWindowsVoices();
+            // Merge in System.Speech voices from inbuilt synthesizer (if any) to ensure coverage
+            if (inbuiltSynth != null && inbuiltSynth.isReady()) {
+                for (String v : inbuiltSynth.getAvailableVoices()) {
+                    if (!list.contains(v)) list.add(v);
+                }
+            }
+            list.sort(String.CASE_INSENSITIVE_ORDER);
+            Platform.runLater(() -> {
+                voices.getItems().setAll(list);
+                voices.setPromptText("Select a voice");
+                if (voices.getValue() == null && !list.isEmpty()) {
+                    voices.setValue(list.get(0));
+                }
+            });
+        }, "VoiceEnumThread");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    @FXML
+    public void refreshVoices() {
+        logger.info("Refreshing Windows TTS voices on user request");
+        loadVoicesAsync(true);
+    }
+
+    private java.util.List<String> enumerateWindowsVoices() {
+        java.util.LinkedHashSet<String> ordered = new java.util.LinkedHashSet<>();
+        if (!isWindows()) {
+            logger.warn("Voice enumeration attempted on non-Windows OS");
+            return new java.util.ArrayList<>();
+        }
+        // Strategy 1: .NET SpeechSynthesizer (most reliable friendly names)
+        runPowerShellLines("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }", ordered, "SpeechSynthesizer");
+        // Strategy 2: COM SAPI.SpVoice (already used before)
+        if (ordered.isEmpty()) {
+            runPowerShellLines("$sp = New-Object -ComObject SAPI.SpVoice; $sp.GetVoices() | ForEach-Object { $_.GetDescription() }", ordered, "SAPI.SpVoice");
+        }
+        // Strategy 3: Registry tokens (raw token names)
+        if (ordered.isEmpty()) {
+            runPowerShellLines("Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Speech\\Voices\\Tokens','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Speech\\Voices\\Tokens' -ErrorAction SilentlyContinue | ForEach-Object { (Get-Item $_.PsPath).GetValue('') }", ordered, "RegistryTokens");
+        }
+        // Fallback list if still empty
+        if (ordered.isEmpty()) {
+            logger.info("No voices detected; applying hardcoded fallback list");
+            ordered.add("Microsoft David Desktop");
+            ordered.add("Microsoft Zira Desktop");
+            ordered.add("Microsoft Mark");
+            ordered.add("Microsoft Hazel Desktop");
+        }
+        java.util.List<String> list = new java.util.ArrayList<>(ordered);
+        list.sort(String.CASE_INSENSITIVE_ORDER);
+        logger.info("Final Windows TTS voices list: {}", list);
+        return list;
+    }
+
+    private void runPowerShellLines(String psScript, java.util.Set<String> collector, String tag) {
+        java.util.List<String> lines = runPowerShell(psScript, 6);
+        if (!lines.isEmpty()) {
+            logger.debug("{} enumeration returned {} entries", tag, lines.size());
+            for (String l : lines) {
+                String trimmed = l == null ? null : l.trim();
+                if (trimmed != null && !trimmed.isEmpty()) collector.add(trimmed);
+            }
+        } else {
+            logger.debug("{} enumeration produced no output", tag);
+        }
+    }
+
+    private boolean isWindows() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        return os.contains("win");
+    }
+
+    private java.util.List<String> runPowerShell(String script, int timeoutSeconds) {
+        java.util.List<String> output = new java.util.ArrayList<>();
+        Process process = null;
+        String command = "powershell.exe -NoProfile -NonInteractive -Command \"$ErrorActionPreference='SilentlyContinue'; " + script.replace("\"", "\\\"") + "\"";
+        try {
+            process = Runtime.getRuntime().exec(command);
+            try (java.io.BufferedReader stdOut = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
+                 java.io.BufferedReader stdErr = new java.io.BufferedReader(new java.io.InputStreamReader(process.getErrorStream()))) {
+                String line;
+                while ((line = stdOut.readLine()) != null) {
+                    output.add(line);
+                }
+                StringBuilder err = new StringBuilder();
+                while ((line = stdErr.readLine()) != null) {
+                    err.append(line).append('\n');
+                }
+                if (err.length() > 0) {
+                    logger.trace("PowerShell stderr for script [{}]: {}", script, err);
+                }
+            }
+            if (!process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
+                logger.warn("PowerShell script timeout ({} s) for script: {}", timeoutSeconds, script);
+            }
+        } catch (IOException | InterruptedException e) {
+            logger.debug("PowerShell execution failed for script: {}", script, e);
+        } finally {
+            if (process != null) process.destroyForcibly();
+        }
+        return output;
     }
 
     /**
@@ -281,12 +514,18 @@ public class ValVoiceController {
         String selectedVoice = voices.getValue();
         logger.info("Voice selected: {}", selectedVoice);
         showInformation("Voice Selected", "You selected: " + selectedVoice);
+        // Play a brief sample using the persistent inbuilt synthesizer for immediate feedback
+        if (inbuiltSynth != null && inbuiltSynth.isReady() && selectedVoice != null) {
+            int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
+            inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", uiRate);
+        }
     }
 
     @FXML
     public void selectSource() {
         String selectedSource = sources.getValue();
         logger.info("Source selected: {}", selectedSource);
+        Chat.getInstance().applySourceSelection(selectedSource);
         showInformation("Source Selected", "You selected: " + selectedSource);
     }
 
@@ -303,26 +542,27 @@ public class ValVoiceController {
 
     @FXML
     public void togglePrivateMessages() {
-        if (privateChatButton.isSelected()) {
-            logger.info("Private messages enabled");
-        } else {
-            logger.info("Private messages disabled");
-        }
+        boolean enabled = privateChatButton.isSelected();
+        Chat.getInstance().setWhispersEnabled(enabled);
+        logger.info("Private messages {}", enabled ? "enabled" : "disabled");
     }
 
     @FXML
     public void toggleTeamChat() {
-        if (teamChatButton.isSelected()) {
-            logger.info("Team chat enabled");
+        boolean enabled = teamChatButton.isSelected();
+        if (enabled) {
+            Chat.getInstance().enableChannel(ChatMessageType.TEAM);
         } else {
-            logger.info("Team chat disabled");
+            Chat.getInstance().disableChannel(ChatMessageType.TEAM);
         }
+        logger.info("Team chat {}", enabled ? "enabled" : "disabled");
     }
 
     @FXML
     public void ignorePlayer() {
         String player = addIgnoredPlayer.getValue();
         if (player != null && !player.equals("Add RiotId#RiotTag")) {
+            Chat.getInstance().ignoreUser(player);
             logger.info("Ignoring player: {}", player);
             showInformation("Player Ignored", "Added " + player + " to ignore list");
         }
@@ -332,6 +572,7 @@ public class ValVoiceController {
     public void unignorePlayer() {
         String player = removeIgnoredPlayer.getValue();
         if (player != null && !player.equals("View/Remove RiotID#RiotTag")) {
+            Chat.getInstance().unignoreUser(player);
             logger.info("Unignoring player: {}", player);
             showInformation("Player Unignored", "Removed " + player + " from ignore list");
         }
@@ -355,5 +596,125 @@ public class ValVoiceController {
             logger.error("Could not open Discord invite", e);
             showAlert("Error", "Failed to open Discord invite");
         }
+    }
+
+    /**
+     * Static narration entry-point used by ChatDataHandler after it has already
+     * applied filtering and recorded stats. This method should NOT alter Chat
+     * statistics besides updating UI labels; those are handled upstream.
+     */
+    public static void narrateMessage(Message msg) {
+        ValVoiceController c = latestInstance;
+        if (c == null || msg == null) return;
+        if (msg.getContent() == null) return;
+        try {
+            if (c.ttsEngine != null) {
+                int sapiRate = c.mapSliderToSapiRate();
+                String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
+                c.ttsEngine.speak(msg.getContent(), selectedVoice, sapiRate);
+            }
+            // Update UI stats from Chat (already incremented by ChatDataHandler)
+            Chat chat = Chat.getInstance();
+            c.setMessagesSentLabel(chat.getNarratedMessages());
+            c.setCharactersNarratedLabel(chat.getNarratedCharacters());
+        } catch (Exception e) {
+            logger.debug("narrateMessage failed", e);
+        }
+    }
+
+    /**
+     * Entry point for incoming raw XMPP chat XML stanzas.
+     * In a real integration this would be invoked by a networking / XMPP listener thread.
+     */
+    public void handleIncomingChatXml(String xml) {
+        if (xml == null || xml.isBlank()) return;
+        Message message = ChatDataHandler.getInstance().parseMessage(xml);
+        if (message == null) return;
+        // Delegate to unified handler (will record stats + narrate)
+        ChatDataHandler.getInstance().message(message);
+        logger.debug("Processed incoming chat XML via unified handler: {}", message);
+    }
+
+    private int mapSliderToSapiRate() {
+        if (rateSlider == null) return 0; // neutral
+        double v = rateSlider.getValue(); // 0..100
+        // Linear map 0 -> -5, 50 -> 0, 100 -> +5 (conservative to keep quality) or extend to -10..10 if desired
+        // Adjusted to full SAPI range:
+        return (int) Math.round((v / 100.0) * 20.0 - 10.0); // 0..100 -> -10..10
+    }
+
+    public void shutdownServices() {
+        if (ttsEngine != null) {
+            ttsEngine.shutdown();
+        }
+        if (chatListenerService != null) {
+            chatListenerService.stop();
+        }
+        if (inbuiltSynth != null) {
+            inbuiltSynth.shutdown();
+        }
+    }
+
+    private void startChatSimulation() {
+        Thread sim = new Thread(() -> {
+            try {
+                String[] samples = new String[]{
+                        "<message from='playerSelf@ares-parties.na1.pvp.net' type='groupchat'><body>Hello party!</body></message>",
+                        "<message from='ally123@ares-coregame.na1.pvp.net' type='groupchat'><body>Team push B</body></message>",
+                        "<message from='villainall@ares-coregame.na1.pvp.net' type='groupchat'><body>GL HF</body></message>",
+                        "<message from='friend987@ares-pregame.na1.pvp.net' type='groupchat'><body>Ready?</body></message>",
+                        "<message from='whisperGuy@prod.na1.chat.valorant.gg' type='chat'><body>&amp;Encoded &lt;Whisper&gt;</body></message>"
+                };
+                ChatDataHandler.getInstance().updateSelfId("playerSelf");
+                Platform.runLater(() -> {
+                    if (sources != null) sources.setValue("SELF+PARTY+TEAM+ALL");
+                });
+                int i = 0;
+                while (SIMULATE_CHAT && i < samples.length) {
+                    handleIncomingChatXml(samples[i]);
+                    i++;
+                    Thread.sleep(2500);
+                }
+            } catch (InterruptedException ignored) { }
+        }, "ChatSimThread");
+        sim.setDaemon(true);
+        sim.start();
+    }
+
+    // Placeholder for future real Valorant chat integration.
+    // A future implementation could establish authenticated WebSocket / XMPP connection
+    // and forward raw XML / JSON converted messages to handleIncomingChatXml().
+    private void startValorantChatBridge() {
+        // TODO: Implement Valorant chat capture
+    }
+
+    private void verifyExternalDependencies() {
+        Path workingDir = Paths.get(System.getProperty("user.dir"));
+        Path xmppExe = workingDir.resolve(XMPP_BRIDGE_EXE);
+        if (Files.notExists(xmppExe)) {
+            logger.warn("XMPP bridge executable '{}' not found in working directory (using fallback embedded script).", XMPP_BRIDGE_EXE);
+        } else {
+            logger.info("Detected external XMPP bridge executable: {}", xmppExe.toAbsolutePath());
+        }
+        Path svv = locateSoundVolumeView();
+        if (svv == null) {
+            logger.warn("{} not found. VB-Audio routing will rely on legacy attempt inside InbuiltVoiceSynthesizer if available.", SOUND_VOLUME_VIEW_EXE);
+        } else {
+            logger.info("Detected {} at {}", SOUND_VOLUME_VIEW_EXE, svv.toAbsolutePath());
+        }
+    }
+
+    private Path locateSoundVolumeView() {
+        Path workingDir = Paths.get(System.getProperty("user.dir"));
+        Path candidate = workingDir.resolve(SOUND_VOLUME_VIEW_EXE);
+        if (Files.isRegularFile(candidate)) return candidate;
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null) {
+            Path pf = Paths.get(programFiles, "ValorantNarrator", SOUND_VOLUME_VIEW_EXE);
+            if (Files.isRegularFile(pf)) return pf;
+            Path pfAlt = Paths.get(programFiles, SOUND_VOLUME_VIEW_EXE);
+            if (Files.isRegularFile(pfAlt)) return pfAlt;
+        }
+        return null;
     }
 }

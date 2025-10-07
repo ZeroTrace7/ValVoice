@@ -347,9 +347,12 @@
                             <!-- Voice Selection -->
                             <VBox spacing="8">
                                 <Label text="Voice" styleClass="setting-label" />
-                                <ComboBox fx:id="voices" prefWidth="Infinity" maxWidth="500.0"
-                                          onAction="#selectVoice" promptText="Select a voice"
-                                          styleClass="setting-combo" />
+                                <HBox spacing="10" alignment="CENTER_LEFT">
+                                    <ComboBox fx:id="voices" prefWidth="Infinity" maxWidth="500.0"
+                                              onAction="#selectVoice" promptText="Select a voice"
+                                              styleClass="setting-combo" HBox.hgrow="ALWAYS" />
+                                    <Button text="Refresh" onAction="#refreshVoices" styleClass="secondary-button" />
+                                </HBox>
                                 <Label text="Choose the voice for text-to-speech narration"
                                        styleClass="hint-label" />
                             </VBox>

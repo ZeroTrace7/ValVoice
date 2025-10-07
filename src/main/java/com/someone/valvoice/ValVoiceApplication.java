@@ -25,6 +25,7 @@ public class ValVoiceApplication extends Application {
     private static final Logger logger = LoggerFactory.getLogger(ValVoiceApplication.class);
     private boolean firstTime = true;
     private TrayIcon trayIcon;
+    private ValVoiceController controller; // reference to controller for lifecycle management
 
     /**
      * Shows a dialog before JavaFX is initialized (uses Swing)
@@ -93,6 +94,9 @@ public class ValVoiceApplication extends Application {
         FXMLLoader fxmlLoader = new FXMLLoader(
                 ValVoiceApplication.class.getResource("mainApplication.fxml")
         );
+        // load root and obtain controller
+        Scene scene = new Scene(fxmlLoader.load());
+        controller = fxmlLoader.getController();
 
         // Configure stage
         stage.initStyle(StageStyle.TRANSPARENT);
@@ -104,15 +108,28 @@ public class ValVoiceApplication extends Application {
         // Keep app running when window is closed
         Platform.setImplicitExit(false);
 
-        // Create scene with transparent background
-        Scene scene = new Scene(fxmlLoader.load());
         scene.setFill(Color.TRANSPARENT);
-
         stage.setScene(scene);
         stage.setResizable(false);
         stage.show();
 
+        // Register shutdown hook to ensure TTS engine stops if System.exit used
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (controller != null) {
+                controller.shutdownServices();
+            }
+        }, "ValVoice-ShutdownHook"));
+
         logger.info("Application window displayed");
+    }
+
+    @Override
+    public void stop() {
+        // Called when JavaFX runtime is stopping (may not run if forced exit)
+        if (controller != null) {
+            controller.shutdownServices();
+        }
+        logger.info("ValVoiceApplication stopped");
     }
 
     /**
