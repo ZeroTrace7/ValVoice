@@ -109,6 +109,27 @@ public class Main {
                 return;
             }
             String nodeCommand = "node"; // Assumes Node.js is on PATH
+            // Verify Node.js availability
+            try {
+                Process ver = new ProcessBuilder(nodeCommand, "--version").redirectErrorStream(true).start();
+                if (!ver.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    ver.destroyForcibly();
+                    logger.error("Node.js availability check timed out; cannot run embedded XMPP stub.");
+                    System.setProperty("valvoice.nodeAvailable", "false");
+                    return;
+                }
+                int code = ver.exitValue();
+                if (code != 0) {
+                    logger.error("Node.js not available (exit code {}). Install Node.js or provide {}.", code, XMPP_EXE_NAME);
+                    System.setProperty("valvoice.nodeAvailable", "false");
+                    return;
+                }
+                System.setProperty("valvoice.nodeAvailable", "true");
+            } catch (Exception ex) {
+                logger.error("Node.js not found on PATH. Install Node.js or place {} next to the JAR.", XMPP_EXE_NAME, ex);
+                System.setProperty("valvoice.nodeAvailable", "false");
+                return;
+            }
             pb = new ProcessBuilder(nodeCommand, tempScriptPath.toAbsolutePath().toString());
         }
 
@@ -116,7 +137,13 @@ public class Main {
         pb.directory(workingDir.toFile());
         try {
             xmppNodeProcess = pb.start();
-            logger.info("Started XMPP bridge (mode: {})", useExternalExe ? "external-exe" : "embedded-script");
+            String mode = useExternalExe ? "external-exe" : "embedded-script";
+            System.setProperty("valvoice.bridgeMode", mode);
+            if (useExternalExe) {
+                // Node availability not relevant; mark unknown
+                System.setProperty("valvoice.nodeAvailable", System.getProperty("valvoice.nodeAvailable", "n/a"));
+            }
+            logger.info("Started XMPP bridge (mode: {})", mode);
         } catch (IOException e) {
             logger.error("Failed to start XMPP bridge process", e);
             return;

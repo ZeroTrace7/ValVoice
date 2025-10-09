@@ -71,6 +71,13 @@ public class ValVoiceController {
     // Text Fields
     @FXML public TextField keybindTextField;
 
+    // Status bar labels (injected from FXML)
+    @FXML public Label statusXmpp;         // XMPP bridge executable presence / readiness
+    @FXML public Label statusBridgeMode;   // external-exe vs embedded-script
+    @FXML public Label statusVbCable;      // VB-Audio virtual cable detection
+    @FXML public Label statusAudioRoute;   // SoundVolumeView availability
+    @FXML public Label statusSelfId;       // Current self player id
+
     // ========== State Variables ==========
     private boolean isLoading = true;
     private boolean isAppDisabled = false;
@@ -122,22 +129,28 @@ public class ValVoiceController {
         // Register listener for self ID changes (immediate invoke to show current value)
         ChatDataHandler.getInstance().registerSelfIdListener(id -> {
             if (id != null) {
-                Platform.runLater(() -> setUserIDLabel(id));
+                Platform.runLater(() -> {
+                    setUserIDLabel(id);
+                    updateStatusLabel(statusSelfId, "Self: " + id, true);
+                });
             }
         }, true);
 
         // Set initial visible panel
         lastAnchorPane = panelUser;
+        // Initialize status labels early
+        updateStatusLabel(statusXmpp, "Checking...", false);
+        updateStatusLabel(statusBridgeMode, "-", false);
+        updateStatusLabel(statusVbCable, "Checking...", false);
+        updateStatusLabel(statusAudioRoute, "Checking...", false);
+        updateStatusLabel(statusSelfId, "Self: (pending)", false);
 
         // Populate ComboBoxes with data
         populateComboBoxes();
-
         // Start loading animation
         startLoadingAnimation();
-
         // Simulate loading process
         simulateLoading();
-        // Removed enforceNoShrinkEffects as it caused perceived shrinking flicker
 
         ttsEngine = new TtsEngine();
         // Initialize persistent inbuilt synthesizer (Windows-only)
@@ -150,9 +163,33 @@ public class ValVoiceController {
         }
         // New: attempt to auto-initialize Riot local API and resolve self player ID.
         initRiotLocalApiAsync();
-
-        // After synthesizer initialization, verify external tool availability
+        // Dependency + bridge checks
         verifyExternalDependencies();
+        updateBridgeStatusFromSystemProperties();
+    }
+
+    private void updateBridgeStatusFromSystemProperties() {
+        String mode = System.getProperty("valvoice.bridgeMode", "unknown");
+        Platform.runLater(() -> {
+            if (statusBridgeMode != null) statusBridgeMode.setText(mode);
+            if (statusXmpp != null) {
+                if ("external-exe".equalsIgnoreCase(mode)) {
+                    updateStatusLabel(statusXmpp, "Ready", true);
+                } else if ("embedded-script".equalsIgnoreCase(mode)) {
+                    updateStatusLabel(statusXmpp, "Stub (demo only)", false);
+                } else {
+                    updateStatusLabel(statusXmpp, "Init...", false);
+                }
+            }
+        });
+    }
+
+    private void updateStatusLabel(Label label, String text, boolean ok) {
+        if (label == null) return;
+        Platform.runLater(() -> {
+            label.setText(text);
+            label.setStyle(ok ? "-fx-text-fill:#59c164;" : "-fx-text-fill:#d89b52;");
+        });
     }
 
     private void initRiotLocalApiAsync() {
@@ -691,16 +728,49 @@ public class ValVoiceController {
     private void verifyExternalDependencies() {
         Path workingDir = Paths.get(System.getProperty("user.dir"));
         Path xmppExe = workingDir.resolve(XMPP_BRIDGE_EXE);
-        if (Files.notExists(xmppExe)) {
+        boolean xmppExePresent = Files.isRegularFile(xmppExe);
+        if (!xmppExePresent) {
             logger.warn("XMPP bridge executable '{}' not found in working directory (using fallback embedded script).", XMPP_BRIDGE_EXE);
+            updateStatusLabel(statusXmpp, "Missing exe (stub)", false);
         } else {
             logger.info("Detected external XMPP bridge executable: {}", xmppExe.toAbsolutePath());
+            updateStatusLabel(statusXmpp, "Detected", true);
         }
         Path svv = locateSoundVolumeView();
         if (svv == null) {
             logger.warn("{} not found. VB-Audio routing will rely on legacy attempt inside InbuiltVoiceSynthesizer if available.", SOUND_VOLUME_VIEW_EXE);
+            updateStatusLabel(statusAudioRoute, "Tool missing", false);
         } else {
             logger.info("Detected {} at {}", SOUND_VOLUME_VIEW_EXE, svv.toAbsolutePath());
+            updateStatusLabel(statusAudioRoute, "Ready", true);
+        }
+        detectVbCableDevices();
+    }
+
+    private void detectVbCableDevices() {
+        if (!isWindows()) return;
+        try {
+            // Use PowerShell to list sound devices names; lightweight query.
+            String ps = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
+            java.util.List<String> lines = runPowerShell(ps, 8);
+            boolean hasCableInput = false;
+            boolean hasCableOutput = false;
+            for (String l : lines) {
+                if (l == null) continue;
+                String lower = l.toLowerCase();
+                if (lower.contains("cable input")) hasCableInput = true;
+                if (lower.contains("cable output")) hasCableOutput = true;
+            }
+            if (hasCableInput && hasCableOutput) {
+                logger.info("VB-Audio Virtual Cable devices detected (Input & Output).");
+                updateStatusLabel(statusVbCable, "Detected", true);
+            } else {
+                logger.warn("VB-Audio Virtual Cable devices missing or incomplete: Input={} Output={}. Narration may not reach Valorant mic.", hasCableInput, hasCableOutput);
+                updateStatusLabel(statusVbCable, "Missing", false);
+            }
+        } catch (Exception e) {
+            logger.debug("VB-Cable detection failed (non-fatal)", e);
+            updateStatusLabel(statusVbCable, "Error", false);
         }
     }
 

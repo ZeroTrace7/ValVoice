@@ -514,5 +514,21 @@
                 </VBox>
             </AnchorPane>
         </ScrollPane>
+
+        <!-- ========== STATUS BAR (Dependency / Runtime Status) ========== -->
+        <HBox fx:id="statusBar" spacing="18" alignment="CENTER_LEFT"
+              AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0"
+              prefHeight="26" style="-fx-background-color: #1e1e1e; -fx-padding:4 10 4 10; -fx-border-color:#2d2d2d; -fx-border-width:1 0 0 0;">
+            <Label text="XMPP:" styleClass="status-label-static" />
+            <Label fx:id="statusXmpp" text="Checking..." styleClass="status-label" />
+            <Label text="Mode:" styleClass="status-label-static" />
+            <Label fx:id="statusBridgeMode" text="-" styleClass="status-label" />
+            <Label text="VB-Cable:" styleClass="status-label-static" />
+            <Label fx:id="statusVbCable" text="Checking..." styleClass="status-label" />
+            <Label text="AudioRouting:" styleClass="status-label-static" />
+            <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" />
+            <Region HBox.hgrow="ALWAYS" />
+            <Label fx:id="statusSelfId" text="Self: (pending)" styleClass="status-label" />
+        </HBox>
     </AnchorPane>
 </AnchorPane>

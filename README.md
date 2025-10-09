@@ -22,31 +22,43 @@ Instead:
 | XMPP Bridge (native) | `valorantNarrator-xmpp.exe` | Strongly Recommended | Real Riot XMPP connection + stanza → JSON stream |
 | XMPP Stub (fallback) | Embedded `xmpp-node.js` | Automatic fallback | Demo / test only (simulated messages) |
 | Audio Routing Tool | `SoundVolumeView.exe` | Optional (recommended) | Route TTS output to VB-CABLE device automatically |
-| Virtual Audio Driver | VB-Audio Virtual Cable | REQUIRED for in-game narration injection | Provides `CABLE Input` device Valorant can treat as a microphone |
+| Virtual Audio Driver | VB-Audio Virtual Cable | REQUIRED (MUST INSTALL) | Provides `CABLE Input` / `CABLE Output` virtual loopback |
 
 ### 2.1 XMPP Bridge Executable
 - Place `valorantNarrator-xmpp.exe` in the SAME working directory as the launched JAR (or the directory you run `java -jar` from).
-- Detected by name constant in `ValVoiceController` (documented near the top) and by `Main.startXmppNodeProcess()`.
+- Detected by name constant in `ValVoiceController` and by `Main.startXmppNodeProcess()`.
 - If missing, the log will show: `External valorantNarrator-xmpp.exe not found; falling back to embedded xmpp-node.js stub`.
 - Without it you will NOT receive real chat; only simulated sample messages from the stub.
 
 ### 2.2 Fallback Stub (Development Only)
 - Resource: `src/main/resources/com/someone/valvoice/xmpp-node.js`.
-- Emits: startup → bind iq (simulated self ID) → a few example `<message>` stanzas → heartbeats → error + close events.
-- Useful for verifying message parsing, self ID detection, and TTS pipeline.
+- Emits: startup → bind iq (simulated self ID) → sample `<message>` stanzas → heartbeats → error + close events.
+- Use only for development / UI + TTS verification.
 
 ### 2.3 SoundVolumeView Integration
-- If `SoundVolumeView.exe` is present (working directory or `ProgramFiles/ValorantNarrator/`), the inbuilt synthesizer attempts to route audio to `CABLE Input`.
-- Logs will indicate detection or absence.
-- If you need explicit routing commands manually: launch SoundVolumeView and set the default (or app-specific) output endpoint to `CABLE Input` for PowerShell / java processes.
+- If `SoundVolumeView.exe` is present (working directory or `%ProgramFiles%/ValorantNarrator/`), the inbuilt synthesizer attempts to route audio to `CABLE Input` automatically.
+- Otherwise, manual routing is required (Windows Sound Settings or per‑app audio routing utilities).
 
-### 2.4 VB-Audio Virtual Cable
+### 2.4 VB-Audio Virtual Cable (MANDATORY)
+**You MUST install VB-Audio Virtual Cable** to inject narration into Valorant voice chat.
 - Download: https://vb-audio.com/Cable/
-- Install (requires reboot on first install).
-- Confirms devices in Windows Sound Settings:
-  - Playback: `CABLE Input (VB-Audio Virtual Cable)`
-  - Recording: `CABLE Output (VB-Audio Virtual Cable)`
-- Flow: ValVoice TTS → (routed) CABLE Input → Valorant picks up as microphone (user sets in-game voice input to CABLE Output / corresponding mapping).
+- Install and reboot.
+- Devices created:
+  - Playback device: `CABLE Input (VB-Audio Virtual Cable)` – this is where ValVoice must send TTS.
+  - Recording device: `CABLE Output (VB-Audio Virtual Cable)` – configure Valorant to use this as microphone.
+- Audio Flow:
+  ```text
+  ValVoice TTS → (routed output) CABLE Input  →  CABLE Output (loopback)  →  Valorant Mic
+  ```
+- If either device name is missing at startup, ValVoice will log a WARNING: missing VB-Audio virtual cable devices.
+
+### 2.5 Quick Verification
+| Step | Expected Result |
+|------|-----------------|
+| Run `mmsys.cpl` (Sound control panel) | See CABLE Input (Playback) & CABLE Output (Recording) |
+| Launch ValVoice | Log shows detection of XMPP bridge + (optionally) SoundVolumeView |
+| Speak test (select voice) | Audio heard only if not routed; once routed Valorant teammates hear narration |
+| Valorant Settings → Audio → Voice Input | Set to CABLE Output |
 
 ## 3. Message Processing Flow
 1. Read JSON line from bridge stdout.
@@ -70,8 +82,9 @@ Instead:
 ### 5.1 Prerequisites
 - JDK 17 (runtime)
 - Windows (PowerShell + SAPI voice stack)
-- (Recommended) `valorantNarrator-xmpp.exe` placed with the JAR.
-- VB-Audio Virtual Cable installed & enabled.
+- VB-Audio Virtual Cable installed (mandatory)
+- (Recommended) `valorantNarrator-xmpp.exe` placed with the JAR
+- (Optional) `SoundVolumeView.exe` present for automatic routing
 
 ### 5.2 Build
 ```bash
@@ -84,8 +97,9 @@ Output JAR: `target/valvoice-1.0.0.jar`
 java -jar target/valvoice-1.0.0.jar
 ```
 Check logs for:
-- `Started XMPP bridge (mode: external-exe)` (success with real executable)
-- OR fallback: `embedded-script` (simulation only)
+- `Started XMPP bridge (mode: external-exe)` (real chat)
+- OR `embedded-script` (simulation only)
+- VB-Cable presence warnings if driver devices not found
 
 ### 5.4 Common Log Indicators
 | Log Snippet | Meaning |
@@ -94,6 +108,7 @@ Check logs for:
 | Received message: (PARTY)ally123@... | Parsed message ready for possible narration |
 | XMPP error event: ... | Bridge reported an error (transient / connectivity) |
 | Valorant closed event received | Bridge observed client shutdown |
+| WARNING missing VB-Audio virtual cable devices | Driver not installed / not enumerated |
 
 ## 6. Troubleshooting
 | Issue | Cause | Action |
@@ -101,8 +116,9 @@ Check logs for:
 | No messages, only heartbeats | Missing external bridge exe; stub only | Place `valorantNarrator-xmpp.exe` and restart |
 | Voices list empty | SAPI / System.Speech enumeration failed | Reinstall voices, run PowerShell test manually |
 | Not narrating own messages | SELF not included in source selection | Select a source combination including SELF |
-| Wrong device output | Audio not routed to VB-CABLE | Ensure SoundVolumeView route or set default playback device |
+| Wrong device output | Audio not routed to VB-CABLE | Use SoundVolumeView or set default playback manually |
 | Self ID never detected | Bind stanza not received | Confirm bridge auth / connectivity; check lockfile credentials |
+| VB-Cable warning at startup | Driver not installed / service not ready | Reinstall / reboot, verify devices in Sound panel |
 
 ## 7. Extending
 - Add new event types: extend switch in `Main` → `handleIncomingStanza` for additional stanza categories.
@@ -118,4 +134,3 @@ Check logs for:
 
 ---
 If you add or rename the executable, update `XMPP_EXE_NAME` in `Main` and the documentation constant in `ValVoiceController`.
-
