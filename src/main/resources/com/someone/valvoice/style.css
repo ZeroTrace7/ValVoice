@@ -502,3 +502,80 @@
 .label {
     -fx-text-fill: #ffffff;
 }
+
+/* ========== STATUS BAR STYLES ========== */
+/* Status bar background and structure */
+#statusBar {
+    -fx-background-color: linear-gradient(to right, #16213e, #1a1a2e);
+    -fx-border-color: #533483;
+    -fx-border-width: 2 0 0 0;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 10, 0, 0, -2);
+}
+
+/* Static labels (keys like "XMPP:", "VB-Cable:", etc.) */
+.status-label-static {
+    -fx-text-fill: #a0a0a0;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 2 0 2 0;
+}
+
+/* Dynamic status labels (values) */
+.status-label {
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+    -fx-padding: 2 8 2 8;
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+}
+
+/* Status indicator colors - these will be applied dynamically */
+/* Green/OK status */
+.status-ok {
+    -fx-text-fill: #00ff88 !important;
+    -fx-background-color: rgba(0, 255, 136, 0.15) !important;
+    -fx-border-color: #00ff88;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-font-weight: bold;
+}
+
+/* Yellow/Warning status */
+.status-warning {
+    -fx-text-fill: #ffd700 !important;
+    -fx-background-color: rgba(255, 215, 0, 0.15) !important;
+    -fx-border-color: #ffd700;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-font-weight: bold;
+}
+
+/* Red/Error status */
+.status-error {
+    -fx-text-fill: #ff4444 !important;
+    -fx-background-color: rgba(255, 68, 68, 0.15) !important;
+    -fx-border-color: #ff4444;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-font-weight: bold;
+}
+
+/* Blue/Info status */
+.status-info {
+    -fx-text-fill: #00d4ff !important;
+    -fx-background-color: rgba(0, 212, 255, 0.15) !important;
+    -fx-border-color: #00d4ff;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-font-weight: bold;
+}
+
+/* Self ID label special styling */
+#statusSelfId {
+    -fx-text-fill: #00d4ff;
+    -fx-font-size: 11px;
+    -fx-font-style: italic;
+    -fx-padding: 2 8 2 8;
+}
