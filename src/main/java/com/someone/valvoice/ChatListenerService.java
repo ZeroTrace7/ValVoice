@@ -4,7 +4,6 @@ import com.google.gson.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -26,6 +25,9 @@ public class ChatListenerService {
 
     private final Set<String> seenIds = new HashSet<>(); // track message IDs to avoid duplicates
     private String lastMessageId = null; // optional progressive tracking
+    private int consecutiveFailures = 0; // track consecutive API failures
+    private static final int MAX_FAILURES_BEFORE_WARN = 5;
+    private static final int MAX_POLL_INTERVAL_MS = 30_000; // max 30 seconds between polls
 
     public ChatListenerService(Consumer<String> xmlConsumer) {
         this.xmlConsumer = xmlConsumer;
@@ -34,6 +36,7 @@ public class ChatListenerService {
     public void start() {
         if (running) return;
         running = true;
+        consecutiveFailures = 0; // reset on start
         worker = new Thread(this::loop, "ValorantChatPoller");
         worker.setDaemon(true);
         worker.start();
@@ -53,12 +56,33 @@ public class ChatListenerService {
             } catch (Exception e) {
                 logger.debug("Chat poll failed", e);
             }
-            try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+            // Exponential backoff based on consecutive failures
+            int sleepTime = calculateBackoffTime();
+            try {
+                Thread.sleep(sleepTime);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+    }
+
+    private int calculateBackoffTime() {
+        if (consecutiveFailures == 0) {
+            return 2000; // Normal polling: 2 seconds
+        } else if (consecutiveFailures < MAX_FAILURES_BEFORE_WARN) {
+            // Gradual backoff: 2s, 4s, 6s, 8s, 10s
+            return Math.min(2000 * (consecutiveFailures + 1), 10_000);
+        } else {
+            // After many failures, poll less frequently to reduce spam
+            return Math.min(5000 * (consecutiveFailures - MAX_FAILURES_BEFORE_WARN + 2), MAX_POLL_INTERVAL_MS);
         }
     }
 
     private void pollOnce() {
-        if (!api.isReady()) return;
+        if (!api.isReady()) {
+            consecutiveFailures++;
+            return;
+        }
         // Try v6 then fallback to v5
         String[] paths = {"/chat/v6/messages", "/chat/v5/messages"};
         String json = null;
@@ -66,7 +90,25 @@ public class ChatListenerService {
             json = api.rawGet(p).orElse(null);
             if (json != null) break;
         }
-        if (json == null) return;
+
+        if (json == null) {
+            consecutiveFailures++;
+            // Only log warning after several consecutive failures to avoid spam
+            if (consecutiveFailures == MAX_FAILURES_BEFORE_WARN) {
+                logger.warn("Chat API endpoints not responding after {} attempts. Valorant may not be running. Reducing poll frequency.", MAX_FAILURES_BEFORE_WARN);
+            } else if (consecutiveFailures > MAX_FAILURES_BEFORE_WARN && consecutiveFailures % 10 == 0) {
+                logger.debug("Chat API still unavailable ({} failures). Polling every {} seconds.",
+                    consecutiveFailures, calculateBackoffTime() / 1000);
+            }
+            return;
+        }
+
+        // Success - reset failure counter
+        if (consecutiveFailures >= MAX_FAILURES_BEFORE_WARN) {
+            logger.info("Chat API connection restored after {} failures", consecutiveFailures);
+        }
+        consecutiveFailures = 0;
+
         JsonObject root;
         try {
             root = gson.fromJson(json, JsonObject.class);
@@ -130,4 +172,3 @@ public class ChatListenerService {
         try { return el.getAsString(); } catch (Exception e) { return def; }
     }
 }
-

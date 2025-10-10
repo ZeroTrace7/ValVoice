@@ -43,7 +43,7 @@ public class Main {
     private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE);
     private static final Pattern MESSAGE_START_PATTERN = Pattern.compile("^<message", Pattern.CASE_INSENSITIVE);
     private static final Pattern IQ_START_PATTERN = Pattern.compile("^<iq", Pattern.CASE_INSENSITIVE);
-    // External bridge name (only this is supported)
+        // External bridge name (only this is supported)
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-xmpp.exe";
 
     private static boolean lockInstance() {
@@ -179,8 +179,14 @@ public class Main {
                                 String err = obj.has("error") ? obj.get("error").getAsString() : "(unknown)";
                                 logger.warn("XMPP error event: {}", err);
                             }
-                            case "close-riot" -> logger.info("Riot client closed event received");
-                            case "close-valorant" -> logger.info("Valorant closed event received");
+                            case "close-riot" -> {
+                                logger.info("Riot client closed event received");
+                                stopChatListenerIfRunning();
+                            }
+                            case "close-valorant" -> {
+                                logger.info("Valorant closed event received");
+                                stopChatListenerIfRunning();
+                            }
                             case "startup", "heartbeat", "shutdown" -> logger.debug("[XmppBridge:{}] {}", type, obj);
                             default -> logger.debug("[XmppBridge:?] {}", obj);
                         }
@@ -319,6 +325,21 @@ public class Main {
             }
         } catch (Exception e) {
             logger.debug("Failed to parse bind iq for self ID", e);
+        }
+    }
+
+    private static void stopChatListenerIfRunning() {
+        try {
+            ValVoiceController controller = ValVoiceController.getLatestInstance();
+            if (controller != null) {
+                ChatListenerService service = controller.getChatListenerService();
+                if (service != null) {
+                    service.stop();
+                    logger.info("Stopped ChatListenerService due to game closure");
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to stop ChatListenerService", e);
         }
     }
 

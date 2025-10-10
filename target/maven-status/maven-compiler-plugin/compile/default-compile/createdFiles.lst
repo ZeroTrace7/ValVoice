@@ -1,4 +1,5 @@
 com\someone\valvoice\APIHandler$1.class
+com\someone\valvoice\AudioRouter.class
 com\someone\valvoice\LockFileHandler.class
 com\someone\valvoice\Message.class
 com\someone\valvoice\ChatListenerService.class

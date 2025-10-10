@@ -93,13 +93,20 @@ public class InbuiltVoiceSynthesizer {
 
     private void configureAppAudioRoute() {
         try {
-            String programFiles = System.getenv("ProgramFiles");
-            if (programFiles == null) return;
-            File svv = new File(programFiles, "ValorantNarrator/ SoundVolumeView.exe".replace(" ", "")); // original path logic had a space; normalize
+            // Check working directory first (same folder as JAR)
+            File svv = new File(System.getProperty("user.dir"), "SoundVolumeView.exe");
+
+            // If not in working dir, check Program Files
             if (!svv.exists()) {
-                // Try alternative without folder name mismatch
-                svv = new File(programFiles, "ValorantNarrator/SoundVolumeView.exe");
+                String programFiles = System.getenv("ProgramFiles");
+                if (programFiles != null) {
+                    svv = new File(programFiles, "ValVoice/SoundVolumeView.exe");
+                    if (!svv.exists()) {
+                        svv = new File(programFiles, "SoundVolumeView.exe");
+                    }
+                }
             }
+
             if (!svv.exists()) {
                 logger.debug("SoundVolumeView.exe not found; skipping VB-CABLE routing");
                 return;
@@ -190,4 +197,3 @@ public class InbuiltVoiceSynthesizer {
         try { c.close(); } catch (IOException ignored) {}
     }
 }
-

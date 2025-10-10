@@ -2,6 +2,74 @@
 
 Lightweight Valorant chat narrator that converts in-game chat messages to spoken audio (Windows + JavaFX). Chat messages are acquired via an external XMPP bridge process (required) or a fallback embedded Node.js stub for demo only.
 
+## Quick Start Guide (MANDATORY SETUP)
+
+### ⚠️ CRITICAL: Install VB-Audio Virtual Cable FIRST
+**This application WILL NOT WORK without VB-Audio Virtual Cable installed!**
+
+1. **Download VB-Audio Virtual Cable**: https://vb-audio.com/Cable/
+2. **Install the driver** and **reboot Windows** (reboot is mandatory)
+3. **Verify installation**: 
+   - Open Windows Sound Settings
+   - Check that you have:
+     - Playback device: `CABLE Input (VB-Audio Virtual Cable)`
+     - Recording device: `CABLE Output (VB-Audio Virtual Cable)`
+
+### ✅ Audio Routing (Automatic - No Additional Software Needed!)
+ValVoice now includes **built-in audio routing** that automatically configures your system to send TTS output to VB-CABLE.
+
+- ✨ **No external tools required** - Audio routing happens automatically
+- 🔧 **Automatic detection** - The app will detect and configure VB-CABLE on startup
+- ⚡ **Instant setup** - No manual configuration needed
+
+**Note:** The old SoundVolumeView.exe is no longer required. If you have it, the app will use it as a fallback, but the built-in routing works better.
+
+### 🔧 Build valvoice-xmpp.exe
+The XMPP bridge is required for real Valorant chat integration.
+
+**Option A: Automatic Build (Easiest)**
+- Just run the application! If Node.js is installed, it will auto-build `valvoice-xmpp.exe` on first launch.
+
+**Option B: Manual Build**
+```bat
+cd xmpp-bridge
+npm install
+npm run build:exe
+cd ..
+```
+This creates `valvoice-xmpp.exe` in the root folder.
+
+**Prerequisites for building:**
+- Node.js 18+ installed (https://nodejs.org/)
+- npm (comes with Node.js)
+
+### 🎮 Configure Valorant Audio Settings
+**After installing VB-Audio Virtual Cable:**
+
+1. Launch Valorant
+2. Go to **Settings** → **Audio** → **Voice Chat**
+3. Set **Input Device** to: `CABLE Output (VB-Audio Virtual Cable)`
+4. Leave your normal headset as the output device
+
+**How it works:**
+```
+ValVoice TTS → CABLE Input → CABLE Output → Valorant Mic → Your Teammates Hear It
+```
+
+### ▶️ Running ValVoice
+```bat
+java -jar target\valvoice-1.0.0.jar
+```
+
+Or use Maven:
+```bat
+mvn javafx:run
+```
+
+Check the status bar for "XMPP: Ready" to confirm the bridge is running.
+
+---
+
 ## 1. Architecture Overview
 
 Java (ValVoice) does NOT open Riot's XMPP socket directly.
@@ -21,7 +89,6 @@ Instead:
 |-----------|------|-----------|---------|
 | XMPP Bridge (native) | `valvoice-xmpp.exe` | Strongly Recommended | Real Riot XMPP connection + stanza → JSON stream |
 | XMPP Stub (fallback) | Embedded `xmpp-node.js` | Automatic fallback | Demo / test only (simulated messages) |
-| Audio Routing Tool | `SoundVolumeView.exe` | Optional (recommended) | Route TTS output to VB-CABLE device automatically |
 | Virtual Audio Driver | VB-Audio Virtual Cable | REQUIRED (MUST INSTALL) | Provides `CABLE Input` / `CABLE Output` virtual loopback |
 
 ### 2.1 Building the Bridge Executable (valvoice-xmpp.exe)
@@ -40,24 +107,6 @@ cd ..
 This produces `valvoice-xmpp.exe` in the repository root (same folder as the JAR).
 
 Place `valvoice-xmpp.exe` next to your runnable JAR before launching. The app only supports this filename.
-
-### 2.2 SoundVolumeView Integration
-- Download NirSoft SoundVolumeView (https://www.nirsoft.net/utils/sound_volume_view.html).
-- Place `SoundVolumeView.exe` next to your runnable JAR (or under `%ProgramFiles%\ValorantNarrator\`).
-- On startup, ValVoice will attempt to route `powershell.exe` (used for TTS) to `CABLE Input` automatically.
-
-### 2.3 VB-Audio Virtual Cable (MANDATORY)
-**You MUST install VB-Audio Virtual Cable** to inject narration into Valorant voice chat.
-- Download: https://vb-audio.com/Cable/
-- Install and reboot.
-- Devices created:
-  - Playback device: `CABLE Input (VB-Audio Virtual Cable)`
-  - Recording device: `CABLE Output (VB-Audio Virtual Cable)`
-- Audio Flow:
-  ```text
-  ValVoice TTS → (routed output) CABLE Input  →  CABLE Output (loopback)  →  Valorant Mic
-  ```
-- In Valorant Settings → Audio → Voice Chat, set Input Device to `CABLE Output`.
 
 ## 3. Message Processing Flow
 1. Read JSON line from bridge stdout.

@@ -40,6 +40,10 @@ public class APIHandler {
 
     private RiotClientDetails clientDetails;
 
+    // Track consecutive failures to reduce log spam
+    private int consecutiveFailures = 0;
+    private static final int FAILURE_LOG_THRESHOLD = 10;
+
     private APIHandler() {}
 
     public static APIHandler getInstance() { return INSTANCE; }
@@ -96,12 +100,24 @@ public class APIHandler {
         try {
             HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
+                // Reset failure counter on success
+                if (consecutiveFailures >= FAILURE_LOG_THRESHOLD) {
+                    logger.info("API connection restored after {} consecutive failures", consecutiveFailures);
+                }
+                consecutiveFailures = 0;
                 return Optional.ofNullable(resp.body());
             }
-            logger.debug("Request {} failed with status {} body {}", request.uri(), resp.statusCode(), resp.body());
+            consecutiveFailures++;
+            // Only log first few failures and then periodically to avoid spam
+            if (consecutiveFailures < FAILURE_LOG_THRESHOLD || consecutiveFailures % 50 == 0) {
+                logger.debug("Request {} failed with status {} body {}", request.uri(), resp.statusCode(), resp.body());
+            }
             return Optional.empty();
         } catch (IOException | InterruptedException e) {
-            logger.debug("HTTP request failed: {}", request.uri(), e);
+            consecutiveFailures++;
+            if (consecutiveFailures < FAILURE_LOG_THRESHOLD || consecutiveFailures % 50 == 0) {
+                logger.debug("HTTP request failed: {}", request.uri(), e);
+            }
             return Optional.empty();
         }
     }

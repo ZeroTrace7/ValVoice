@@ -58,6 +58,11 @@ public class TtsEngine {
     }
 
     private void execSpeak(SpeakRequest req) {
+        // Check if we're shutting down before starting
+        if (!running.get()) {
+            return;
+        }
+
         long start = System.currentTimeMillis();
         String escapedText = escapeForSingleQuotedPs(req.text);
         String escapedVoice = req.voice == null ? "" : req.voice.replace("'", "''");
@@ -83,10 +88,27 @@ public class TtsEngine {
             if (code != 0) {
                 logger.debug("TTS process exit code {} for text='{}'", code, abbreviate(req.text));
             }
+        } catch (InterruptedException e) {
+            // Don't log as warning if we're shutting down
+            if (running.get()) {
+                logger.debug("TTS interrupted for text: {}", abbreviate(req.text));
+            }
+            Thread.currentThread().interrupt(); // Restore interrupt status
+            return;
         } catch (Exception e) {
             logger.warn("Failed to speak text: {}", abbreviate(req.text), e);
         } finally {
-            if (process != null) process.destroyForcibly();
+            if (process != null && process.isAlive()) {
+                process.destroy();
+                try {
+                    if (!process.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                        process.destroyForcibly();
+                    }
+                } catch (InterruptedException ie) {
+                    process.destroyForcibly();
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
         long ms = System.currentTimeMillis() - start;
         logger.trace("Spoke ({} ms): {}", ms, abbreviate(req.text));
@@ -109,4 +131,3 @@ public class TtsEngine {
         }
     }
 }
-

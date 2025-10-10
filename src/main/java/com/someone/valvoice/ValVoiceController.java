@@ -93,7 +93,7 @@ public class ValVoiceController {
      */
     private static final String XMPP_BRIDGE_EXE_PRIMARY = "valvoice-xmpp.exe";
     /**
-     * Audio Routing Tool
+     * Audio Routing Tool (DEPRECATED - now using built-in AudioRouter)
      */
     private static final String SOUND_VOLUME_VIEW_EXE = "SoundVolumeView.exe";
 
@@ -103,6 +103,10 @@ public class ValVoiceController {
 
     public static ValVoiceController getLatestInstance() {
         return latestInstance;
+    }
+
+    public ChatListenerService getChatListenerService() {
+        return chatListenerService;
     }
 
     /**
@@ -723,22 +727,34 @@ public class ValVoiceController {
             logger.info("Detected external XMPP bridge executable: {}", xmppExe.toAbsolutePath());
             updateStatusLabel(statusXmpp, "Detected", true);
         }
-        Path svv = locateSoundVolumeView();
-        if (svv == null) {
-            logger.warn("{} not found. VB-Audio routing will rely on legacy attempt inside InbuiltVoiceSynthesizer if available.", SOUND_VOLUME_VIEW_EXE);
-            updateStatusLabel(statusAudioRoute, "Tool missing", false);
-        } else {
-            logger.info("Detected {} at {}", SOUND_VOLUME_VIEW_EXE, svv.toAbsolutePath());
-            updateStatusLabel(statusAudioRoute, "Ready", true);
-            // Proactively route PowerShell (used by TtsEngine) to VB-CABLE if devices exist
-            if ("Detected".equalsIgnoreCase(statusVbCable != null ? statusVbCable.getText() : "")) {
-                routePowershellToCable(svv);
+
+        // NEW: Use built-in AudioRouter instead of external tool
+        detectVbCableDevices();
+        if ("Detected".equalsIgnoreCase(statusVbCable != null ? statusVbCable.getText() : "")) {
+            logger.info("Configuring audio routing using built-in AudioRouter...");
+            boolean routingSuccess = AudioRouter.routeToVirtualCable();
+            if (routingSuccess) {
+                updateStatusLabel(statusAudioRoute, "Active (built-in)", true);
             } else {
-                // Attempt routing anyway; it will no-op if device name not found
+                updateStatusLabel(statusAudioRoute, "Manual setup needed", false);
+                logger.warn("Automatic audio routing failed. Please set audio manually:");
+                logger.warn("  Windows → Sound Settings → App volume → Java/PowerShell → Output: CABLE Input");
+            }
+        } else {
+            updateStatusLabel(statusAudioRoute, "VB-Cable not found", false);
+        }
+
+        // Legacy support: Still check for SoundVolumeView.exe but don't require it
+        Path svv = locateSoundVolumeView();
+        if (svv != null) {
+            logger.info("Note: {} detected but not needed (using built-in routing)", SOUND_VOLUME_VIEW_EXE);
+            // Fallback: Try SoundVolumeView if built-in routing failed
+            if (!"Active (built-in)".equals(statusAudioRoute.getText())) {
+                logger.info("Attempting fallback routing via SoundVolumeView...");
                 routePowershellToCable(svv);
+                updateStatusLabel(statusAudioRoute, "Active (SoundVolumeView)", true);
             }
         }
-        detectVbCableDevices();
     }
 
     private void detectVbCableDevices() {
@@ -774,7 +790,7 @@ public class ValVoiceController {
         if (Files.isRegularFile(candidate)) return candidate;
         String programFiles = System.getenv("ProgramFiles");
         if (programFiles != null) {
-            Path pf = Paths.get(programFiles, "ValorantNarrator", SOUND_VOLUME_VIEW_EXE);
+            Path pf = Paths.get(programFiles, "ValVoice", SOUND_VOLUME_VIEW_EXE);
             if (Files.isRegularFile(pf)) return pf;
             Path pfAlt = Paths.get(programFiles, SOUND_VOLUME_VIEW_EXE);
             if (Files.isRegularFile(pfAlt)) return pfAlt;
