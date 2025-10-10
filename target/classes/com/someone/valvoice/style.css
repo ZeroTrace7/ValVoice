@@ -502,3 +502,97 @@
 .label {
     -fx-text-fill: #ffffff;
 }
+
+/* ========== STATUS BAR STYLES ========== */
+/* Status bar background and structure */
+#statusBar {
+    -fx-background-color: linear-gradient(to right, #0f1620, #16213e);
+    -fx-padding: 8 20 8 20;
+    -fx-border-color: #533483;
+    -fx-border-width: 2 0 0 0;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 10, 0, 0, -2);
+}
+
+/* Static status labels (the field names like "XMPP:", "VB-Cable:") */
+.status-label-static {
+    -fx-text-fill: #c0c0c0;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-padding: 0;
+}
+
+/* Dynamic status labels (the values) */
+.status-label {
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+    -fx-padding: 4 12 4 12;
+    -fx-background-color: rgba(255, 255, 255, 0.08);
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-width: 1.5;
+    -fx-border-color: transparent;
+}
+
+/* Status indicator colors - these will be applied dynamically */
+/* Green/OK status - BRIGHT and VISIBLE */
+.status-ok {
+    -fx-text-fill: #00ff88 !important;
+    -fx-background-color: rgba(0, 255, 136, 0.2) !important;
+    -fx-border-color: #00ff88 !important;
+    -fx-border-width: 1.5 !important;
+    -fx-border-radius: 6 !important;
+    -fx-background-radius: 6 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(0, 255, 136, 0.4), 8, 0, 0, 0);
+}
+
+/* Yellow/Warning status - BRIGHT and VISIBLE */
+.status-warning {
+    -fx-text-fill: #ffaa00 !important;
+    -fx-background-color: rgba(255, 170, 0, 0.2) !important;
+    -fx-border-color: #ffaa00 !important;
+    -fx-border-width: 1.5 !important;
+    -fx-border-radius: 6 !important;
+    -fx-background-radius: 6 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(255, 170, 0, 0.4), 8, 0, 0, 0);
+}
+
+/* Red/Error status - BRIGHT and VISIBLE */
+.status-error {
+    -fx-text-fill: #ff5555 !important;
+    -fx-background-color: rgba(255, 85, 85, 0.2) !important;
+    -fx-border-color: #ff5555 !important;
+    -fx-border-width: 1.5 !important;
+    -fx-border-radius: 6 !important;
+    -fx-background-radius: 6 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(255, 85, 85, 0.4), 8, 0, 0, 0);
+}
+
+/* Blue/Info status - BRIGHT and VISIBLE */
+.status-info {
+    -fx-text-fill: #00d4ff !important;
+    -fx-background-color: rgba(0, 212, 255, 0.2) !important;
+    -fx-border-color: #00d4ff !important;
+    -fx-border-width: 1.5 !important;
+    -fx-border-radius: 6 !important;
+    -fx-background-radius: 6 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.4), 8, 0, 0, 0);
+}
+
+/* Self ID label special styling */
+#statusSelfId {
+    -fx-text-fill: #00d4ff;
+    -fx-font-size: 12px;
+    -fx-font-style: italic;
+    -fx-padding: 4 12 4 12;
+    -fx-background-color: rgba(0, 212, 255, 0.15);
+    -fx-background-radius: 6;
+    -fx-border-color: #00d4ff;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-font-weight: 600;
+}

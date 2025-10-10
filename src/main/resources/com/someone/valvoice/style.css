@@ -506,76 +506,102 @@
 /* ========== STATUS BAR STYLES ========== */
 /* Status bar background and structure */
 #statusBar {
-    -fx-background-color: linear-gradient(to right, #16213e, #1a1a2e);
-    -fx-border-color: #533483;
+    -fx-background-color: linear-gradient(to right, #0f1620, #1a1a2e);
+    -fx-padding: 12 22 12 22; /* +2px all around for breathing room */
+    -fx-border-color: #00d4ff;
     -fx-border-width: 2 0 0 0;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 10, 0, 0, -2);
+    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.3), 12, 0, 0, -2);
+    -fx-min-height: 44; /* taller for legibility */
+    -fx-pref-height: 44;
 }
 
-/* Static labels (keys like "XMPP:", "VB-Cable:", etc.) */
+/* Static status labels (the field names like "XMPP:", "VB-Cable:") */
 .status-label-static {
-    -fx-text-fill: #a0a0a0;
-    -fx-font-size: 12px;
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 14px; /* +1 */
     -fx-font-weight: bold;
-    -fx-padding: 2 0 2 0;
+    -fx-padding: 0;
 }
 
-/* Dynamic status labels (values) */
+/* Dynamic status labels (the values) */
 .status-label {
     -fx-text-fill: #ffffff;
-    -fx-font-size: 12px;
-    -fx-font-weight: 600;
-    -fx-padding: 2 8 2 8;
-    -fx-background-color: rgba(255, 255, 255, 0.05);
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+    -fx-font-size: 14px; /* +1 */
+    -fx-font-weight: bold;
+    -fx-padding: 8 16 8 16; /* +2 vertical, +2 horizontal */
+    -fx-background-color: rgba(255, 255, 255, 0.14); /* slightly more contrast */
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-border-width: 2;
+    -fx-border-color: rgba(255, 255, 255, 0.25);
+    -fx-min-width: 96; /* a bit wider for consistency */
+    -fx-alignment: center;
 }
 
 /* Status indicator colors - these will be applied dynamically */
-/* Green/OK status */
+/* Green/OK status - BRIGHT and VISIBLE */
 .status-ok {
     -fx-text-fill: #00ff88 !important;
-    -fx-background-color: rgba(0, 255, 136, 0.15) !important;
-    -fx-border-color: #00ff88;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-    -fx-font-weight: bold;
+    -fx-background-color: rgba(0, 255, 136, 0.28) !important; /* +0.03 */
+    -fx-border-color: #00ff88 !important;
+    -fx-border-width: 2 !important;
+    -fx-border-radius: 10 !important;
+    -fx-background-radius: 10 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(0, 255, 136, 0.65), 10, 0, 0, 0);
+    -fx-font-size: 14px !important;
 }
 
-/* Yellow/Warning status */
+/* Yellow/Warning status - BRIGHT and VISIBLE */
 .status-warning {
-    -fx-text-fill: #ffd700 !important;
-    -fx-background-color: rgba(255, 215, 0, 0.15) !important;
-    -fx-border-color: #ffd700;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-    -fx-font-weight: bold;
+    -fx-text-fill: #ffcc00 !important;
+    -fx-background-color: rgba(255, 204, 0, 0.28) !important;
+    -fx-border-color: #ffcc00 !important;
+    -fx-border-width: 2 !important;
+    -fx-border-radius: 10 !important;
+    -fx-background-radius: 10 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(255, 204, 0, 0.65), 10, 0, 0, 0);
+    -fx-font-size: 14px !important;
 }
 
-/* Red/Error status */
+/* Red/Error status - BRIGHT and VISIBLE */
 .status-error {
     -fx-text-fill: #ff4444 !important;
-    -fx-background-color: rgba(255, 68, 68, 0.15) !important;
-    -fx-border-color: #ff4444;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-    -fx-font-weight: bold;
+    -fx-background-color: rgba(255, 68, 68, 0.28) !important;
+    -fx-border-color: #ff4444 !important;
+    -fx-border-width: 2 !important;
+    -fx-border-radius: 10 !important;
+    -fx-background-radius: 10 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(255, 68, 68, 0.65), 10, 0, 0, 0);
+    -fx-font-size: 14px !important;
 }
 
-/* Blue/Info status */
+/* Blue/Info status - BRIGHT and VISIBLE */
 .status-info {
     -fx-text-fill: #00d4ff !important;
-    -fx-background-color: rgba(0, 212, 255, 0.15) !important;
-    -fx-border-color: #00d4ff;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-    -fx-font-weight: bold;
+    -fx-background-color: rgba(0, 212, 255, 0.28) !important;
+    -fx-border-color: #00d4ff !important;
+    -fx-border-width: 2 !important;
+    -fx-border-radius: 10 !important;
+    -fx-background-radius: 10 !important;
+    -fx-font-weight: bold !important;
+    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.65), 10, 0, 0, 0);
+    -fx-font-size: 14px !important;
 }
 
 /* Self ID label special styling */
 #statusSelfId {
-    -fx-text-fill: #00d4ff;
-    -fx-font-size: 11px;
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 13px; /* +1 */
     -fx-font-style: italic;
-    -fx-padding: 2 8 2 8;
+    -fx-padding: 8 16 8 16;
+    -fx-background-color: rgba(0, 212, 255, 0.22);
+    -fx-background-radius: 10;
+    -fx-border-color: #00d4ff;
+    -fx-border-width: 1.5;
+    -fx-border-radius: 10;
+    -fx-font-weight: 600;
+    -fx-min-width: 140;
 }

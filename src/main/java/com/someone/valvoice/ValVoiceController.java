@@ -128,12 +128,25 @@ public class ValVoiceController {
 
         // Set initial visible panel
         lastAnchorPane = panelUser;
-        // Initialize status labels early
-        updateStatusLabel(statusXmpp, "Checking...", false);
-        updateStatusLabel(statusBridgeMode, "-", false);
-        updateStatusLabel(statusVbCable, "Checking...", false);
-        updateStatusLabel(statusAudioRoute, "Checking...", false);
-        updateStatusLabel(statusSelfId, "Self: (pending)", false);
+        // Initialize status labels early (default to info/warning look)
+        ensureBaseStatusClass(statusXmpp);
+        ensureBaseStatusClass(statusBridgeMode);
+        ensureBaseStatusClass(statusVbCable);
+        ensureBaseStatusClass(statusAudioRoute);
+        ensureBaseStatusClass(statusSelfId);
+
+        updateStatusLabelWithType(statusXmpp, "Checking...", "warning");
+        updateStatusLabelWithType(statusBridgeMode, "-", "info");
+        updateStatusLabelWithType(statusVbCable, "Checking...", "warning");
+        updateStatusLabelWithType(statusAudioRoute, "Checking...", "warning");
+        updateStatusLabelWithType(statusSelfId, "Self: (pending)", "info");
+
+        // Helpful tooltips
+        applyTooltip(statusXmpp, "External XMPP bridge availability");
+        applyTooltip(statusBridgeMode, "Bridge mode: external-exe or embedded-script");
+        applyTooltip(statusVbCable, "VB-Audio Virtual Cable device detection");
+        applyTooltip(statusAudioRoute, "Audio routing: ValVoice -> VB-CABLE -> Valorant");
+        applyTooltip(statusSelfId, "Your Valorant self player ID");
 
         // Populate ComboBoxes with data
         populateComboBoxes();
@@ -158,6 +171,26 @@ public class ValVoiceController {
         updateBridgeStatusFromSystemProperties();
     }
 
+    // Ensure status label has base CSS class for consistent badge styling
+    private void ensureBaseStatusClass(Label label) {
+        if (label == null) return;
+        if (!label.getStyleClass().contains("status-label")) {
+            label.getStyleClass().add("status-label");
+        }
+    }
+
+    // Apply a tooltip safely
+    private void applyTooltip(Labeled control, String text) {
+        if (control == null) return;
+        Tooltip tip = control.getTooltip();
+        if (tip == null) {
+            tip = new Tooltip(text);
+            control.setTooltip(tip);
+        } else {
+            tip.setText(text);
+        }
+    }
+
     private void updateBridgeStatusFromSystemProperties() {
         String mode = System.getProperty("valvoice.bridgeMode", "unknown");
         Platform.runLater(() -> {
@@ -174,11 +207,59 @@ public class ValVoiceController {
         });
     }
 
+    // Replace inline style with CSS class toggling for strong, consistent visuals
     private void updateStatusLabel(Label label, String text, boolean ok) {
         if (label == null) return;
         Platform.runLater(() -> {
-            label.setText(text);
-            label.setStyle(ok ? "-fx-text-fill:#59c164;" : "-fx-text-fill:#d89b52;");
+            ensureBaseStatusClass(label);
+            String prefix = ok ? "\u2713 " : "\u26A0 "; // ✓ or ⚠
+            label.setText(prefix + text);
+            label.getStyleClass().removeAll("status-ok", "status-warning", "status-error", "status-info");
+            label.getStyleClass().add(ok ? "status-ok" : "status-warning");
+        });
+    }
+
+    // Update with explicit status type
+    private void updateStatusLabelWithType(Label label, String text, String statusType) {
+        if (label == null) return;
+        Platform.runLater(() -> {
+            ensureBaseStatusClass(label);
+            String st = statusType == null ? "" : statusType.toLowerCase();
+            String prefix;
+            switch (st) {
+                case "ok":
+                case "success":
+                    prefix = "\u2713 "; // ✓
+                    break;
+                case "warning":
+                    prefix = "\u26A0 "; // ⚠
+                    break;
+                case "error":
+                    prefix = "\u2716 "; // ✖
+                    break;
+                case "info":
+                default:
+                    prefix = "\u2139 "; // ℹ
+                    break;
+            }
+            label.setText(prefix + text);
+            label.getStyleClass().removeAll("status-ok", "status-warning", "status-error", "status-info");
+            switch (st) {
+                case "ok":
+                case "success":
+                    label.getStyleClass().add("status-ok");
+                    break;
+                case "warning":
+                    label.getStyleClass().add("status-warning");
+                    break;
+                case "error":
+                    label.getStyleClass().add("status-error");
+                    break;
+                case "info":
+                default:
+                    label.getStyleClass().add("status-info");
+                    break;
+            }
         });
     }
 

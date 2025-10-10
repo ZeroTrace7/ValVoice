@@ -11,6 +11,14 @@
             </PendingDiffInfo>
           </value>
         </entry>
+        <entry key="$PROJECT_DIR$/STATUS_BAR_IMPROVEMENTS.md">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/STATUS_BAR_IMPROVEMENTS.md" />
+              <option name="updatedContent" value="# Status Bar UI Improvements&#10;&#10;## Changes Made&#10;&#10;### 1. Enhanced CSS Styling (`style.css`)&#10;- **Increased visibility**: Brightened all status indicator colors&#10;  - Green (OK): `#00ff88` with glowing effect&#10;  - Yellow (Warning): `#ffcc00` with glowing effect&#10;  - Red (Error): `#ff4444` with glowing effect&#10;  - Blue (Info): `#00d4ff` with glowing effect&#10;&#10;- **Better contrast**: &#10;  - Status bar background: Dark gradient with cyan border&#10;  - Status labels: Rounded badges with 2px borders&#10;  - Glowing drop shadows for better visibility&#10;&#10;- **Proper alignment**:&#10;  - Fixed height: 40px for consistent layout&#10;  - Proper padding: 10px vertical, 20px horizontal&#10;  - Minimum width for status labels: 80px&#10;&#10;### 2. Updated Java Controller (`ValVoiceController.java`)&#10;- **Replaced inline styles with CSS classes**: &#10;  - Removed hardcoded color styles&#10;  - Added methods to apply proper CSS style classes&#10;  - Status indicators now use: `status-ok`, `status-warning`, `status-error`, `status-info`&#10;&#10;- **New method added**: `updateStatusLabelWithType()`&#10;  - Allows precise control over status type (ok/warning/error/info)&#10;  - Properly removes old classes before applying new ones&#10;&#10;### 3. FXML Updates (`mainApplication.fxml`)&#10;- Added `styleClass=&quot;status-label-static&quot;` for field labels (XMPP:, VB-Cable:, etc.)&#10;- Added `styleClass=&quot;status-label&quot;` for value labels&#10;- Ensured consistent styling across all status indicators&#10;&#10;## Visual Result&#10;The status bar at the bottom now displays:&#10;- **Bright, glowing indicators** that are clearly visible&#10;- **Green badges** for successful/ready states (VB-Cable detected, XMPP ready, etc.)&#10;- **Yellow badges** for warnings (checking, pending states)&#10;- **Proper alignment** with consistent spacing and sizing&#10;- **Professional appearance** with rounded corners and shadows&#10;&#10;## Status Indicators&#10;1. **XMPP**: Shows if XMPP bridge is ready&#10;2. **Mode**: External-exe vs embedded-script&#10;3. **VB-Cable**: Virtual audio cable detection&#10;4. **Audio Routing**: Audio routing status&#10;5. **Self ID**: Current player identity&#10;&#10;All indicators now have high contrast and are easily readable at a glance!&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
       </map>
     </option>
   </component>
