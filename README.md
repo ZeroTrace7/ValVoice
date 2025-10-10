@@ -1,12 +1,12 @@
 # ValVoice
 
-Lightweight Valorant chat narrator that converts in-game chat messages to spoken audio (Windows + JavaFX). Chat messages are acquired via an external XMPP bridge process (preferred) or a fallback embedded Node.js stub.
+Lightweight Valorant chat narrator that converts in-game chat messages to spoken audio (Windows + JavaFX). Chat messages are acquired via an external XMPP bridge process (required) or a fallback embedded Node.js stub for demo only.
 
 ## 1. Architecture Overview
 
 Java (ValVoice) does NOT open Riot's XMPP socket directly.
 Instead:
-1. External executable `valorantNarrator-xmpp.exe` (preferred) OR embedded `xmpp-node.js` stub connects to Riot's XMPP server.
+1. External executable `valvoice-xmpp.exe` connects to Riot's XMPP server.
 2. XMPP stanzas are wrapped into line-delimited JSON objects:
    ```json
    { "type": "incoming", "time": 1730000000000, "data": "<message ...>...</message>" }
@@ -19,46 +19,45 @@ Instead:
 
 | Component | File | Required? | Purpose |
 |-----------|------|-----------|---------|
-| XMPP Bridge (native) | `valorantNarrator-xmpp.exe` | Strongly Recommended | Real Riot XMPP connection + stanza → JSON stream |
+| XMPP Bridge (native) | `valvoice-xmpp.exe` | Strongly Recommended | Real Riot XMPP connection + stanza → JSON stream |
 | XMPP Stub (fallback) | Embedded `xmpp-node.js` | Automatic fallback | Demo / test only (simulated messages) |
 | Audio Routing Tool | `SoundVolumeView.exe` | Optional (recommended) | Route TTS output to VB-CABLE device automatically |
 | Virtual Audio Driver | VB-Audio Virtual Cable | REQUIRED (MUST INSTALL) | Provides `CABLE Input` / `CABLE Output` virtual loopback |
 
-### 2.1 XMPP Bridge Executable
-- Place `valorantNarrator-xmpp.exe` in the SAME working directory as the launched JAR (or the directory you run `java -jar` from).
-- Detected by name constant in `ValVoiceController` and by `Main.startXmppNodeProcess()`.
-- If missing, the log will show: `External valorantNarrator-xmpp.exe not found; falling back to embedded xmpp-node.js stub`.
-- Without it you will NOT receive real chat; only simulated sample messages from the stub.
+### 2.1 Building the Bridge Executable (valvoice-xmpp.exe)
+A minimal stub project is included under `xmpp-bridge/` that you can package into a Windows executable. This stub emits simulated events; replace it with a real XMPP client for live chat.
 
-### 2.2 Fallback Stub (Development Only)
-- Resource: `src/main/resources/com/someone/valvoice/xmpp-node.js`.
-- Emits: startup → bind iq (simulated self ID) → sample `<message>` stanzas → heartbeats → error + close events.
-- Use only for development / UI + TTS verification.
+Prereqs:
+- Install Node.js 18+ (https://nodejs.org/)
 
-### 2.3 SoundVolumeView Integration
-- If `SoundVolumeView.exe` is present (working directory or `%ProgramFiles%/ValorantNarrator/`), the inbuilt synthesizer attempts to route audio to `CABLE Input` automatically.
-- Otherwise, manual routing is required (Windows Sound Settings or per‑app audio routing utilities).
+Steps (Windows cmd.exe):
+```bat
+cd xmpp-bridge
+npm install
+npm run build:exe
+cd ..
+```
+This produces `valvoice-xmpp.exe` in the repository root (same folder as the JAR).
 
-### 2.4 VB-Audio Virtual Cable (MANDATORY)
+Place `valvoice-xmpp.exe` next to your runnable JAR before launching. The app only supports this filename.
+
+### 2.2 SoundVolumeView Integration
+- Download NirSoft SoundVolumeView (https://www.nirsoft.net/utils/sound_volume_view.html).
+- Place `SoundVolumeView.exe` next to your runnable JAR (or under `%ProgramFiles%\ValorantNarrator\`).
+- On startup, ValVoice will attempt to route `powershell.exe` (used for TTS) to `CABLE Input` automatically.
+
+### 2.3 VB-Audio Virtual Cable (MANDATORY)
 **You MUST install VB-Audio Virtual Cable** to inject narration into Valorant voice chat.
 - Download: https://vb-audio.com/Cable/
 - Install and reboot.
 - Devices created:
-  - Playback device: `CABLE Input (VB-Audio Virtual Cable)` – this is where ValVoice must send TTS.
-  - Recording device: `CABLE Output (VB-Audio Virtual Cable)` – configure Valorant to use this as microphone.
+  - Playback device: `CABLE Input (VB-Audio Virtual Cable)`
+  - Recording device: `CABLE Output (VB-Audio Virtual Cable)`
 - Audio Flow:
   ```text
   ValVoice TTS → (routed output) CABLE Input  →  CABLE Output (loopback)  →  Valorant Mic
   ```
-- If either device name is missing at startup, ValVoice will log a WARNING: missing VB-Audio virtual cable devices.
-
-### 2.5 Quick Verification
-| Step | Expected Result |
-|------|-----------------|
-| Run `mmsys.cpl` (Sound control panel) | See CABLE Input (Playback) & CABLE Output (Recording) |
-| Launch ValVoice | Log shows detection of XMPP bridge + (optionally) SoundVolumeView |
-| Speak test (select voice) | Audio heard only if not routed; once routed Valorant teammates hear narration |
-| Valorant Settings → Audio → Voice Input | Set to CABLE Output |
+- In Valorant Settings → Audio → Voice Chat, set Input Device to `CABLE Output`.
 
 ## 3. Message Processing Flow
 1. Read JSON line from bridge stdout.
@@ -66,15 +65,15 @@ Instead:
    - Extract raw XML string `data`.
    - If it starts with `<message`, construct `Message`.
    - Pass to `ChatDataHandler.message(msg)` → filtering & narration.
-3. If `<iq ... id="_xmpp_bind1" ...>` stanza encountered: extract `<jid>` and update self ID (player identity) for own-message discrimination.
+3. If `<iq ... id="_xmpp_bind1" ...>` stanza encountered: extract `<jid>` and update self ID (player identity).
 4. Other event types currently logged: `error`, `close-riot`, `close-valorant`, `heartbeat`, `startup`, `shutdown`.
 
 ## 4. Key Classes
-- `Main`: Launch point; spawns bridge process.
-- `ValVoiceController`: UI + initialization + dependency verification.
+- `Main`: Launch point; spawns bridge process. Uses `valvoice-xmpp.exe`, falls back to `xmpp-node.js` stub only if the exe is missing (or build fails).
+- `ValVoiceController`: UI + initialization + dependency checks; auto-routes audio via SoundVolumeView if present.
 - `ChatDataHandler`: Self ID management, message entry point.
-- `Message`: Parses XML stanza to determine channel, author, body, own-message state.
-- `Chat`: Configuration (which channels to narrate) + statistics.
+- `Message`: Parses XML stanza and determines channel, author, content, own-message state.
+- `Chat`: Configuration + statistics.
 - `TtsEngine`: Simple queued SAPI voice execution.
 - `InbuiltVoiceSynthesizer`: Persistent System.Speech engine + optional audio routing attempt.
 
@@ -83,54 +82,35 @@ Instead:
 - JDK 17 (runtime)
 - Windows (PowerShell + SAPI voice stack)
 - VB-Audio Virtual Cable installed (mandatory)
-- (Recommended) `valorantNarrator-xmpp.exe` placed with the JAR
-- (Optional) `SoundVolumeView.exe` present for automatic routing
+- `valvoice-xmpp.exe` placed with the JAR (see 2.1) or allow auto-build on app start
+- (Optional) `SoundVolumeView.exe` present for automatic routing (see 2.2)
 
 ### 5.2 Build
-```bash
+```bat
 mvn clean package -DskipTests
 ```
-Output JAR: `target/valvoice-1.0.0.jar`
+Output JAR: `target\valvoice-1.0.0.jar`
 
 ### 5.3 Run
-```bash
-java -jar target/valvoice-1.0.0.jar
+```bat
+mvn javafx:run
+:: or
+java -jar target\valvoice-1.0.0.jar
 ```
-Check logs for:
-- `Started XMPP bridge (mode: external-exe)` (real chat)
-- OR `embedded-script` (simulation only)
-- VB-Cable presence warnings if driver devices not found
-
-### 5.4 Common Log Indicators
-| Log Snippet | Meaning |
-|-------------|---------|
-| Self ID (bind) detected: <id> | Successful bind iq processed (player ID set) |
-| Received message: (PARTY)ally123@... | Parsed message ready for possible narration |
-| XMPP error event: ... | Bridge reported an error (transient / connectivity) |
-| Valorant closed event received | Bridge observed client shutdown |
-| WARNING missing VB-Audio virtual cable devices | Driver not installed / not enumerated |
+Check status bar:
+- XMPP: Ready (means bridge exe found/started)
+- Mode: external-exe (real messages) or embedded-script (stub only)
+- VB-Cable: Detected
+- AudioRouting: Ready
 
 ## 6. Troubleshooting
 | Issue | Cause | Action |
 |-------|-------|--------|
-| No messages, only heartbeats | Missing external bridge exe; stub only | Place `valorantNarrator-xmpp.exe` and restart |
-| Voices list empty | SAPI / System.Speech enumeration failed | Reinstall voices, run PowerShell test manually |
-| Not narrating own messages | SELF not included in source selection | Select a source combination including SELF |
-| Wrong device output | Audio not routed to VB-CABLE | Use SoundVolumeView or set default playback manually |
-| Self ID never detected | Bind stanza not received | Confirm bridge auth / connectivity; check lockfile credentials |
-| VB-Cable warning at startup | Driver not installed / service not ready | Reinstall / reboot, verify devices in Sound panel |
+| XMPP shows "Stub (demo only)" | Bridge exe missing or build failed | Ensure Node/npm installed and let app auto-build; or run steps in 2.1 |
+| No sound in Valorant | Audio not routed to VB-CABLE | Place `SoundVolumeView.exe` next to JAR or route manually in Windows |
+| No VB-CABLE devices | Driver not installed | Install VB-CABLE and reboot |
+| Self ID not shown | Bind stanza or session lookup failed | Ensure Valorant is running; check logs |
 
-## 7. Extending
-- Add new event types: extend switch in `Main` → `handleIncomingStanza` for additional stanza categories.
-- Implement reconnect/backoff: monitor exit code and relaunch bridge with exponential delay.
-- Add presence/roster handling: parse non-`<message>` stanzas when needed.
-
-## 8. Security / Notes
-- Lockfile-based local auth should never be exfiltrated—avoid logging secrets.
-- Current stub is NOT a secure implementation—replace with production-grade XMPP client.
-
-## 9. License
-(Insert license details here.)
-
----
-If you add or rename the executable, update `XMPP_EXE_NAME` in `Main` and the documentation constant in `ValVoiceController`.
+## 7. Security / Notes
+- Do not log secrets from the Riot lockfile.
+- The included bridge is a stub; implement a real XMPP client for production use.

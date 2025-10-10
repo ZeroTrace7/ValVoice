@@ -1,0 +1,23 @@
+{
+  "name": "valvoice-xmpp",
+  "version": "0.1.0",
+  "description": "XMPP bridge for ValVoice: connects to Riot XMPP and streams JSON events to stdout (stub placeholder).",
+  "bin": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "build:exe": "pkg -t node18-win-x64 --output ../valvoice-xmpp.exe ."
+  },
+  "pkg": {
+    "assets": [],
+    "targets": [
+      "node18-win-x64"
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
+

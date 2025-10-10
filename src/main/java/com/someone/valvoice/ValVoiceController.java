@@ -89,25 +89,11 @@ public class ValVoiceController {
 
     private static final boolean SIMULATE_CHAT = false; // set true for local TTS demo without Valorant
     /**
-     * External XMPP Handler Executable
-     * Name: valorantNarrator-xmpp.exe
-     * Purpose: Connects to Riot's XMPP server and streams chat messages as JSON lines (type=incoming, data=<stanza>)
-     * Critical: Without this executable present in the working directory, only the fallback embedded stub runs and you will NOT
-     *           receive real Valorant chat messages.
-     * Original documentation referenced this constant around line 182 in ValNarratorController.java; this codebase uses
-     * ValVoiceController instead. Keep the executable beside the launched JAR or adjust working directory accordingly.
+     * External XMPP Handler Executable (single supported name)
      */
-    private static final String XMPP_BRIDGE_EXE = "valorantNarrator-xmpp.exe";
+    private static final String XMPP_BRIDGE_EXE_PRIMARY = "valvoice-xmpp.exe";
     /**
      * Audio Routing Tool
-     * Name: SoundVolumeView.exe
-     * Purpose: Programmatically routes the application's (PowerShell / TTS) audio output device to the VB-Audio Virtual Cable
-     *          ("CABLE Input") so Valorant can capture narrated speech as microphone input.
-     * Expected Location (original reference ~ line 161 in ValNarratorController.java): Working directory OR
-     *    %ProgramFiles%/ValorantNarrator/.
-     * Why Needed: Without routing, TTS may play through default speakers and NOT reach the virtual mic path (CABLE Input → Valorant).
-     * Behavior: If present, routing is attempted by InbuiltVoiceSynthesizer after persistent PowerShell session launch.
-     * Fallback: If absent, user must manually set default output or per-app device to CABLE Input.
      */
     private static final String SOUND_VOLUME_VIEW_EXE = "SoundVolumeView.exe";
 
@@ -727,10 +713,11 @@ public class ValVoiceController {
 
     private void verifyExternalDependencies() {
         Path workingDir = Paths.get(System.getProperty("user.dir"));
-        Path xmppExe = workingDir.resolve(XMPP_BRIDGE_EXE);
-        boolean xmppExePresent = Files.isRegularFile(xmppExe);
+        Path xmppPrimary = workingDir.resolve(XMPP_BRIDGE_EXE_PRIMARY);
+        Path xmppExe = Files.isRegularFile(xmppPrimary) ? xmppPrimary : null;
+        boolean xmppExePresent = xmppExe != null;
         if (!xmppExePresent) {
-            logger.warn("XMPP bridge executable '{}' not found in working directory (using fallback embedded script).", XMPP_BRIDGE_EXE);
+            logger.warn("XMPP bridge executable '{}' not found in working directory (using fallback embedded script).", XMPP_BRIDGE_EXE_PRIMARY);
             updateStatusLabel(statusXmpp, "Missing exe (stub)", false);
         } else {
             logger.info("Detected external XMPP bridge executable: {}", xmppExe.toAbsolutePath());
@@ -743,6 +730,13 @@ public class ValVoiceController {
         } else {
             logger.info("Detected {} at {}", SOUND_VOLUME_VIEW_EXE, svv.toAbsolutePath());
             updateStatusLabel(statusAudioRoute, "Ready", true);
+            // Proactively route PowerShell (used by TtsEngine) to VB-CABLE if devices exist
+            if ("Detected".equalsIgnoreCase(statusVbCable != null ? statusVbCable.getText() : "")) {
+                routePowershellToCable(svv);
+            } else {
+                // Attempt routing anyway; it will no-op if device name not found
+                routePowershellToCable(svv);
+            }
         }
         detectVbCableDevices();
     }
@@ -786,5 +780,18 @@ public class ValVoiceController {
             if (Files.isRegularFile(pfAlt)) return pfAlt;
         }
         return null;
+    }
+
+    // New: route short-lived powershell.exe TTS processes to VB-CABLE using SoundVolumeView
+    private void routePowershellToCable(Path soundVolumeViewPath) {
+        if (soundVolumeViewPath == null) return;
+        try {
+            String cmd = '"' + soundVolumeViewPath.toAbsolutePath().toString() + '"' +
+                    " /SetAppDefault \"CABLE Input\" all \"powershell.exe\"";
+            Runtime.getRuntime().exec(cmd);
+            logger.info("Requested audio routing of powershell.exe to 'CABLE Input' via SoundVolumeView");
+        } catch (Exception e) {
+            logger.debug("Failed to route powershell.exe via SoundVolumeView", e);
+        }
     }
 }

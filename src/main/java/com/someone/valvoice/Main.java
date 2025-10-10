@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,7 +43,8 @@ public class Main {
     private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE);
     private static final Pattern MESSAGE_START_PATTERN = Pattern.compile("^<message", Pattern.CASE_INSENSITIVE);
     private static final Pattern IQ_START_PATTERN = Pattern.compile("^<iq", Pattern.CASE_INSENSITIVE);
-    private static final String XMPP_EXE_NAME = "valorantNarrator-xmpp.exe"; // Preferred external bridge
+    // External bridge name (only this is supported)
+    private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-xmpp.exe";
 
     private static boolean lockInstance() {
         try {
@@ -83,10 +85,18 @@ public class Main {
             return;
         }
 
-        // 1. Prefer external compiled executable if present in working directory
         Path workingDir = Paths.get(System.getProperty("user.dir"));
-        Path exeCandidate = workingDir.resolve(XMPP_EXE_NAME);
-        boolean useExternalExe = Files.isRegularFile(exeCandidate) && Files.isReadable(exeCandidate);
+        Path exePrimary = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
+        Path exeCandidate = Files.isRegularFile(exePrimary) ? exePrimary : null;
+
+        // If no exe is present, try to build valvoice-xmpp.exe automatically (convenience)
+        if (exeCandidate == null) {
+            Path built = tryBuildBridgeExecutable(workingDir);
+            if (built != null && Files.isRegularFile(built)) {
+                exeCandidate = built;
+            }
+        }
+        boolean useExternalExe = exeCandidate != null && Files.isReadable(exeCandidate);
 
         Path tempScriptPath = null; // only used when falling back to script
         ProcessBuilder pb;
@@ -94,7 +104,7 @@ public class Main {
             logger.info("Using external XMPP bridge executable: {}", exeCandidate.toAbsolutePath());
             pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
         } else {
-            logger.info("External {} not found; falling back to embedded xmpp-node.js stub", XMPP_EXE_NAME);
+            logger.info("External {} not found; falling back to embedded xmpp-node.js stub", XMPP_EXE_NAME_PRIMARY);
             String resourceName = "/com/someone/valvoice/xmpp-node.js";
             try (InputStream in = Main.class.getResourceAsStream(resourceName)) {
                 if (in == null) {
@@ -120,13 +130,13 @@ public class Main {
                 }
                 int code = ver.exitValue();
                 if (code != 0) {
-                    logger.error("Node.js not available (exit code {}). Install Node.js or provide {}.", code, XMPP_EXE_NAME);
+                    logger.error("Node.js not available (exit code {}). Install Node.js or provide {}.", code, XMPP_EXE_NAME_PRIMARY);
                     System.setProperty("valvoice.nodeAvailable", "false");
                     return;
                 }
                 System.setProperty("valvoice.nodeAvailable", "true");
             } catch (Exception ex) {
-                logger.error("Node.js not found on PATH. Install Node.js or place {} next to the JAR.", XMPP_EXE_NAME, ex);
+                logger.error("Node.js not found on PATH. Install Node.js or place {} next to the JAR.", XMPP_EXE_NAME_PRIMARY, ex);
                 System.setProperty("valvoice.nodeAvailable", "false");
                 return;
             }
@@ -140,7 +150,6 @@ public class Main {
             String mode = useExternalExe ? "external-exe" : "embedded-script";
             System.setProperty("valvoice.bridgeMode", mode);
             if (useExternalExe) {
-                // Node availability not relevant; mark unknown
                 System.setProperty("valvoice.nodeAvailable", System.getProperty("valvoice.nodeAvailable", "n/a"));
             }
             logger.info("Started XMPP bridge (mode: {})", mode);
@@ -202,6 +211,76 @@ public class Main {
                 try { xmppNodeProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }
         }, "xmpp-bridge-shutdown"));
+    }
+
+    // Attempt to build valvoice-xmpp.exe using the included xmpp-bridge project.
+    // Returns path to built exe if successful, else null.
+    private static Path tryBuildBridgeExecutable(Path workingDir) {
+        try {
+            Path bridgeDir = workingDir.resolve("xmpp-bridge");
+            Path pkgJson = bridgeDir.resolve("package.json");
+            if (!Files.isRegularFile(pkgJson)) {
+                logger.info("xmpp-bridge folder not found ({}); skipping auto-build.", bridgeDir.toAbsolutePath());
+                return null;
+            }
+            if (!isCommandAvailable("node") || !isCommandAvailable("npm")) {
+                logger.info("Node.js or npm not available; cannot auto-build valvoice-xmpp.exe.");
+                return null;
+            }
+            logger.info("Auto-building valvoice-xmpp.exe (this may take a minute on first run)...");
+            // npm install
+            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm install").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
+            if (npmInstall != 0) {
+                logger.warn("npm install failed with exit code {}", npmInstall);
+                return null;
+            }
+            // npm run build:exe
+            int npmBuild = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm run build:exe").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
+            if (npmBuild != 0) {
+                logger.warn("npm run build:exe failed with exit code {}", npmBuild);
+                return null;
+            }
+            Path exe = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
+            if (Files.isRegularFile(exe)) {
+                logger.info("Successfully built {}", exe.toAbsolutePath());
+                return exe;
+            } else {
+                logger.warn("Auto-build completed but {} not found", exe.toAbsolutePath());
+                return null;
+            }
+        } catch (Exception e) {
+            logger.warn("Auto-build of valvoice-xmpp.exe failed", e);
+            return null;
+        }
+    }
+
+    private static boolean isCommandAvailable(String command) {
+        try {
+            Process p = new ProcessBuilder(command, "--version").redirectErrorStream(true).start();
+            boolean ok = p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0;
+            if (!ok) p.destroyForcibly();
+            return ok;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static int runAndWait(ProcessBuilder pb, long timeout, TimeUnit unit) throws IOException, InterruptedException {
+        pb.redirectErrorStream(true);
+        Process proc = pb.start();
+        // Stream output to log (briefly)
+        Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "proc-log"); t.setDaemon(true); return t; })
+                .submit(() -> {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                        String line; while ((line = br.readLine()) != null) logger.info("[bridge-build] {}", line);
+                    } catch (IOException ignored) {}
+                });
+        if (!proc.waitFor(timeout, unit)) {
+            proc.destroyForcibly();
+            logger.warn("Process timed out: {}", String.join(" ", pb.command()));
+            return -1;
+        }
+        return proc.exitValue();
     }
 
     private static void handleIncomingStanza(JsonObject obj) {
