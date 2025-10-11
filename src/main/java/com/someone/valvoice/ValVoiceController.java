@@ -97,6 +97,10 @@ public class ValVoiceController {
      */
     private static final String SOUND_VOLUME_VIEW_EXE = "SoundVolumeView.exe";
 
+    // New: internal flags for robust status logic (don't rely on label text)
+    private volatile boolean vbCableDetectedFlag = false;
+    private volatile boolean builtInRoutingOk = false;
+
     public ValVoiceController() {
         latestInstance = this;
     }
@@ -809,12 +813,12 @@ public class ValVoiceController {
             updateStatusLabel(statusXmpp, "Detected", true);
         }
 
-        // NEW: Use built-in AudioRouter instead of external tool
-        detectVbCableDevices();
-        if ("Detected".equalsIgnoreCase(statusVbCable != null ? statusVbCable.getText() : "")) {
+        // Use built-in AudioRouter instead of external tool
+        boolean vbDetected = detectVbCableDevices();
+        if (vbDetected) {
             logger.info("Configuring audio routing using built-in AudioRouter...");
-            boolean routingSuccess = AudioRouter.routeToVirtualCable();
-            if (routingSuccess) {
+            builtInRoutingOk = AudioRouter.routeToVirtualCable();
+            if (builtInRoutingOk) {
                 updateStatusLabel(statusAudioRoute, "Active (built-in)", true);
             } else {
                 updateStatusLabel(statusAudioRoute, "Manual setup needed", false);
@@ -822,6 +826,7 @@ public class ValVoiceController {
                 logger.warn("  Windows → Sound Settings → App volume → Java/PowerShell → Output: CABLE Input");
             }
         } else {
+            builtInRoutingOk = false;
             updateStatusLabel(statusAudioRoute, "VB-Cable not found", false);
         }
 
@@ -830,7 +835,7 @@ public class ValVoiceController {
         if (svv != null) {
             logger.info("Note: {} detected but not needed (using built-in routing)", SOUND_VOLUME_VIEW_EXE);
             // Fallback: Try SoundVolumeView if built-in routing failed
-            if (!"Active (built-in)".equals(statusAudioRoute.getText())) {
+            if (!builtInRoutingOk) {
                 logger.info("Attempting fallback routing via SoundVolumeView...");
                 routePowershellToCable(svv);
                 updateStatusLabel(statusAudioRoute, "Active (SoundVolumeView)", true);
@@ -838,8 +843,8 @@ public class ValVoiceController {
         }
     }
 
-    private void detectVbCableDevices() {
-        if (!isWindows()) return;
+    private boolean detectVbCableDevices() {
+        if (!isWindows()) return false;
         try {
             // Use PowerShell to list sound devices names; lightweight query.
             String ps = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
@@ -852,16 +857,20 @@ public class ValVoiceController {
                 if (lower.contains("cable input")) hasCableInput = true;
                 if (lower.contains("cable output")) hasCableOutput = true;
             }
-            if (hasCableInput && hasCableOutput) {
+            vbCableDetectedFlag = hasCableInput && hasCableOutput;
+            if (vbCableDetectedFlag) {
                 logger.info("VB-Audio Virtual Cable devices detected (Input & Output).");
                 updateStatusLabel(statusVbCable, "Detected", true);
             } else {
                 logger.warn("VB-Audio Virtual Cable devices missing or incomplete: Input={} Output={}. Narration may not reach Valorant mic.", hasCableInput, hasCableOutput);
                 updateStatusLabel(statusVbCable, "Missing", false);
             }
+            return vbCableDetectedFlag;
         } catch (Exception e) {
             logger.debug("VB-Cable detection failed (non-fatal)", e);
             updateStatusLabel(statusVbCable, "Error", false);
+            vbCableDetectedFlag = false;
+            return false;
         }
     }
 
