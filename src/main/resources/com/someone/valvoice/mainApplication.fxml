@@ -516,38 +516,35 @@
         </ScrollPane>
 
         <!-- ========== STATUS BAR (Dependency / Runtime Status) ========== -->
-        <HBox fx:id="statusBar" id="statusBar" spacing="20" alignment="CENTER_LEFT"
+        <HBox fx:id="statusBar" id="statusBar" spacing="30" alignment="CENTER_LEFT"
               AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0"
-              prefHeight="44" style="-fx-background-color: linear-gradient(to right, #0f1620, #1a1a2e); -fx-padding:10 20 10 20; -fx-border-color:#00d4ff; -fx-border-width:2 0 0 0;">
+              prefHeight="50" style="-fx-background-color: linear-gradient(to right, #0f1620, #1a1a2e); -fx-padding:12 30 12 30; -fx-border-color:#00d4ff; -fx-border-width:2 0 0 0;">
 
             <!-- XMPP Status -->
-            <HBox spacing="6" alignment="CENTER_LEFT">
-                <Label text="XMPP:" styleClass="status-label-static" />
-                <Label fx:id="statusXmpp" text="Checking..." styleClass="status-label" />
+            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="140">
+                <Label text="XMPP:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
+                <Label fx:id="statusXmpp" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
             </HBox>
 
             <!-- Bridge Mode -->
-            <HBox spacing="6" alignment="CENTER_LEFT">
-                <Label text="Mode:" styleClass="status-label-static" />
-                <Label fx:id="statusBridgeMode" text="-" styleClass="status-label" />
+            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="160">
+                <Label text="Bridge:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
+                <Label fx:id="statusBridgeMode" text="-" styleClass="status-label" style="-fx-font-size: 13px;" />
             </HBox>
 
             <!-- VB-Cable Status -->
-            <HBox spacing="6" alignment="CENTER_LEFT">
-                <Label text="VB-Cable:" styleClass="status-label-static" />
-                <Label fx:id="statusVbCable" text="Checking..." styleClass="status-label" />
+            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="140">
+                <Label text="VB-Cable:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
+                <Label fx:id="statusVbCable" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
             </HBox>
 
             <!-- Audio Routing Status -->
-            <HBox spacing="6" alignment="CENTER_LEFT">
-                <Label text="Audio Routing:" styleClass="status-label-static" />
-                <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" />
+            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="160">
+                <Label text="Audio:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
+                <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
             </HBox>
 
             <Region HBox.hgrow="ALWAYS" />
-
-            <!-- Self ID -->
-            <Label fx:id="statusSelfId" text="Self: (pending)" styleClass="status-label" />
         </HBox>
     </AnchorPane>
 </AnchorPane>

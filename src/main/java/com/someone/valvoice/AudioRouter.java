@@ -4,8 +4,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -54,12 +58,18 @@ public class AudioRouter {
             success = setSystemDefaultAudioDevice();
         }
 
+        if (!success) {
+            // Strategy 3: External utility fallback if available
+            logger.debug("AudioDeviceCmdlets path failed; attempting SoundVolumeView fallback");
+            success = routeViaSoundVolumeView();
+        }
+
         routingSuccessful = success;
 
         if (success) {
-            logger.info("✓ Audio successfully routed to VB-CABLE Input");
+            logger.info("\u2713 Audio successfully routed to VB-CABLE Input");
         } else {
-            logger.warn("⚠ Audio routing failed - TTS may not reach Valorant. Manual setup required.");
+            logger.warn("\u26A0 Audio routing failed - TTS may not reach Valorant. Manual setup required.");
             logger.warn("  Manual fix: Windows Sound Settings → App volume → Java/PowerShell → Output: CABLE Input");
         }
 
@@ -70,38 +80,27 @@ public class AudioRouter {
      * Check if VB-Audio Virtual Cable is installed by querying audio devices.
      */
     public static boolean isVbCableInstalled() {
+        // Use same detection method as ValVoiceController - check Win32_SoundDevice
         String psScript =
             "$ErrorActionPreference='SilentlyContinue'; " +
-            "Get-AudioDevice -List | Where-Object { $_.Name -like '*CABLE Input*' } | Select-Object -First 1 -ExpandProperty Name";
+            "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
 
         try {
-            String result = executePowerShell(psScript, 5);
-            boolean found = result != null && result.contains("CABLE");
-            if (found) {
-                logger.debug("VB-CABLE detected: {}", result.trim());
+            String result = executePowerShell(psScript, 8);
+            if (result != null) {
+                String lower = result.toLowerCase();
+                boolean found = (lower.contains("vb-audio") && lower.contains("cable")) ||
+                               lower.contains("cable input") ||
+                               lower.contains("cable output");
+                if (found) {
+                    logger.debug("VB-CABLE detected via Win32_SoundDevice");
+                    return true;
+                }
             }
-            return found;
+            logger.debug("VB-CABLE not found in sound devices");
+            return false;
         } catch (Exception e) {
-            // Fallback: Try alternative detection method using WMI
-            logger.debug("AudioDevice cmdlet not available, trying WMI fallback");
-            return checkVbCableViaRegistry();
-        }
-    }
-
-    /**
-     * Fallback method to check VB-CABLE via registry (more reliable but slower).
-     */
-    private static boolean checkVbCableViaRegistry() {
-        String psScript =
-            "$ErrorActionPreference='SilentlyContinue'; " +
-            "$devices = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\*' -ErrorAction SilentlyContinue; " +
-            "$devices | Where-Object { $_.'(default)' -like '*CABLE Input*' } | Select-Object -First 1";
-
-        try {
-            String result = executePowerShell(psScript, 5);
-            return result != null && result.contains("CABLE");
-        } catch (Exception e) {
-            logger.debug("VB-CABLE registry check failed", e);
+            logger.debug("VB-CABLE detection failed", e);
             return false;
         }
     }
@@ -273,5 +272,52 @@ public class AudioRouter {
             return "Not configured";
         }
         return routingSuccessful ? "Active (VB-CABLE)" : "Failed (manual setup required)";
+    }
+
+    // New: Attempt routing via SoundVolumeView if present (best-effort)
+    private static boolean routeViaSoundVolumeView() {
+        try {
+            Path svv = locateSoundVolumeView();
+            if (svv == null) {
+                logger.debug("SoundVolumeView.exe not found for fallback");
+                return false;
+            }
+            String exe = '"' + svv.toAbsolutePath().toString() + '"';
+            // Try routing both java.exe and powershell.exe (cover TTS paths)
+            String cmdJava = exe + " /SetAppDefault \"" + VB_CABLE_DEVICE_NAME + "\" all \"java.exe\"";
+            String cmdPs = exe + " /SetAppDefault \"" + VB_CABLE_DEVICE_NAME + "\" all \"powershell.exe\"";
+            int c1 = run(cmdJava);
+            int c2 = run(cmdPs);
+            boolean ok = (c1 == 0) || (c2 == 0);
+            if (ok) logger.info("Routed via SoundVolumeView fallback");
+            else logger.debug("SoundVolumeView fallback returned codes: java={} ps={}", c1, c2);
+            return ok;
+        } catch (Exception e) {
+            logger.debug("SoundVolumeView fallback failed", e);
+            return false;
+        }
+    }
+
+    private static int run(String command) throws IOException, InterruptedException {
+        Process p = Runtime.getRuntime().exec(command);
+        if (!p.waitFor(10, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            return -1;
+        }
+        return p.exitValue();
+    }
+
+    private static Path locateSoundVolumeView() {
+        Path workingDir = Paths.get(System.getProperty("user.dir"));
+        Path candidate = workingDir.resolve("SoundVolumeView.exe");
+        if (Files.isRegularFile(candidate)) return candidate;
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null) {
+            Path pf = Paths.get(programFiles, "ValVoice", "SoundVolumeView.exe");
+            if (Files.isRegularFile(pf)) return pf;
+            Path pfAlt = Paths.get(programFiles, "SoundVolumeView.exe");
+            if (Files.isRegularFile(pfAlt)) return pfAlt;
+        }
+        return null;
     }
 }

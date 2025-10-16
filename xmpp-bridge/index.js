@@ -82,25 +82,51 @@ async function getLocalRiotAuth() {
     );
 
     if (!fs.existsSync(lockfilePath)) {
+      emit({ type: 'error', error: 'Lockfile not found. Is Riot Client running?', ts: Date.now() });
       return null;
     }
 
     const lockfileData = fs.readFileSync(lockfilePath, 'utf8');
     const [name, pid, port, password, protocol] = lockfileData.split(':');
 
+    emit({ type: 'debug', message: `Lockfile: port=${port}, protocol=${protocol}`, ts: Date.now() });
+
     const auth = Buffer.from(`riot:${password}`).toString('base64');
 
-    const response = await httpsRequest(`${protocol}://127.0.0.1:${port}/chat/v1/session`, {
+    // First, get the entitlements token which contains the proper access token
+    const entitlementsResponse = await httpsRequest(`${protocol}://127.0.0.1:${port}/entitlements/v1/token`, {
       headers: { 'Authorization': `Basic ${auth}` },
       rejectUnauthorized: false
     });
 
-    if (response.statusCode === 200 && response.data && response.data.loaded) {
+    emit({ type: 'debug', message: `Entitlements response: status=${entitlementsResponse.statusCode}`, ts: Date.now() });
+
+    if (entitlementsResponse.statusCode !== 200 || !entitlementsResponse.data) {
+      emit({ type: 'error', error: `Failed to get entitlements. Status: ${entitlementsResponse.statusCode}`, ts: Date.now() });
+      return null;
+    }
+
+    const accessToken = entitlementsResponse.data.accessToken;
+    const entitlement = entitlementsResponse.data.token;
+
+    // Now get the chat session to get puuid and region
+    const chatResponse = await httpsRequest(`${protocol}://127.0.0.1:${port}/chat/v1/session`, {
+      headers: { 'Authorization': `Basic ${auth}` },
+      rejectUnauthorized: false
+    });
+
+    emit({ type: 'debug', message: `Chat session response: status=${chatResponse.statusCode}, loaded=${chatResponse.data?.loaded}`, ts: Date.now() });
+
+    if (chatResponse.statusCode === 200 && chatResponse.data && chatResponse.data.loaded) {
+      emit({ type: 'debug', message: `Got auth data: puuid=${chatResponse.data.puuid?.substring(0,8)}..., region=${chatResponse.data.region}`, ts: Date.now() });
       return {
-        accessToken: response.data.accessToken,
-        puuid: response.data.puuid,
-        region: response.data.region
+        accessToken: accessToken,
+        entitlement: entitlement,
+        puuid: chatResponse.data.puuid,
+        region: chatResponse.data.region
       };
+    } else {
+      emit({ type: 'error', error: `Chat session not ready. Status: ${chatResponse.statusCode}, loaded: ${chatResponse.data?.loaded}`, ts: Date.now() });
     }
   } catch (error) {
     emit({ type: 'error', error: `Failed to get local Riot auth: ${error.message}`, ts: Date.now() });
@@ -113,18 +139,44 @@ async function getLocalRiotAuth() {
  * Fetch PAS token (required for XMPP authentication)
  */
 async function fetchPASToken(bearerToken) {
-  const response = await httpsRequest('https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat', {
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`,
-      'User-Agent': ''
+  try {
+    const response = await httpsRequest('https://riot-geo.pas.si.riotgames.com/pas/v1/service/chat', {
+      headers: {
+        'Authorization': `Bearer ${bearerToken}`,
+        'User-Agent': ''
+      }
+    });
+
+    emit({ type: 'debug', message: `PAS token response status: ${response.statusCode}`, ts: Date.now() });
+
+    // Check for error status codes
+    if (response.statusCode !== 200) {
+      throw new Error(`PAS token request failed with status ${response.statusCode}: ${JSON.stringify(response.data)}`);
     }
-  });
-  // Some deployments return a raw string, others return { token: '...' }
-  if (response && response.data) {
-    if (typeof response.data === 'string') return response.data;
-    if (typeof response.data.token === 'string') return response.data.token;
+
+    // Some deployments return a raw string, others return { token: '...' }
+    if (response && response.data) {
+      if (typeof response.data === 'string' && response.data.length > 10) {
+        emit({ type: 'debug', message: 'PAS token received as string', ts: Date.now() });
+        return response.data;
+      }
+      if (response.data.token && typeof response.data.token === 'string') {
+        emit({ type: 'debug', message: 'PAS token received as object.token', ts: Date.now() });
+        return response.data.token;
+      }
+      if (response.data.accessToken && typeof response.data.accessToken === 'string') {
+        emit({ type: 'debug', message: 'PAS token received as object.accessToken', ts: Date.now() });
+        return response.data.accessToken;
+      }
+    }
+
+    // Log the actual response for debugging
+    emit({ type: 'error', error: `PAS token response unexpected. Type: ${typeof response.data}, Data: ${JSON.stringify(response.data)}`, ts: Date.now() });
+    throw new Error('PAS token response unexpected');
+  } catch (error) {
+    emit({ type: 'error', error: `PAS token fetch error: ${error.message}`, ts: Date.now() });
+    throw error;
   }
-  throw new Error('PAS token response unexpected');
 }
 
 /**
@@ -218,13 +270,12 @@ async function connectXMPP() {
       throw new Error('Could not authenticate with Riot Client. Make sure Valorant/Riot Client is running.');
     }
 
-    const { accessToken, puuid } = authData;
+    const { accessToken, entitlement, puuid } = authData;
 
     emit({ type: 'info', message: 'Fetching PAS token...', ts: Date.now() });
     const pasToken = await fetchPASToken(accessToken);
 
-    emit({ type: 'info', message: 'Fetching entitlements...', ts: Date.now() });
-    const entitlement = await fetchEntitlementsToken(accessToken);
+    emit({ type: 'info', message: 'Got entitlements token from local client', ts: Date.now() });
 
     const pasParts = pasToken.split('.');
     if (pasParts.length !== 3) throw new Error('Invalid PAS token format');

@@ -871,21 +871,28 @@ public class ValVoiceController {
             // Use PowerShell to list sound devices names; lightweight query.
             String ps = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
             java.util.List<String> lines = runPowerShell(ps, 8);
-            boolean hasCableInput = false;
-            boolean hasCableOutput = false;
+            boolean hasVbCable = false;
             for (String l : lines) {
                 if (l == null) continue;
                 String lower = l.toLowerCase();
-                if (lower.contains("cable input")) hasCableInput = true;
-                if (lower.contains("cable output")) hasCableOutput = true;
+                // Look for VB-Audio Virtual Cable device (the main driver)
+                if (lower.contains("vb-audio") && lower.contains("cable")) {
+                    hasVbCable = true;
+                    break;
+                }
+                // Also check for legacy naming patterns
+                if (lower.contains("cable input") || lower.contains("cable output")) {
+                    hasVbCable = true;
+                    break;
+                }
             }
-            vbCableDetectedFlag = hasCableInput && hasCableOutput;
+            vbCableDetectedFlag = hasVbCable;
             if (vbCableDetectedFlag) {
-                logger.info("VB-Audio Virtual Cable devices detected (Input & Output).");
+                logger.info("VB-Audio Virtual Cable detected and ready.");
                 updateStatusLabel(statusVbCable, "Detected", true);
             } else {
-                logger.warn("VB-Audio Virtual Cable devices missing or incomplete: Input={} Output={}. Narration may not reach Valorant mic.", hasCableInput, hasCableOutput);
-                updateStatusLabel(statusVbCable, "Missing", false);
+                logger.warn("VB-Audio Virtual Cable not found. Install from https://vb-audio.com/Cable/");
+                updateStatusLabel(statusVbCable, "Not Installed", false);
             }
             return vbCableDetectedFlag;
         } catch (Exception e) {

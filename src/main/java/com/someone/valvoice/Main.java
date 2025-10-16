@@ -138,6 +138,29 @@ public class Main {
                                 logger.warn("XMPP error event: {}", err);
                                 ValVoiceController.updateXmppStatus("Error", false);
                             }
+                            case "debug" -> {
+                                String msg = obj.has("message") && !obj.get("message").isJsonNull() ? obj.get("message").getAsString() : "";
+                                logger.debug("[XmppBridge:debug] {}", msg);
+
+                                // Mirror the info -> UI mapping so important debug messages also update status
+                                if (msg.contains("Connected to Riot XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("Connected", true);
+                                } else if (msg.contains("Connected to XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("TLS OK", true);
+                                } else if (msg.contains("Getting authentication credentials")) {
+                                    ValVoiceController.updateXmppStatus("Authenticating...", false);
+                                } else if (msg.contains("Fetching PAS token") || msg.toLowerCase().contains("pas token")) {
+                                    ValVoiceController.updateXmppStatus("Auth: PAS token", false);
+                                } else if (msg.contains("Fetching entitlements")) {
+                                    ValVoiceController.updateXmppStatus("Auth: entitlements", false);
+                                } else if (msg.contains("Connecting to XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("Connecting...", false);
+                                } else if (msg.contains("XMPP connection closed")) {
+                                    ValVoiceController.updateXmppStatus("Closed", false);
+                                } else if (msg.contains("Reconnecting")) {
+                                    ValVoiceController.updateXmppStatus("Reconnecting...", false);
+                                }
+                            }
                             case "startup" -> {
                                 logger.debug("[XmppBridge:startup] {}", obj);
                                 String mode = System.getProperty("valvoice.bridgeMode", "external-exe");
