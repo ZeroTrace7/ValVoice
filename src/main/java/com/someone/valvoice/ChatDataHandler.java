@@ -107,8 +107,18 @@ public class ChatDataHandler {
 
     /**
      * Core entry point for a parsed chat Message produced from a <message> XMPP stanza.
-     * Applies filtering (ignored users, enabled channels, own-message rules), records
-     * statistics, and triggers narration (TTS) if permitted.
+     *
+     * ✅ AUTOMATIC WORKFLOW (No manual triggers needed!):
+     * 1. Player types message in Valorant chat and presses ENTER
+     * 2. XMPP bridge detects message
+     * 3. This method is called automatically
+     * 4. Applies filtering (ignored users, enabled channels, own-message rules)
+     * 5. Records statistics
+     * 6. Triggers TTS narration AUTOMATICALLY if permitted
+     * 7. TTS speaks → VB-Cable → Valorant Open Mic → Teammates hear it!
+     *
+     * NOTE: No V key pressing or manual intervention required!
+     * User must have Valorant Voice Activation set to OPEN MIC for automatic transmission.
      */
     public void message(Message msg) {
         if (msg == null) return;
@@ -117,7 +127,7 @@ public class ChatDataHandler {
         if (chat.shouldNarrate(msg)) {
             chat.recordNarrated(msg);
             chat.updateMessageStats(msg); // legacy stats
-            // Narrate via controller (if available)
+            // Narrate AUTOMATICALLY via controller (no manual trigger needed!)
             try {
                 ValVoiceController.narrateMessage(msg);
             } catch (Exception e) {

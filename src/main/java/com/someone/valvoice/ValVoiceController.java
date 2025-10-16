@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.*;
 
 import static com.someone.valvoice.ValVoiceApplication.*;
 
@@ -87,6 +88,15 @@ public class ValVoiceController {
     private ChatListenerService chatListenerService; // polls local Riot chat REST
     private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
 
+    // Performance: Use ScheduledExecutorService instead of raw threads with sleep
+    private ScheduledExecutorService scheduledExecutor;
+    private volatile boolean shutdownRequested = false;
+
+    // Cache for voice enumeration to avoid repeated PowerShell calls
+    private volatile java.util.List<String> cachedVoices = null;
+    private volatile long voicesCacheTimestamp = 0;
+    private static final long VOICES_CACHE_DURATION_MS = 300_000; // 5 minutes
+
     private static final boolean SIMULATE_CHAT = false; // set true for local TTS demo without Valorant
     /**
      * External XMPP Handler Executable (single supported name)
@@ -103,6 +113,11 @@ public class ValVoiceController {
 
     public ValVoiceController() {
         latestInstance = this;
+        scheduledExecutor = Executors.newScheduledThreadPool(2, r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     public static ValVoiceController getLatestInstance() {
@@ -290,7 +305,7 @@ public class ValVoiceController {
     }
 
     private void initRiotLocalApiAsync() {
-        Thread t = new Thread(() -> {
+        CompletableFuture.runAsync(() -> {
             try {
                 updateLoadingStatus("Locating Riot lockfile...");
                 String path = LockFileHandler.findDefaultLockfile();
@@ -322,9 +337,7 @@ public class ValVoiceController {
             } catch (Exception e) {
                 logger.debug("Riot local API initialization failed", e);
             }
-        }, "RiotInitThread");
-        t.setDaemon(true);
-        t.start();
+        }, scheduledExecutor);
     }
 
     private void startChatListener() {
@@ -335,20 +348,15 @@ public class ValVoiceController {
     }
 
     private void startSelfIdRefreshTask() {
-        Thread refresher = new Thread(() -> {
-            while (true) {
-                try {
-                    Thread.sleep(60_000); // 1 minute
-                    ChatDataHandler.getInstance().refreshSelfId();
-                } catch (InterruptedException e) {
-                    return; // stop on interrupt
-                } catch (Exception e) {
-                    logger.trace("Self ID refresh encountered an error", e);
-                }
+        // Use ScheduledExecutorService instead of Thread with sleep loop
+        scheduledExecutor.scheduleWithFixedDelay(() -> {
+            if (shutdownRequested) return;
+            try {
+                ChatDataHandler.getInstance().refreshSelfId();
+            } catch (Exception e) {
+                logger.trace("Self ID refresh encountered an error", e);
             }
-        }, "SelfIdRefreshThread");
-        refresher.setDaemon(true);
-        refresher.start();
+        }, 60, 60, TimeUnit.SECONDS); // Initial delay 60s, then every 60s
     }
 
     private void populateComboBoxes() {
@@ -372,6 +380,21 @@ public class ValVoiceController {
 
     private void loadVoicesAsync(boolean isRefresh) {
         if (voices == null) return;
+
+        // Check cache first (unless explicit refresh requested)
+        if (!isRefresh && cachedVoices != null &&
+            (System.currentTimeMillis() - voicesCacheTimestamp) < VOICES_CACHE_DURATION_MS) {
+            Platform.runLater(() -> {
+                voices.getItems().setAll(cachedVoices);
+                voices.setPromptText("Select a voice");
+                if (voices.getValue() == null && !cachedVoices.isEmpty()) {
+                    voices.setValue(cachedVoices.get(0));
+                }
+            });
+            logger.debug("Using cached voices list ({} entries)", cachedVoices.size());
+            return;
+        }
+
         Platform.runLater(() -> {
             if (!isRefresh && (voices.getItems() == null || voices.getItems().isEmpty())) {
                 voices.setPromptText("Loading voices...");
@@ -379,25 +402,21 @@ public class ValVoiceController {
                 voices.setPromptText("Refreshing voices...");
             }
         });
-        Thread t = new Thread(() -> {
-            java.util.List<String> list = enumerateWindowsVoices();
-            // Merge in System.Speech voices from inbuilt synthesizer (if any) to ensure coverage
-            if (inbuiltSynth != null && inbuiltSynth.isReady()) {
-                for (String v : inbuiltSynth.getAvailableVoices()) {
-                    if (!list.contains(v)) list.add(v);
-                }
-            }
-            list.sort(String.CASE_INSENSITIVE_ORDER);
-            Platform.runLater(() -> {
-                voices.getItems().setAll(list);
-                voices.setPromptText("Select a voice");
-                if (voices.getValue() == null && !list.isEmpty()) {
-                    voices.setValue(list.get(0));
-                }
+
+        CompletableFuture.supplyAsync(this::enumerateWindowsVoices, scheduledExecutor)
+            .thenAccept(list -> {
+                // Update cache
+                cachedVoices = list;
+                voicesCacheTimestamp = System.currentTimeMillis();
+
+                Platform.runLater(() -> {
+                    voices.getItems().setAll(list);
+                    voices.setPromptText("Select a voice");
+                    if (voices.getValue() == null && !list.isEmpty()) {
+                        voices.setValue(list.get(0));
+                    }
+                });
             });
-        }, "VoiceEnumThread");
-        t.setDaemon(true);
-        t.start();
     }
 
     @FXML
@@ -460,43 +479,70 @@ public class ValVoiceController {
         String command = "powershell.exe -NoProfile -NonInteractive -Command \"$ErrorActionPreference='SilentlyContinue'; " + script.replace("\"", "\\\"") + "\"";
         try {
             process = Runtime.getRuntime().exec(command);
-            try (java.io.BufferedReader stdOut = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
-                 java.io.BufferedReader stdErr = new java.io.BufferedReader(new java.io.InputStreamReader(process.getErrorStream()))) {
-                String line;
-                while ((line = stdOut.readLine()) != null) {
-                    output.add(line);
+
+            // Use executor with timeout for better resource management
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<Void> reader = executor.submit(() -> {
+                try (java.io.BufferedReader stdOut = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
+                     java.io.BufferedReader stdErr = new java.io.BufferedReader(new java.io.InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    while ((line = stdOut.readLine()) != null) {
+                        output.add(line);
+                    }
+                    StringBuilder err = new StringBuilder();
+                    while ((line = stdErr.readLine()) != null) {
+                        err.append(line).append('\n');
+                    }
+                    if (err.length() > 0) {
+                        logger.trace("PowerShell stderr for script [{}]: {}", script, err);
+                    }
                 }
-                StringBuilder err = new StringBuilder();
-                while ((line = stdErr.readLine()) != null) {
-                    err.append(line).append('\n');
-                }
-                if (err.length() > 0) {
-                    logger.trace("PowerShell stderr for script [{}]: {}", script, err);
-                }
-            }
-            if (!process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
+                return null;
+            });
+
+            try {
+                reader.get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
                 logger.warn("PowerShell script timeout ({} s) for script: {}", timeoutSeconds, script);
+                reader.cancel(true);
+            } catch (ExecutionException e) {
+                logger.debug("PowerShell execution error: {}", script, e.getCause());
+            } finally {
+                executor.shutdownNow();
             }
+
+            process.waitFor(1, TimeUnit.SECONDS);
         } catch (IOException | InterruptedException e) {
             logger.debug("PowerShell execution failed for script: {}", script, e);
         } finally {
-            if (process != null) process.destroyForcibly();
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
         }
         return output;
     }
 
     /**
-     * Animates the progress bar during loading
+     * Animates the progress bar during loading - optimized with proper timing
      */
     private void startLoadingAnimation() {
-        Thread loadingThread = new Thread(() -> {
-            while (isLoading) {
-                try { Thread.sleep(50); } catch (InterruptedException e) { e.printStackTrace(); }
-                Platform.runLater(() -> {
-                    if (progressLogin.getProgress() >= 1) { progressLogin.setProgress(0); }
-                    progressLogin.setProgress(progressLogin.getProgress() + 0.025);
-                });
+        // Use scheduled executor with fixed rate instead of tight loop with sleep
+        ScheduledFuture<?> animationTask = scheduledExecutor.scheduleAtFixedRate(() -> {
+            if (!isLoading) return;
+            Platform.runLater(() -> {
+                if (progressLogin.getProgress() >= 1) {
+                    progressLogin.setProgress(0);
+                }
+                progressLogin.setProgress(progressLogin.getProgress() + 0.025);
+            });
+        }, 0, 50, TimeUnit.MILLISECONDS);
+
+        // Stop animation when loading completes
+        CompletableFuture.runAsync(() -> {
+            while (isLoading && !shutdownRequested) {
+                try { Thread.sleep(100); } catch (InterruptedException e) { return; }
             }
+            animationTask.cancel(false);
             Platform.runLater(() -> {
                 progressLogin.setProgress(1);
                 panelLogin.setVisible(false);
@@ -508,39 +554,41 @@ public class ValVoiceController {
                 enableNavigation();
                 logger.info("Loading complete!");
             });
-        });
-        loadingThread.setDaemon(true);
-        loadingThread.start();
+        }, scheduledExecutor);
     }
 
     /**
-     * Simulates loading process (replace with actual initialization)
+     * Simulates loading process - optimized to use scheduled delays
      */
     private void simulateLoading() {
-        Thread initThread = new Thread(() -> {
-            try {
-                // Simulate initialization steps
-                updateLoadingStatus("Initializing...");
-                Thread.sleep(1000);
+        updateLoadingStatus("Initializing...");
 
-                updateLoadingStatus("Loading configuration...");
-                Thread.sleep(1000);
-
-                updateLoadingStatus("Connecting to services...");
-                Thread.sleep(1000);
-
-                updateLoadingStatus("Ready!");
-                Thread.sleep(500);
-
-                // Mark loading complete
-                isLoading = false;
-
-            } catch (InterruptedException e) {
+        // Chain async tasks with proper delays instead of blocking sleeps
+        CompletableFuture.runAsync(() -> updateLoadingStatus("Initializing..."), scheduledExecutor)
+            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Loading configuration...")))
+            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Connecting to services...")))
+            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Ready!")))
+            .thenCompose(v -> delayedTask(500, () -> isLoading = false))
+            .exceptionally(e -> {
                 logger.error("Loading interrupted", e);
+                return null;
+            });
+    }
+
+    /**
+     * Helper to create delayed task without blocking threads
+     */
+    private CompletableFuture<Void> delayedTask(long delayMs, Runnable action) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        scheduledExecutor.schedule(() -> {
+            try {
+                action.run();
+                future.complete(null);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
             }
-        });
-        initThread.setDaemon(true);
-        initThread.start();
+        }, delayMs, TimeUnit.MILLISECONDS);
+        return future;
     }
 
     /**
@@ -736,6 +784,17 @@ public class ValVoiceController {
      * Static narration entry-point used by ChatDataHandler after it has already
      * applied filtering and recorded stats. This method should NOT alter Chat
      * statistics besides updating UI labels; those are handled upstream.
+     *
+     * ✅ AUTOMATIC TTS WORKFLOW:
+     * - Called automatically when a chat message passes filters
+     * - Speaks the message immediately via TTS engine
+     * - Audio routes to VB-Cable → Valorant Open Mic → Teammates hear it!
+     * - NO manual trigger (no V key pressing) required!
+     *
+     * Prerequisites for teammates to hear:
+     * - Valorant Voice Activation: OPEN MIC (not Push to Talk)
+     * - Valorant Input Device: CABLE Output (VB-Audio Virtual Cable)
+     * - ValVoice audio routing active (automatic via AudioRouter)
      */
     public static void narrateMessage(Message msg) {
         ValVoiceController c = latestInstance;
@@ -745,6 +804,7 @@ public class ValVoiceController {
             if (c.ttsEngine != null) {
                 int sapiRate = c.mapSliderToSapiRate();
                 String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
+                // Automatically speak the message (no manual trigger needed!)
                 c.ttsEngine.speak(msg.getContent(), selectedVoice, sapiRate);
             }
             // Update UI stats from Chat (already incremented by ChatDataHandler)
@@ -778,6 +838,8 @@ public class ValVoiceController {
     }
 
     public void shutdownServices() {
+        shutdownRequested = true;
+
         if (ttsEngine != null) {
             ttsEngine.shutdown();
         }
@@ -787,10 +849,20 @@ public class ValVoiceController {
         if (inbuiltSynth != null) {
             inbuiltSynth.shutdown();
         }
+        if (scheduledExecutor != null) {
+            scheduledExecutor.shutdownNow();
+            try {
+                if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    logger.warn("Scheduled executor did not terminate in time");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private void startChatSimulation() {
-        Thread sim = new Thread(() -> {
+        scheduledExecutor.execute(() -> {
             try {
                 String[] samples = new String[]{
                         "<message from='playerSelf@ares-parties.na1.pvp.net' type='groupchat'><body>Hello party!</body></message>",
@@ -803,16 +875,13 @@ public class ValVoiceController {
                 Platform.runLater(() -> {
                     if (sources != null) sources.setValue("SELF+PARTY+TEAM+ALL");
                 });
-                int i = 0;
-                while (SIMULATE_CHAT && i < samples.length) {
+
+                for (int i = 0; i < samples.length && SIMULATE_CHAT && !shutdownRequested; i++) {
                     handleIncomingChatXml(samples[i]);
-                    i++;
                     Thread.sleep(2500);
                 }
             } catch (InterruptedException ignored) { }
-        }, "ChatSimThread");
-        sim.setDaemon(true);
-        sim.start();
+        });
     }
 
     // Placeholder for future real Valorant chat integration.
