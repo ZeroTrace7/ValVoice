@@ -31,7 +31,7 @@ public class Main {
     public static double currentVersion;
     private static Properties properties;
 
-    // Node.js XMPP process management
+    // Node.js XMPP process management (external exe stdout reader)
     private static Process xmppNodeProcess;
     private static ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "xmpp-node-io");
@@ -43,7 +43,6 @@ public class Main {
     private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE);
     private static final Pattern MESSAGE_START_PATTERN = Pattern.compile("^<message", Pattern.CASE_INSENSITIVE);
     private static final Pattern IQ_START_PATTERN = Pattern.compile("^<iq", Pattern.CASE_INSENSITIVE);
-        // External bridge name (only this is supported)
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-xmpp.exe";
 
     private static boolean lockInstance() {
@@ -89,76 +88,35 @@ public class Main {
         Path exePrimary = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
         Path exeCandidate = Files.isRegularFile(exePrimary) ? exePrimary : null;
 
-        // If no exe is present, try to build valvoice-xmpp.exe automatically (convenience)
         if (exeCandidate == null) {
+            logger.warn("{} not found; attempting to auto-build...", XMPP_EXE_NAME_PRIMARY);
             Path built = tryBuildBridgeExecutable(workingDir);
             if (built != null && Files.isRegularFile(built)) {
                 exeCandidate = built;
             }
         }
-        boolean useExternalExe = exeCandidate != null && Files.isReadable(exeCandidate);
 
-        Path tempScriptPath = null; // only used when falling back to script
-        ProcessBuilder pb;
-        if (useExternalExe) {
-            logger.info("Using external XMPP bridge executable: {}", exeCandidate.toAbsolutePath());
-            pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
-        } else {
-            logger.info("External {} not found; falling back to embedded xmpp-node.js stub", XMPP_EXE_NAME_PRIMARY);
-            String resourceName = "/com/someone/valvoice/xmpp-node.js";
-            try (InputStream in = Main.class.getResourceAsStream(resourceName)) {
-                if (in == null) {
-                    logger.error("Could not find resource {} (XMPP bridge unavailable)", resourceName);
-                    return;
-                }
-                byte[] bytes = in.readAllBytes();
-                tempScriptPath = Files.createTempFile("xmpp-node-", ".js");
-                Files.write(tempScriptPath, bytes);
-            } catch (IOException e) {
-                logger.error("Failed to extract xmpp-node.js", e);
-                return;
-            }
-            String nodeCommand = "node"; // Assumes Node.js is on PATH
-            // Verify Node.js availability
-            try {
-                Process ver = new ProcessBuilder(nodeCommand, "--version").redirectErrorStream(true).start();
-                if (!ver.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                    ver.destroyForcibly();
-                    logger.error("Node.js availability check timed out; cannot run embedded XMPP stub.");
-                    System.setProperty("valvoice.nodeAvailable", "false");
-                    return;
-                }
-                int code = ver.exitValue();
-                if (code != 0) {
-                    logger.error("Node.js not available (exit code {}). Install Node.js or provide {}.", code, XMPP_EXE_NAME_PRIMARY);
-                    System.setProperty("valvoice.nodeAvailable", "false");
-                    return;
-                }
-                System.setProperty("valvoice.nodeAvailable", "true");
-            } catch (Exception ex) {
-                logger.error("Node.js not found on PATH. Install Node.js or place {} next to the JAR.", XMPP_EXE_NAME_PRIMARY, ex);
-                System.setProperty("valvoice.nodeAvailable", "false");
-                return;
-            }
-            pb = new ProcessBuilder(nodeCommand, tempScriptPath.toAbsolutePath().toString());
+        if (exeCandidate == null || !Files.isReadable(exeCandidate)) {
+            logger.error("Cannot start XMPP bridge: missing {} and Node.js fallback is disabled for production.", XMPP_EXE_NAME_PRIMARY);
+            System.setProperty("valvoice.bridgeMode", "unavailable");
+            ValVoiceController.updateXmppStatus("Unavailable", false);
+            return;
         }
 
+        ProcessBuilder pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         pb.directory(workingDir.toFile());
         try {
             xmppNodeProcess = pb.start();
-            String mode = useExternalExe ? "external-exe" : "embedded-script";
-            System.setProperty("valvoice.bridgeMode", mode);
-            if (useExternalExe) {
-                System.setProperty("valvoice.nodeAvailable", System.getProperty("valvoice.nodeAvailable", "n/a"));
-            }
-            logger.info("Started XMPP bridge (mode: {})", mode);
+            System.setProperty("valvoice.bridgeMode", "external-exe");
+            ValVoiceController.updateBridgeModeLabel("external-exe");
+            logger.info("Started XMPP bridge (mode: external-exe)");
         } catch (IOException e) {
             logger.error("Failed to start XMPP bridge process", e);
+            ValVoiceController.updateXmppStatus("Start failed", false);
             return;
         }
 
-        final Path scriptRef = tempScriptPath; // may be null if external exe used
         xmppIoPool.submit(() -> {
             try (BufferedReader br = new BufferedReader(new InputStreamReader(xmppNodeProcess.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
@@ -178,16 +136,40 @@ public class Main {
                             case "error" -> {
                                 String err = obj.has("error") ? obj.get("error").getAsString() : "(unknown)";
                                 logger.warn("XMPP error event: {}", err);
+                                ValVoiceController.updateXmppStatus("Error", false);
                             }
-                            case "close-riot" -> {
-                                logger.info("Riot client closed event received");
-                                stopChatListenerIfRunning();
+                            case "startup" -> {
+                                logger.debug("[XmppBridge:startup] {}", obj);
+                                String mode = System.getProperty("valvoice.bridgeMode", "external-exe");
+                                ValVoiceController.updateBridgeModeLabel(mode);
+                                ValVoiceController.updateXmppStatus("Starting...", false);
                             }
-                            case "close-valorant" -> {
-                                logger.info("Valorant closed event received");
-                                stopChatListenerIfRunning();
+                            case "info" -> {
+                                String msg = obj.has("message") && !obj.get("message").isJsonNull() ? obj.get("message").getAsString() : "";
+                                logger.debug("[XmppBridge:info] {}", msg);
+                                // Map key phases to UI status
+                                if (msg.contains("Connected to Riot XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("Connected", true);
+                                } else if (msg.contains("Connected to XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("TLS OK", true);
+                                } else if (msg.contains("Getting authentication credentials")) {
+                                    ValVoiceController.updateXmppStatus("Authenticating...", false);
+                                } else if (msg.contains("Fetching PAS token")) {
+                                    ValVoiceController.updateXmppStatus("Auth: PAS token", false);
+                                } else if (msg.contains("Fetching entitlements")) {
+                                    ValVoiceController.updateXmppStatus("Auth: entitlements", false);
+                                } else if (msg.contains("Connecting to XMPP server")) {
+                                    ValVoiceController.updateXmppStatus("Connecting...", false);
+                                } else if (msg.contains("XMPP connection closed")) {
+                                    ValVoiceController.updateXmppStatus("Closed", false);
+                                } else if (msg.contains("Reconnecting")) {
+                                    ValVoiceController.updateXmppStatus("Reconnecting...", false);
+                                }
                             }
-                            case "startup", "heartbeat", "shutdown" -> logger.debug("[XmppBridge:{}] {}", type, obj);
+                            case "shutdown" -> {
+                                logger.debug("[XmppBridge:shutdown] {}", obj);
+                                ValVoiceController.updateXmppStatus("Stopped", false);
+                            }
                             default -> logger.debug("[XmppBridge:?] {}", obj);
                         }
                     } catch (Exception ex) {
@@ -197,7 +179,7 @@ public class Main {
             } catch (IOException e) {
                 logger.warn("XMPP bridge stdout reader terminating", e);
             } finally {
-                logger.info("XMPP bridge output closed ({})", useExternalExe ? "external-exe" : ("script=" + scriptRef));
+                logger.info("XMPP bridge output closed (external-exe)");
             }
         });
 
@@ -205,6 +187,7 @@ public class Main {
             try {
                 int code = xmppNodeProcess.waitFor();
                 logger.warn("XMPP bridge process exited with code {}", code);
+                ValVoiceController.updateXmppStatus("Exited(" + code + ")", false);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -233,11 +216,14 @@ public class Main {
                 logger.info("Node.js or npm not available; cannot auto-build valvoice-xmpp.exe.");
                 return null;
             }
-            logger.info("Auto-building valvoice-xmpp.exe (this may take a minute on first run)...");
+            logger.info("Auto-building valvoice-xmpp.exe (clean cache) ...");
+            // Best effort: clear pkg cache before build
+            runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %LOCALAPPDATA%\\pkg rmdir /s /q %LOCALAPPDATA%\\pkg").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
+            runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %USERPROFILE%\\.pkg-cache rmdir /s /q %USERPROFILE%\\.pkg-cache").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
             // npm install
-            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm install").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
+            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm ci").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
             if (npmInstall != 0) {
-                logger.warn("npm install failed with exit code {}", npmInstall);
+                logger.warn("npm ci failed with exit code {}", npmInstall);
                 return null;
             }
             // npm run build:exe
@@ -274,7 +260,6 @@ public class Main {
     private static int runAndWait(ProcessBuilder pb, long timeout, TimeUnit unit) throws IOException, InterruptedException {
         pb.redirectErrorStream(true);
         Process proc = pb.start();
-        // Stream output to log (briefly)
         Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "proc-log"); t.setDaemon(true); return t; })
                 .submit(() -> {
                     try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {

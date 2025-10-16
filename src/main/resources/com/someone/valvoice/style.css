@@ -515,93 +515,62 @@
     -fx-pref-height: 44;
 }
 
-/* Static status labels (the field names like "XMPP:", "VB-Cable:") */
+/* ========== STATUS BAR BADGES ========== */
 .status-label-static {
-    -fx-text-fill: #ffffff;
-    -fx-font-size: 14px; /* +1 */
+    -fx-text-fill: #c8d3f5;
+    -fx-font-size: 13px;
     -fx-font-weight: bold;
-    -fx-padding: 0;
 }
 
-/* Dynamic status labels (the values) */
 .status-label {
-    -fx-text-fill: #ffffff;
-    -fx-font-size: 14px; /* +1 */
-    -fx-font-weight: bold;
-    -fx-padding: 8 16 8 16; /* +2 vertical, +2 horizontal */
-    -fx-background-color: rgba(255, 255, 255, 0.14); /* slightly more contrast */
-    -fx-background-radius: 10;
-    -fx-border-radius: 10;
-    -fx-border-width: 2;
-    -fx-border-color: rgba(255, 255, 255, 0.25);
-    -fx-min-width: 96; /* a bit wider for consistency */
-    -fx-alignment: center;
+    -fx-font-size: 14px;              /* bigger text for readability */
+    -fx-font-weight: 700;             /* bold */
+    -fx-text-fill: #0b1020;           /* dark text on light badge */
+    -fx-background-color: #e0e7ff;    /* default/info background */
+    -fx-background-radius: 12;        /* pill shape */
+    -fx-padding: 6 10 6 10;           /* comfortable padding */
+    -fx-border-radius: 12;
+    -fx-border-color: rgba(0,0,0,0.15);
+    -fx-border-width: 1;
 }
 
-/* Status indicator colors - these will be applied dynamically */
-/* Green/OK status - BRIGHT and VISIBLE */
+/* Success (Connected / Detected) */
 .status-ok {
-    -fx-text-fill: #00ff88 !important;
-    -fx-background-color: rgba(0, 255, 136, 0.28) !important; /* +0.03 */
-    -fx-border-color: #00ff88 !important;
-    -fx-border-width: 2 !important;
-    -fx-border-radius: 10 !important;
-    -fx-background-radius: 10 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(0, 255, 136, 0.65), 10, 0, 0, 0);
-    -fx-font-size: 14px !important;
+    -fx-background-color: #c6f6d5;    /* green 200 */
+    -fx-text-fill: #1f3b2f;           /* dark green text */
+    -fx-border-color: #84e1bc;        /* green 300 */
 }
 
-/* Yellow/Warning status - BRIGHT and VISIBLE */
+/* Warning (Missing / Checking / Partial) */
 .status-warning {
-    -fx-text-fill: #ffcc00 !important;
-    -fx-background-color: rgba(255, 204, 0, 0.28) !important;
-    -fx-border-color: #ffcc00 !important;
-    -fx-border-width: 2 !important;
-    -fx-border-radius: 10 !important;
-    -fx-background-radius: 10 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(255, 204, 0, 0.65), 10, 0, 0, 0);
-    -fx-font-size: 14px !important;
+    -fx-background-color: #fef3c7;    /* amber 200 */
+    -fx-text-fill: #4a3a19;           /* dark amber text */
+    -fx-border-color: #fcd34d;        /* amber 300 */
 }
 
-/* Red/Error status - BRIGHT and VISIBLE */
+/* Error (Unavailable / Failed) */
 .status-error {
-    -fx-text-fill: #ff4444 !important;
-    -fx-background-color: rgba(255, 68, 68, 0.28) !important;
-    -fx-border-color: #ff4444 !important;
-    -fx-border-width: 2 !important;
-    -fx-border-radius: 10 !important;
-    -fx-background-radius: 10 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(255, 68, 68, 0.65), 10, 0, 0, 0);
-    -fx-font-size: 14px !important;
+    -fx-background-color: #fecaca;    /* red 200 */
+    -fx-text-fill: #4a1f1f;           /* dark red text */
+    -fx-border-color: #fda4a4;        /* red 300 */
 }
 
-/* Blue/Info status - BRIGHT and VISIBLE */
+/* Info (Mode, startup, neutral) */
 .status-info {
-    -fx-text-fill: #00d4ff !important;
-    -fx-background-color: rgba(0, 212, 255, 0.28) !important;
-    -fx-border-color: #00d4ff !important;
-    -fx-border-width: 2 !important;
-    -fx-border-radius: 10 !important;
-    -fx-background-radius: 10 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.65), 10, 0, 0, 0);
-    -fx-font-size: 14px !important;
+    -fx-background-color: #dbeafe;    /* blue 200 */
+    -fx-text-fill: #10243a;           /* dark blue text */
+    -fx-border-color: #93c5fd;        /* blue 300 */
 }
 
-/* Self ID label special styling */
-#statusSelfId {
-    -fx-text-fill: #ffffff;
-    -fx-font-size: 13px; /* +1 */
-    -fx-font-style: italic;
-    -fx-padding: 8 16 8 16;
-    -fx-background-color: rgba(0, 212, 255, 0.22);
-    -fx-background-radius: 10;
-    -fx-border-color: #00d4ff;
-    -fx-border-width: 1.5;
-    -fx-border-radius: 10;
-    -fx-font-weight: 600;
-    -fx-min-width: 140;
+/* Status bar container spacing tweaks for clarity */
+#statusBar {
+    -fx-min-height: 48px;             /* slightly taller for pills */
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 20;
+}
+
+/* Group boxes inside status bar keep tight alignment */
+#statusBar > HBox {
+    -fx-spacing: 6;
+    -fx-alignment: CENTER_LEFT;
 }

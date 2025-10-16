@@ -146,8 +146,8 @@ public class ValVoiceController {
         updateStatusLabelWithType(statusSelfId, "Self: (pending)", "info");
 
         // Helpful tooltips
-        applyTooltip(statusXmpp, "External XMPP bridge availability");
-        applyTooltip(statusBridgeMode, "Bridge mode: external-exe or embedded-script");
+        applyTooltip(statusXmpp, "XMPP bridge availability (Node script / exe)");
+        applyTooltip(statusBridgeMode, "Bridge mode: external-exe, node-script, or embedded-script");
         applyTooltip(statusVbCable, "VB-Audio Virtual Cable device detection");
         applyTooltip(statusAudioRoute, "Audio routing: ValVoice -> VB-CABLE -> Valorant");
         applyTooltip(statusSelfId, "Your Valorant self player ID");
@@ -200,13 +200,35 @@ public class ValVoiceController {
         Platform.runLater(() -> {
             if (statusBridgeMode != null) statusBridgeMode.setText(mode);
             if (statusXmpp != null) {
-                if ("external-exe".equalsIgnoreCase(mode)) {
-                    updateStatusLabel(statusXmpp, "Ready", true);
-                } else if ("embedded-script".equalsIgnoreCase(mode)) {
-                    updateStatusLabel(statusXmpp, "Stub (demo only)", false);
-                } else {
-                    updateStatusLabel(statusXmpp, "Init...", false);
+                switch (mode) {
+                    case "external-exe" -> updateStatusLabel(statusXmpp, "External exe", true);
+                    case "node-script" -> updateStatusLabel(statusXmpp, "Node script", true);
+                    case "embedded-script" -> updateStatusLabel(statusXmpp, "Embedded script", true);
+                    default -> updateStatusLabel(statusXmpp, "Init...", false);
                 }
+            }
+        });
+    }
+
+    // Public helpers to update status badges from background threads
+    public static void updateXmppStatus(String text, boolean ok) {
+        ValVoiceController c = latestInstance;
+        if (c == null) return;
+        Platform.runLater(() -> {
+            if (c.statusXmpp != null) {
+                c.updateStatusLabel(c.statusXmpp, text, ok);
+            }
+        });
+    }
+
+    public static void updateBridgeModeLabel(String modeText) {
+        ValVoiceController c = latestInstance;
+        if (c == null) return;
+        Platform.runLater(() -> {
+            if (c.statusBridgeMode != null) c.statusBridgeMode.setText(modeText);
+            if (c.statusXmpp != null) {
+                boolean ok = "external-exe".equalsIgnoreCase(modeText) || "node-script".equalsIgnoreCase(modeText) || "embedded-script".equalsIgnoreCase(modeText);
+                c.updateStatusLabel(c.statusXmpp, ok ? ("Connected: " + modeText) : "Init...", ok);
             }
         });
     }

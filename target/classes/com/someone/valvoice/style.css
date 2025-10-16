@@ -506,93 +506,71 @@
 /* ========== STATUS BAR STYLES ========== */
 /* Status bar background and structure */
 #statusBar {
-    -fx-background-color: linear-gradient(to right, #0f1620, #16213e);
-    -fx-padding: 8 20 8 20;
-    -fx-border-color: #533483;
+    -fx-background-color: linear-gradient(to right, #0f1620, #1a1a2e);
+    -fx-padding: 12 22 12 22; /* +2px all around for breathing room */
+    -fx-border-color: #00d4ff;
     -fx-border-width: 2 0 0 0;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 10, 0, 0, -2);
+    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.3), 12, 0, 0, -2);
+    -fx-min-height: 44; /* taller for legibility */
+    -fx-pref-height: 44;
 }
 
-/* Static status labels (the field names like "XMPP:", "VB-Cable:") */
+/* ========== STATUS BAR BADGES ========== */
 .status-label-static {
-    -fx-text-fill: #c0c0c0;
+    -fx-text-fill: #c8d3f5;
     -fx-font-size: 13px;
     -fx-font-weight: bold;
-    -fx-padding: 0;
 }
 
-/* Dynamic status labels (the values) */
 .status-label {
-    -fx-text-fill: #ffffff;
-    -fx-font-size: 13px;
-    -fx-font-weight: 600;
-    -fx-padding: 4 12 4 12;
-    -fx-background-color: rgba(255, 255, 255, 0.08);
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
-    -fx-border-width: 1.5;
-    -fx-border-color: transparent;
-}
-
-/* Status indicator colors - these will be applied dynamically */
-/* Green/OK status - BRIGHT and VISIBLE */
-.status-ok {
-    -fx-text-fill: #00ff88 !important;
-    -fx-background-color: rgba(0, 255, 136, 0.2) !important;
-    -fx-border-color: #00ff88 !important;
-    -fx-border-width: 1.5 !important;
-    -fx-border-radius: 6 !important;
-    -fx-background-radius: 6 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(0, 255, 136, 0.4), 8, 0, 0, 0);
-}
-
-/* Yellow/Warning status - BRIGHT and VISIBLE */
-.status-warning {
-    -fx-text-fill: #ffaa00 !important;
-    -fx-background-color: rgba(255, 170, 0, 0.2) !important;
-    -fx-border-color: #ffaa00 !important;
-    -fx-border-width: 1.5 !important;
-    -fx-border-radius: 6 !important;
-    -fx-background-radius: 6 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(255, 170, 0, 0.4), 8, 0, 0, 0);
-}
-
-/* Red/Error status - BRIGHT and VISIBLE */
-.status-error {
-    -fx-text-fill: #ff5555 !important;
-    -fx-background-color: rgba(255, 85, 85, 0.2) !important;
-    -fx-border-color: #ff5555 !important;
-    -fx-border-width: 1.5 !important;
-    -fx-border-radius: 6 !important;
-    -fx-background-radius: 6 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(255, 85, 85, 0.4), 8, 0, 0, 0);
-}
-
-/* Blue/Info status - BRIGHT and VISIBLE */
-.status-info {
-    -fx-text-fill: #00d4ff !important;
-    -fx-background-color: rgba(0, 212, 255, 0.2) !important;
-    -fx-border-color: #00d4ff !important;
-    -fx-border-width: 1.5 !important;
-    -fx-border-radius: 6 !important;
-    -fx-background-radius: 6 !important;
-    -fx-font-weight: bold !important;
-    -fx-effect: dropshadow(gaussian, rgba(0, 212, 255, 0.4), 8, 0, 0, 0);
-}
-
-/* Self ID label special styling */
-#statusSelfId {
-    -fx-text-fill: #00d4ff;
-    -fx-font-size: 12px;
-    -fx-font-style: italic;
-    -fx-padding: 4 12 4 12;
-    -fx-background-color: rgba(0, 212, 255, 0.15);
-    -fx-background-radius: 6;
-    -fx-border-color: #00d4ff;
+    -fx-font-size: 14px;              /* bigger text for readability */
+    -fx-font-weight: 700;             /* bold */
+    -fx-text-fill: #0b1020;           /* dark text on light badge */
+    -fx-background-color: #e0e7ff;    /* default/info background */
+    -fx-background-radius: 12;        /* pill shape */
+    -fx-padding: 6 10 6 10;           /* comfortable padding */
+    -fx-border-radius: 12;
+    -fx-border-color: rgba(0,0,0,0.15);
     -fx-border-width: 1;
-    -fx-border-radius: 6;
-    -fx-font-weight: 600;
+}
+
+/* Success (Connected / Detected) */
+.status-ok {
+    -fx-background-color: #c6f6d5;    /* green 200 */
+    -fx-text-fill: #1f3b2f;           /* dark green text */
+    -fx-border-color: #84e1bc;        /* green 300 */
+}
+
+/* Warning (Missing / Checking / Partial) */
+.status-warning {
+    -fx-background-color: #fef3c7;    /* amber 200 */
+    -fx-text-fill: #4a3a19;           /* dark amber text */
+    -fx-border-color: #fcd34d;        /* amber 300 */
+}
+
+/* Error (Unavailable / Failed) */
+.status-error {
+    -fx-background-color: #fecaca;    /* red 200 */
+    -fx-text-fill: #4a1f1f;           /* dark red text */
+    -fx-border-color: #fda4a4;        /* red 300 */
+}
+
+/* Info (Mode, startup, neutral) */
+.status-info {
+    -fx-background-color: #dbeafe;    /* blue 200 */
+    -fx-text-fill: #10243a;           /* dark blue text */
+    -fx-border-color: #93c5fd;        /* blue 300 */
+}
+
+/* Status bar container spacing tweaks for clarity */
+#statusBar {
+    -fx-min-height: 48px;             /* slightly taller for pills */
+    -fx-alignment: CENTER_LEFT;
+    -fx-spacing: 20;
+}
+
+/* Group boxes inside status bar keep tight alignment */
+#statusBar > HBox {
+    -fx-spacing: 6;
+    -fx-alignment: CENTER_LEFT;
 }
