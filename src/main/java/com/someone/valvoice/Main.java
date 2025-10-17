@@ -196,7 +196,13 @@ public class Main {
                             default -> logger.debug("[XmppBridge:?] {}", obj);
                         }
                     } catch (Exception ex) {
-                        logger.info("[XmppBridge log] {}", line);
+                        // Non-JSON bridge output (often presence notifications) can be noisy; lower to DEBUG
+                        String lower = line.toLowerCase();
+                        if (lower.contains("presence")) {
+                            logger.debug("[XmppBridge presence] {}", line);
+                        } else {
+                            logger.info("[XmppBridge log] {}", line);
+                        }
                     }
                 }
             } catch (IOException e) {

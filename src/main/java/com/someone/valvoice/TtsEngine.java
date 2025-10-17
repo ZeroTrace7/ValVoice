@@ -125,21 +125,33 @@ public class TtsEngine {
         // Release COM object to prevent memory leaks
         ps.append("[System.Runtime.InteropServices.Marshal]::ReleaseComObject($sp) | Out-Null;");
 
-        String command = "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"" + ps.toString().replace("\"", "`\"") + "\"";
+        java.util.List<String> cmd = new java.util.ArrayList<>();
+        cmd.add("powershell.exe");
+        cmd.add("-NoLogo");
+        cmd.add("-NoProfile");
+        cmd.add("-NonInteractive");
+        cmd.add("-ExecutionPolicy");
+        cmd.add("Bypass");
+        cmd.add("-Command");
+        cmd.add(ps.toString());
 
+        boolean finished = false;
+        int exitCode = -1;
         try {
-            activeProcess = Runtime.getRuntime().exec(command);
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            activeProcess = pb.start();
 
-            // Wait for process with timeout (max 30 seconds for very long text)
-            boolean finished = activeProcess.waitFor(30, TimeUnit.SECONDS);
+            // Wait for process with timeout (45 seconds to avoid false timeouts on first-run COM init)
+            finished = activeProcess.waitFor(45, TimeUnit.SECONDS);
 
             if (!finished) {
                 logger.warn("TTS process timeout for text: {}", abbreviate(req.text));
                 activeProcess.destroyForcibly();
             } else {
-                int code = activeProcess.exitValue();
-                if (code != 0) {
-                    logger.debug("TTS process exit code {} for text='{}'", code, abbreviate(req.text));
+                exitCode = activeProcess.exitValue();
+                if (exitCode != 0) {
+                    logger.debug("TTS process exit code {} for text='{}'", exitCode, abbreviate(req.text));
                 }
             }
         } catch (InterruptedException e) {
@@ -172,7 +184,8 @@ public class TtsEngine {
         }
 
         long ms = System.currentTimeMillis() - start;
-        if (ms > 10000) { // Log only if taking more than 10 seconds
+        // Only log 'Spoke' if the process actually finished successfully
+        if (finished && exitCode == 0 && ms > 10000) { // Log only if taking more than 10 seconds
             logger.debug("Spoke ({} ms): {}", ms, abbreviate(req.text));
         }
     }

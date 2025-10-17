@@ -20,4 +20,5 @@ com\someone\valvoice\HtmlEscape.class
 com\someone\valvoice\TtsEngine$SpeakRequest.class
 com\someone\valvoice\Chat.class
 com\someone\valvoice\ValVoiceController.class
+com\someone\valvoice\InbuiltVoiceSynthesizer$SpeakCommand.class
 com\someone\valvoice\InbuiltVoiceSynthesizer.class

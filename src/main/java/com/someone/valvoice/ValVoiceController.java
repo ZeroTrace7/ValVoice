@@ -111,6 +111,11 @@ public class ValVoiceController {
     private volatile boolean vbCableDetectedFlag = false;
     private volatile boolean builtInRoutingOk = false;
 
+    // Rate-limit loading status updates to make them readable in logs/UI
+    private final Object loadingStatusLock = new Object();
+    private long nextAllowedLoadingUpdateAtMs = 0L;
+    private static final long LOADING_MIN_INTERVAL_MS = 1000L;
+
     public ValVoiceController() {
         latestInstance = this;
         scheduledExecutor = Executors.newScheduledThreadPool(2, r -> {
@@ -456,7 +461,8 @@ public class ValVoiceController {
     }
 
     private void runPowerShellLines(String psScript, java.util.Set<String> collector, String tag) {
-        java.util.List<String> lines = runPowerShell(psScript, 6);
+        // Increased timeout to 15s for reliability on slower systems and first-run JIT
+        java.util.List<String> lines = runPowerShell(psScript, 15);
         if (!lines.isEmpty()) {
             logger.debug("{} enumeration returned {} entries", tag, lines.size());
             for (String l : lines) {
@@ -476,44 +482,53 @@ public class ValVoiceController {
     private java.util.List<String> runPowerShell(String script, int timeoutSeconds) {
         java.util.List<String> output = new java.util.ArrayList<>();
         Process process = null;
-        String command = "powershell.exe -NoProfile -NonInteractive -Command \"$ErrorActionPreference='SilentlyContinue'; " + script.replace("\"", "\\\"") + "\"";
         try {
-            process = Runtime.getRuntime().exec(command);
+            // Build PowerShell command safely via ProcessBuilder (no fragile string quoting)
+            // Ensure UTF-8 output and suppress any error UI
+            String psCommand = "& { $ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " + script + " }";
+            java.util.List<String> cmd = new java.util.ArrayList<>();
+            cmd.add("powershell.exe");
+            cmd.add("-NoProfile");
+            cmd.add("-NonInteractive");
+            cmd.add("-ExecutionPolicy");
+            cmd.add("Bypass");
+            cmd.add("-Command");
+            cmd.add(psCommand);
 
-            // Use executor with timeout for better resource management
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            Future<Void> reader = executor.submit(() -> {
-                try (java.io.BufferedReader stdOut = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
-                     java.io.BufferedReader stdErr = new java.io.BufferedReader(new java.io.InputStreamReader(process.getErrorStream()))) {
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            Process started = pb.start();
+            process = started; // keep reference for cleanup below
+
+            java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Thread reader = new Thread(() -> {
+                try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(started.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
                     String line;
-                    while ((line = stdOut.readLine()) != null) {
+                    while ((line = br.readLine()) != null) {
                         output.add(line);
                     }
-                    StringBuilder err = new StringBuilder();
-                    while ((line = stdErr.readLine()) != null) {
-                        err.append(line).append('\n');
-                    }
-                    if (err.length() > 0) {
-                        logger.trace("PowerShell stderr for script [{}]: {}", script, err);
-                    }
+                } catch (Exception ignored) {
+                } finally {
+                    done.set(true);
                 }
-                return null;
-            });
+            }, "ps-reader");
+            reader.setDaemon(true);
+            reader.start();
 
-            try {
-                reader.get(timeoutSeconds, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
+            boolean finished = started.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
                 logger.warn("PowerShell script timeout ({} s) for script: {}", timeoutSeconds, script);
-                reader.cancel(true);
-            } catch (ExecutionException e) {
-                logger.debug("PowerShell execution error: {}", script, e.getCause());
-            } finally {
-                executor.shutdownNow();
+                started.destroyForcibly();
+            } else {
+                // Give reader thread a brief moment to flush remaining lines
+                long waitUntil = System.currentTimeMillis() + 250;
+                while (!done.get() && System.currentTimeMillis() < waitUntil) {
+                    try { Thread.sleep(10); } catch (InterruptedException ignored) { break; }
+                }
             }
-
-            process.waitFor(1, TimeUnit.SECONDS);
         } catch (IOException | InterruptedException e) {
             logger.debug("PowerShell execution failed for script: {}", script, e);
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
         } finally {
             if (process != null && process.isAlive()) {
                 process.destroyForcibly();
@@ -558,21 +573,31 @@ public class ValVoiceController {
     }
 
     /**
-     * Simulates loading process - optimized to use scheduled delays
+     * Simulates loading process - deterministic spacing using a single scheduled task
      */
     private void simulateLoading() {
         updateLoadingStatus("Initializing...");
-
-        // Chain async tasks with proper delays instead of blocking sleeps
-        CompletableFuture.runAsync(() -> updateLoadingStatus("Initializing..."), scheduledExecutor)
-            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Loading configuration...")))
-            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Connecting to services...")))
-            .thenCompose(v -> delayedTask(1000, () -> updateLoadingStatus("Ready!")))
-            .thenCompose(v -> delayedTask(500, () -> isLoading = false))
-            .exceptionally(e -> {
-                logger.error("Loading interrupted", e);
-                return null;
-            });
+        if (scheduledExecutor == null || scheduledExecutor.isShutdown()) {
+            updateLoadingStatus("Ready!");
+            isLoading = false;
+            return;
+        }
+        final java.util.concurrent.atomic.AtomicInteger step = new java.util.concurrent.atomic.AtomicInteger(0);
+        final ScheduledFuture<?>[] handle = new ScheduledFuture<?>[1];
+        handle[0] = scheduledExecutor.scheduleWithFixedDelay(() -> {
+            int s = step.incrementAndGet();
+            switch (s) {
+                case 1 -> updateLoadingStatus("Loading configuration...");
+                case 2 -> updateLoadingStatus("Connecting to services...");
+                case 3 -> updateLoadingStatus("Ready!");
+                case 4 -> {
+                    isLoading = false;
+                    ScheduledFuture<?> h = handle[0];
+                    if (h != null) h.cancel(false);
+                }
+                default -> {}
+            }
+        }, 1, 1, TimeUnit.SECONDS);
     }
 
     /**
@@ -592,9 +617,24 @@ public class ValVoiceController {
     }
 
     /**
-     * Updates loading status label
+     * Updates loading status label (rate-limited to avoid spammy rapid updates)
      */
     private void updateLoadingStatus(String status) {
+        if (scheduledExecutor == null || scheduledExecutor.isShutdown()) {
+            setLoadingStatusImmediate(status);
+            return;
+        }
+        long delayMs;
+        synchronized (loadingStatusLock) {
+            long now = System.currentTimeMillis();
+            long allowedAt = Math.max(now, nextAllowedLoadingUpdateAtMs);
+            delayMs = Math.max(0L, allowedAt - now);
+            nextAllowedLoadingUpdateAtMs = allowedAt + LOADING_MIN_INTERVAL_MS;
+        }
+        scheduledExecutor.schedule(() -> setLoadingStatusImmediate(status), delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void setLoadingStatusImmediate(String status) {
         Platform.runLater(() -> {
             progressLoginLabel.setText(status);
             logger.debug("Loading status: {}", status);
@@ -694,10 +734,13 @@ public class ValVoiceController {
     @FXML
     public void selectVoice() {
         String selectedVoice = voices.getValue();
+        if (selectedVoice == null || selectedVoice.isBlank()) {
+            return; // ignore spurious events during refresh
+        }
         logger.info("Voice selected: {}", selectedVoice);
         showInformation("Voice Selected", "You selected: " + selectedVoice);
         // Play a brief sample using the persistent inbuilt synthesizer for immediate feedback
-        if (inbuiltSynth != null && inbuiltSynth.isReady() && selectedVoice != null) {
+        if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
             inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", uiRate);
         }
@@ -904,33 +947,31 @@ public class ValVoiceController {
             updateStatusLabel(statusXmpp, "Detected", true);
         }
 
-        // Use built-in AudioRouter instead of external tool
+        // Use built-in AudioRouter to route ONLY PowerShell TTS to VB-Cable
         boolean vbDetected = detectVbCableDevices();
         if (vbDetected) {
             logger.info("Configuring audio routing using built-in AudioRouter...");
+            logger.info("NOTE: Only PowerShell TTS will be routed - your game audio stays normal!");
             builtInRoutingOk = AudioRouter.routeToVirtualCable();
             if (builtInRoutingOk) {
-                updateStatusLabel(statusAudioRoute, "Active (built-in)", true);
+                updateStatusLabel(statusAudioRoute, "Active (TTS only)", true);
+                logger.info("✓ TTS audio routed to VB-CABLE - game audio unchanged");
             } else {
+                // AudioRouter already logged detailed manual steps; avoid duplicate WARNs here
                 updateStatusLabel(statusAudioRoute, "Manual setup needed", false);
-                logger.warn("Automatic audio routing failed. Please set audio manually:");
-                logger.warn("  Windows → Sound Settings → App volume → Java/PowerShell → Output: CABLE Input");
+                logger.debug("Audio routing not configured automatically; manual setup may be required");
             }
         } else {
             builtInRoutingOk = false;
             updateStatusLabel(statusAudioRoute, "VB-Cable not found", false);
         }
 
-        // Legacy support: Still check for SoundVolumeView.exe but don't require it
+        // Check for SoundVolumeView.exe (optional tool for audio routing)
         Path svv = locateSoundVolumeView();
         if (svv != null) {
-            logger.info("Note: {} detected but not needed (using built-in routing)", SOUND_VOLUME_VIEW_EXE);
-            // Fallback: Try SoundVolumeView if built-in routing failed
-            if (!builtInRoutingOk) {
-                logger.info("Attempting fallback routing via SoundVolumeView...");
-                routePowershellToCable(svv);
-                updateStatusLabel(statusAudioRoute, "Active (SoundVolumeView)", true);
-            }
+            logger.info("Note: {} detected (can be used for audio routing)", SOUND_VOLUME_VIEW_EXE);
+        } else {
+            logger.debug("SoundVolumeView.exe not found");
         }
     }
 
@@ -939,7 +980,7 @@ public class ValVoiceController {
         try {
             // Use PowerShell to list sound devices names; lightweight query.
             String ps = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
-            java.util.List<String> lines = runPowerShell(ps, 8);
+            java.util.List<String> lines = runPowerShell(ps, 15);
             boolean hasVbCable = false;
             for (String l : lines) {
                 if (l == null) continue;

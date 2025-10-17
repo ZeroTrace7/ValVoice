@@ -139,15 +139,25 @@ public class ValVoiceApplication extends Application {
         if (SystemTray.isSupported()) {
             SystemTray tray = SystemTray.getSystemTray();
 
-            // Load icon (create a simple default icon if appIcon.png doesn't exist)
+            // Load icon (try multiple classpath locations before falling back)
             Image image = null;
             try {
-                java.net.URL iconURL = ValVoiceApplication.class.getResource("appIcon.png");
+                java.net.URL iconURL = null;
+                // Try same package
+                iconURL = ValVoiceApplication.class.getResource("appIcon.png");
+                if (iconURL == null) {
+                    // Try icons/ subfolder within package
+                    iconURL = ValVoiceApplication.class.getResource("icons/appIcon.png");
+                }
+                if (iconURL == null) {
+                    // Try absolute classpath
+                    iconURL = ValVoiceApplication.class.getResource("/com/someone/valvoice/icons/appIcon.png");
+                }
                 if (iconURL != null) {
                     image = ImageIO.read(iconURL);
                 } else {
                     // Create a simple default icon (16x16 blue square)
-                    logger.warn("appIcon.png not found, using default icon");
+                    logger.debug("appIcon.png not found on classpath, using default icon");
                     java.awt.image.BufferedImage defaultIcon = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB);
                     java.awt.Graphics2D g = defaultIcon.createGraphics();
                     g.setColor(java.awt.Color.BLUE);

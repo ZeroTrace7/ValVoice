@@ -130,11 +130,15 @@ public class InbuiltVoiceSynthesizer {
                     "$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1",
                     "echo '" + END_SENTINEL + "'"
             );
-            send(command);
+            // Send without requiring 'ready' (we're in initialization)
+            if (psWriter != null) {
+                psWriter.println(command);
+                psWriter.flush();
+            }
 
             String line;
             int timeout = 0;
-            while (timeout < 100) { // 10 second timeout
+            while (timeout < 150) { // 15 second timeout
                 if (psReader.ready()) {
                     line = psReader.readLine();
                     if (line == null) break;
@@ -147,6 +151,35 @@ public class InbuiltVoiceSynthesizer {
                 } else {
                     Thread.sleep(100);
                     timeout++;
+                }
+            }
+
+            if (voices.isEmpty()) {
+                // Fallback: COM SAPI.SpVoice descriptions
+                String fallback = String.join(";",
+                        "$ErrorActionPreference='SilentlyContinue'",
+                        "$sp = New-Object -ComObject SAPI.SpVoice",
+                        "$sp.GetVoices() | ForEach-Object { $_.GetDescription() } | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1",
+                        "echo '" + END_SENTINEL + "'"
+                );
+                if (psWriter != null) {
+                    psWriter.println(fallback);
+                    psWriter.flush();
+                }
+                timeout = 0;
+                while (timeout < 150) { // another 15 seconds
+                    if (psReader.ready()) {
+                        line = psReader.readLine();
+                        if (line == null) break;
+                        String trimmed = line.trim();
+                        if (trimmed.equals(END_SENTINEL)) break;
+                        if (!trimmed.isEmpty()) {
+                            voices.add(trimmed.replace("\"", "").trim());
+                        }
+                    } else {
+                        Thread.sleep(100);
+                        timeout++;
+                    }
                 }
             }
 
@@ -192,7 +225,7 @@ public class InbuiltVoiceSynthesizer {
     }
 
     private synchronized void send(String psCommand) {
-        if (psWriter == null || !ready.get()) return;
+        if (psWriter == null) return;
         psWriter.println(psCommand);
         psWriter.flush();
     }
