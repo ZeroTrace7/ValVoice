@@ -847,8 +847,15 @@ public class ValVoiceController {
             if (c.ttsEngine != null) {
                 int sapiRate = c.mapSliderToSapiRate();
                 String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
+                // Log TTS trigger so user can see it's working
+                logger.info("🔊 TTS TRIGGERED: \"{}\" (voice: {}, rate: {})",
+                    msg.getContent().length() > 50 ? msg.getContent().substring(0, 47) + "..." : msg.getContent(),
+                    selectedVoice != null ? selectedVoice : "default",
+                    sapiRate);
                 // Automatically speak the message (no manual trigger needed!)
                 c.ttsEngine.speak(msg.getContent(), selectedVoice, sapiRate);
+            } else {
+                logger.warn("⚠ TTS engine is NULL - cannot narrate message!");
             }
             // Update UI stats from Chat (already incremented by ChatDataHandler)
             Chat chat = Chat.getInstance();
