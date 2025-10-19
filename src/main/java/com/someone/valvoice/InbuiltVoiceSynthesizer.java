@@ -6,12 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Persistent PowerShell-based Windows voice synthesizer using System.Speech.
@@ -20,57 +15,48 @@ import java.util.concurrent.TimeUnit;
  *  - Launch a reusable hidden PowerShell process (-NoExit) for lower latency voice playback.
  *  - Enumerate installed System.Speech voices (friendly names) on initialization.
  *  - Provide simple speak method with selectable voice + rate conversion (0..100 UI -> -10..10 SAPI range).
- *  - (Best effort) route audio through VB-CABLE if SoundVolumeView.exe is present (mirrors original logic).
+ *  - Route the PowerShell process audio to VB-CABLE using SoundVolumeView.
  *
  * Notes:
  *  - This is Windows-only. Guard usages with OS checks.
- *  - Output from speak commands isn't consumed (they produce none on success). We only read during enumeration.
- *  - If the persistent process dies, further speaks will be ignored; could be enhanced with auto-restart logic.
+ *  - Routes PowerShell process PID to VB-Cable for TTS output.
  */
 public class InbuiltVoiceSynthesizer {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltVoiceSynthesizer.class);
     private static final String END_SENTINEL = "END_OF_VOICES";
 
     private Process powershellProcess;
-    private PrintWriter psWriter;
-    private BufferedReader psReader;
-    private BufferedReader psErrorReader;
+    private PrintWriter powershellWriter;
+    private BufferedReader powershellReader;
     private final List<String> voices = new ArrayList<>();
-    private final AtomicBoolean ready = new AtomicBoolean(false);
-
-    // Performance: Queue for async speaking to prevent blocking
-    private final BlockingQueue<SpeakCommand> speakQueue = new LinkedBlockingQueue<>(50);
-    private Thread speakWorker;
-    private final AtomicBoolean workerRunning = new AtomicBoolean(false);
+    private volatile boolean ready = false;
 
     public InbuiltVoiceSynthesizer() {
         if (!isWindows()) {
             logger.warn("InbuiltVoiceSynthesizer initialized on non-Windows OS; disabled");
             return;
         }
+
         try {
-            // Start persistent PowerShell session. Using "-" trick with -Command to keep session open.
-            powershellProcess = new ProcessBuilder("powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "-")
-                    .redirectErrorStream(false)
+            // Start persistent PowerShell session
+            powershellProcess = new ProcessBuilder("powershell.exe", "-NoExit", "-Command", "-")
                     .start();
-            psWriter = new PrintWriter(new OutputStreamWriter(powershellProcess.getOutputStream(), StandardCharsets.UTF_8), true);
-            psReader = new BufferedReader(new InputStreamReader(powershellProcess.getInputStream(), StandardCharsets.UTF_8));
-            psErrorReader = new BufferedReader(new InputStreamReader(powershellProcess.getErrorStream(), StandardCharsets.UTF_8));
+            powershellWriter = new PrintWriter(new OutputStreamWriter(powershellProcess.getOutputStream(), StandardCharsets.UTF_8), true);
+            powershellReader = new BufferedReader(new InputStreamReader(powershellProcess.getInputStream(), StandardCharsets.UTF_8));
 
-            // Start error stream consumer to prevent buffer blocking
-            startErrorStreamConsumer();
-
+            // Enumerate installed voices
             enumerateVoices();
-            configureAppAudioRoute();
 
-            // Start worker thread for async speaking
-            startSpeakWorker();
+            // Route PowerShell process audio to VB-Cable
+            routePowerShellToVbCable();
 
+            // Test voice if available
             if (!voices.isEmpty()) {
-                speakInbuiltVoice(voices.get(0), "Inbuilt voice synthesizer initialized.", 50);
+                speakInbuiltVoice(voices.get(0), "Inbuilt voice synthesizer initialized.", (short) 100);
             }
-            ready.set(true);
-            logger.info("InbuiltVoiceSynthesizer initialized successfully");
+
+            logger.info("InbuiltVoiceSynthesizer initialized successfully with {} voices", voices.size());
+            ready = true;
         } catch (IOException e) {
             logger.error("Failed to start persistent PowerShell for inbuilt synthesizer", e);
             cleanup();
@@ -81,263 +67,153 @@ public class InbuiltVoiceSynthesizer {
         return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 
-    private void startErrorStreamConsumer() {
-        Thread errorConsumer = new Thread(() -> {
-            try {
-                String line;
-                while ((line = psErrorReader.readLine()) != null) {
-                    if (!line.isBlank()) {
-                        logger.trace("PS stderr: {}", line);
-                    }
-                }
-            } catch (IOException e) {
-                logger.trace("Error stream consumer stopped", e);
-            }
-        }, "PS-ErrorConsumer");
-        errorConsumer.setDaemon(true);
-        errorConsumer.start();
+    /**
+     * Check if the synthesizer is ready to use
+     */
+    public boolean isReady() {
+        return ready && powershellProcess != null && powershellProcess.isAlive();
     }
 
-    private void startSpeakWorker() {
-        workerRunning.set(true);
-        speakWorker = new Thread(() -> {
-            while (workerRunning.get()) {
-                try {
-                    SpeakCommand cmd = speakQueue.poll(500, TimeUnit.MILLISECONDS);
-                    if (cmd != null) {
-                        executeSpeakCommand(cmd);
-                    }
-                } catch (InterruptedException e) {
-                    if (!workerRunning.get()) break;
-                } catch (Exception e) {
-                    logger.debug("Speak worker error", e);
-                }
-            }
-            logger.debug("Speak worker stopped");
-        }, "InbuiltSynth-Worker");
-        speakWorker.setDaemon(true);
-        speakWorker.start();
+    /**
+     * Shutdown the synthesizer (alias for cleanup)
+     */
+    public void shutdown() {
+        ready = false;
+        cleanup();
     }
 
     private void enumerateVoices() {
         try {
-            // Optimized command to reduce output parsing
-            String command = String.join(";",
-                    "$ErrorActionPreference='SilentlyContinue'",
-                    "Add-Type -AssemblyName System.Speech",
-                    "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer",
-                    // Convert to CSV to get clean lines; skip header
-                    "$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1",
-                    "echo '" + END_SENTINEL + "'"
-            );
-            // Send without requiring 'ready' (we're in initialization)
-            if (psWriter != null) {
-                psWriter.println(command);
-                psWriter.flush();
-            }
+            String command = "Add-Type -AssemblyName System.Speech;" +
+                    "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;" +
+                    "$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1; " +
+                    "echo '" + END_SENTINEL + "'";
+
+            powershellWriter.println(command);
 
             String line;
-            int timeout = 0;
-            while (timeout < 150) { // 15 second timeout
-                if (psReader.ready()) {
-                    line = psReader.readLine();
-                    if (line == null) break;
-                    String trimmed = line.trim();
-                    if (trimmed.equals(END_SENTINEL)) break;
-                    if (!trimmed.isEmpty()) {
-                        // CSV line => "VoiceName"; remove quotes if present
-                        voices.add(trimmed.replace("\"", "").trim());
-                    }
-                } else {
-                    Thread.sleep(100);
-                    timeout++;
+            while ((line = powershellReader.readLine()) != null) {
+                if (line.trim().equals(END_SENTINEL)) {
+                    break;
+                }
+                if (!line.trim().isEmpty()) {
+                    voices.add(line.replace("\"", "").trim());
                 }
             }
 
             if (voices.isEmpty()) {
-                // Fallback: COM SAPI.SpVoice descriptions
-                String fallback = String.join(";",
-                        "$ErrorActionPreference='SilentlyContinue'",
-                        "$sp = New-Object -ComObject SAPI.SpVoice",
-                        "$sp.GetVoices() | ForEach-Object { $_.GetDescription() } | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1",
-                        "echo '" + END_SENTINEL + "'"
-                );
-                if (psWriter != null) {
-                    psWriter.println(fallback);
-                    psWriter.flush();
-                }
-                timeout = 0;
-                while (timeout < 150) { // another 15 seconds
-                    if (psReader.ready()) {
-                        line = psReader.readLine();
-                        if (line == null) break;
-                        String trimmed = line.trim();
-                        if (trimmed.equals(END_SENTINEL)) break;
-                        if (!trimmed.isEmpty()) {
-                            voices.add(trimmed.replace("\"", "").trim());
-                        }
-                    } else {
-                        Thread.sleep(100);
-                        timeout++;
-                    }
-                }
-            }
-
-            if (voices.isEmpty()) {
-                logger.warn("No inbuilt voices found via System.Speech enumeration");
+                logger.warn("No inbuilt voices found.");
             } else {
-                logger.info("InbuiltVoiceSynthesizer detected {} voices", voices.size());
+                logger.info("Found {} inbuilt voices: {}", voices.size(), voices);
             }
         } catch (Exception e) {
-            logger.error("Error enumerating inbuilt voices", e);
+            logger.error("Failed to enumerate voices", e);
         }
     }
 
-    private void configureAppAudioRoute() {
+    /**
+     * Route the PowerShell process to VB-Cable using SoundVolumeView.
+     * This matches the ValNarrator implementation exactly.
+     */
+    private void routePowerShellToVbCable() {
         try {
-            // Check working directory first (same folder as JAR)
-            File svv = new File(System.getProperty("user.dir"), "SoundVolumeView.exe");
-
-            // If not in working dir, check Program Files
-            if (!svv.exists()) {
-                String programFiles = System.getenv("ProgramFiles");
-                if (programFiles != null) {
-                    svv = new File(programFiles, "ValVoice/SoundVolumeView.exe");
-                    if (!svv.exists()) {
-                        svv = new File(programFiles, "SoundVolumeView.exe");
-                    }
-                }
-            }
-
-            if (!svv.exists()) {
-                logger.debug("SoundVolumeView.exe not found; skipping VB-CABLE routing");
+            String programFiles = System.getenv("ProgramFiles");
+            if (programFiles == null) {
+                logger.debug("ProgramFiles environment variable not found");
                 return;
             }
-            if (powershellProcess == null) return;
+
+            String fileLocation = String.format("%s/ValVoice/SoundVolumeView.exe", programFiles.replace("\\", "/"));
+            File svvFile = new File(fileLocation);
+
+            if (!svvFile.exists()) {
+                // Try alternative location
+                fileLocation = String.format("%s/SoundVolumeView.exe", programFiles.replace("\\", "/"));
+                svvFile = new File(fileLocation);
+
+                if (!svvFile.exists()) {
+                    // Try project directory
+                    fileLocation = new File(System.getProperty("user.dir"), "SoundVolumeView.exe").getAbsolutePath();
+                    svvFile = new File(fileLocation);
+
+                    if (!svvFile.exists()) {
+                        logger.debug("SoundVolumeView.exe not found; skipping VB-CABLE routing for PowerShell");
+                        return;
+                    }
+                }
+            }
+
+            // CRITICAL: Route PowerShell process by PID to VB-Cable
             long pid = powershellProcess.pid();
-            // Route to CABLE Input if installed; swallow failures
-            String cmd = '"' + svv.getAbsolutePath() + '"' + " /SetAppDefault \"CABLE Input\" all " + pid;
-            Runtime.getRuntime().exec(cmd);
-            logger.info("Attempted audio routing of PowerShell PID {} via SoundVolumeView", pid);
-        } catch (Exception e) {
-            logger.warn("Audio routing (SoundVolumeView) failed", e);
+            String command = fileLocation + " /SetAppDefault \"CABLE Input\" all " + pid;
+            Runtime.getRuntime().exec(command);
+            logger.info("PowerShell process (PID {}) audio routed to VB-CABLE", pid);
+        } catch (IOException e) {
+            logger.error("SoundVolumeView.exe generated an error", e);
         }
     }
 
-    private synchronized void send(String psCommand) {
-        if (psWriter == null) return;
-        psWriter.println(psCommand);
-        psWriter.flush();
-    }
-
-    public boolean isReady() { return ready.get(); }
-
-    /**
-     * Return immutable list of discovered voices.
-     */
     public List<String> getAvailableVoices() {
-        return Collections.unmodifiableList(voices);
+        return new ArrayList<>(voices);
     }
 
     /**
-     * Speak text using the persistent System.Speech synthesizer session.
-     * @param voice exact Name as returned by getAvailableVoices(); null => default voice
-     * @param text phrase to speak
-     * @param uiRate 0..100 UI slider value (converted to -10..10 SAPI rate)
+     * Speak text using the specified voice and rate.
+     *
+     * @param voice The voice name to use
+     * @param text  The text to speak
+     * @param rate  Rate from 0-100 (UI scale), will be converted to -10 to +10 (SAPI scale)
      */
-    public void speakInbuiltVoice(String voice, String text, int uiRate) {
-        if (text == null || text.isBlank()) return;
-        if (!ready.get()) {
-            logger.debug("speakInbuiltVoice called but synthesizer not ready");
+    public void speakInbuiltVoice(String voice, String text, short rate) {
+        if (powershellWriter == null) {
+            logger.warn("PowerShell process not initialized; cannot speak");
             return;
         }
 
-        // Convert UI 0..100 => -10..10 (integer)
-        int sapiRate = (int) Math.round((uiRate / 100.0) * 20.0 - 10.0);
-        sapiRate = Math.max(-10, Math.min(10, sapiRate));
+        // Convert UI rate (0-100) to SAPI rate (-10 to +10)
+        short sapiRate = (short) (rate / 10.0 - 10);
 
-        // Queue the command for async execution
-        boolean offered = speakQueue.offer(new SpeakCommand(voice, text, sapiRate));
-        if (!offered) {
-            logger.warn("Inbuilt synthesizer queue full, dropping speak request");
-        }
-    }
-
-    private void executeSpeakCommand(SpeakCommand cmd) {
-        if (psWriter == null || !ready.get()) {
-            return;
-        }
-
-        String safeText = escape(cmd.text);
-        String select = (cmd.voice != null && !cmd.voice.isBlank())
-                ? String.format("$speak.SelectVoice('%s');", escape(cmd.voice))
-                : "";
-
-        // Optimized: Reuse synthesizer object instead of creating new one each time
-        String psCommand = String.format(
-                "$ErrorActionPreference='SilentlyContinue';" +
-                "if(-not $global:synth){ $global:synth = New-Object System.Speech.Synthesis.SpeechSynthesizer };" +
-                "%s$global:synth.Rate=%d;$global:synth.Speak('%s');",
-                select, cmd.sapiRate, safeText);
+        // Escape single quotes in text
+        String escapedText = text.replace("'", "''");
 
         try {
-            send(psCommand);
-        } catch (Exception e) {
-            logger.warn("Failed to speak text via inbuilt synthesizer", e);
-        }
-    }
+            String command = String.format(
+                    "Add-Type -AssemblyName System.Speech;" +
+                            "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;" +
+                            "$speak.SelectVoice('%s');" +
+                            "$speak.Rate=%d;" +
+                            "$speak.Speak('%s');",
+                    voice, sapiRate, escapedText);
 
-    private String escape(String s) {
-        return s.replace("'", "''").replace("\n", " ").replace("\r", " ");
+            powershellWriter.println(command);
+            logger.debug("Speaking with voice '{}' at rate {}: {}", voice, sapiRate, text.substring(0, Math.min(50, text.length())));
+        } catch (Exception e) {
+            logger.error("Failed to speak text", e);
+        }
     }
 
     /**
-     * Stop the persistent PowerShell process.
+     * Clean up PowerShell process on shutdown
      */
-    public void shutdown() {
-        cleanup();
-    }
-
-    private void cleanup() {
-        ready.set(false);
-        workerRunning.set(false);
-
-        if (speakWorker != null) {
-            speakWorker.interrupt();
-            try {
-                speakWorker.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+    public void cleanup() {
+        try {
+            if (powershellWriter != null) {
+                powershellWriter.println("exit");
+                powershellWriter.close();
             }
-        }
-
-        if (psWriter != null) {
-            try {
-                psWriter.println("exit");
-                psWriter.flush();
-            } catch (Exception ignored) {}
-        }
-        closeQuiet(psReader);
-        closeQuiet(psErrorReader);
-        if (powershellProcess != null) {
-            try {
+            if (powershellReader != null) {
+                powershellReader.close();
+            }
+            if (powershellProcess != null && powershellProcess.isAlive()) {
                 powershellProcess.destroy();
-                if (!powershellProcess.waitFor(2, TimeUnit.SECONDS)) {
+                powershellProcess.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+                if (powershellProcess.isAlive()) {
                     powershellProcess.destroyForcibly();
                 }
-            } catch (Exception ignored) {}
+            }
+            logger.debug("InbuiltVoiceSynthesizer cleaned up");
+        } catch (Exception e) {
+            logger.debug("Error during cleanup", e);
         }
-        psWriter = null;
-        psReader = null;
-        psErrorReader = null;
-        powershellProcess = null;
-        logger.debug("InbuiltVoiceSynthesizer cleanup complete");
     }
-
-    private void closeQuiet(Closeable c) {
-        if (c == null) return;
-        try { c.close(); } catch (IOException ignored) {}
-    }
-
-    private record SpeakCommand(String voice, String text, int sapiRate) {}
 }

@@ -84,7 +84,6 @@ public class ValVoiceController {
     private boolean isAppDisabled = false;
     private AnchorPane lastAnchorPane;
 
-    private TtsEngine ttsEngine; // Text-to-speech engine
     private ChatListenerService chatListenerService; // polls local Riot chat REST
     private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
 
@@ -179,7 +178,6 @@ public class ValVoiceController {
         // Simulate loading process
         simulateLoading();
 
-        ttsEngine = new TtsEngine();
         // Initialize persistent inbuilt synthesizer (Windows-only)
         inbuiltSynth = new InbuiltVoiceSynthesizer();
         if (inbuiltSynth.isReady()) {
@@ -742,7 +740,7 @@ public class ValVoiceController {
         // Play a brief sample using the persistent inbuilt synthesizer for immediate feedback
         if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
-            inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", uiRate);
+            inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", (short) uiRate);
         }
     }
 
@@ -828,35 +826,50 @@ public class ValVoiceController {
      * applied filtering and recorded stats. This method should NOT alter Chat
      * statistics besides updating UI labels; those are handled upstream.
      *
-     * ✅ AUTOMATIC TTS WORKFLOW:
+     * ✅ AUTOMATIC TTS WORKFLOW using InbuiltVoiceSynthesizer (with proper VB-Cable routing):
      * - Called automatically when a chat message passes filters
-     * - Speaks the message immediately via TTS engine
+     * - Speaks the message immediately via persistent PowerShell TTS
      * - Audio routes to VB-Cable → Valorant Open Mic → Teammates hear it!
      * - NO manual trigger (no V key pressing) required!
      *
      * Prerequisites for teammates to hear:
      * - Valorant Voice Activation: OPEN MIC (not Push to Talk)
      * - Valorant Input Device: CABLE Output (VB-Audio Virtual Cable)
-     * - ValVoice audio routing active (automatic via AudioRouter)
+     * - InbuiltVoiceSynthesizer automatically routes to VB-Cable on startup
      */
     public static void narrateMessage(Message msg) {
         ValVoiceController c = latestInstance;
         if (c == null || msg == null) return;
         if (msg.getContent() == null) return;
         try {
-            if (c.ttsEngine != null) {
-                int sapiRate = c.mapSliderToSapiRate();
+            // Use InbuiltVoiceSynthesizer (persistent PowerShell with proper VB-Cable routing)
+            if (c.inbuiltSynth != null && c.inbuiltSynth.isReady()) {
+                int uiRate = c.mapSliderToUiRate(); // Get UI rate (0-100)
                 String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
+
+                // If no voice selected, use first available voice
+                if (selectedVoice == null || selectedVoice.isEmpty()) {
+                    java.util.List<String> availableVoices = c.inbuiltSynth.getAvailableVoices();
+                    if (!availableVoices.isEmpty()) {
+                        selectedVoice = availableVoices.get(0);
+                    } else {
+                        logger.warn("⚠ No voices available - cannot narrate message!");
+                        return;
+                    }
+                }
+
                 // Log TTS trigger so user can see it's working
                 logger.info("🔊 TTS TRIGGERED: \"{}\" (voice: {}, rate: {})",
                     msg.getContent().length() > 50 ? msg.getContent().substring(0, 47) + "..." : msg.getContent(),
-                    selectedVoice != null ? selectedVoice : "default",
-                    sapiRate);
-                // Automatically speak the message (no manual trigger needed!)
-                c.ttsEngine.speak(msg.getContent(), selectedVoice, sapiRate);
+                    selectedVoice,
+                    uiRate);
+
+                // Automatically speak the message using InbuiltVoiceSynthesizer (properly routed to VB-Cable!)
+                c.inbuiltSynth.speakInbuiltVoice(selectedVoice, msg.getContent(), (short) uiRate);
             } else {
-                logger.warn("⚠ TTS engine is NULL - cannot narrate message!");
+                logger.warn("⚠ InbuiltVoiceSynthesizer not ready - cannot narrate message!");
             }
+
             // Update UI stats from Chat (already incremented by ChatDataHandler)
             Chat chat = Chat.getInstance();
             c.setMessagesSentLabel(chat.getNarratedMessages());
@@ -887,12 +900,14 @@ public class ValVoiceController {
         return (int) Math.round((v / 100.0) * 20.0 - 10.0); // 0..100 -> -10..10
     }
 
+    private int mapSliderToUiRate() {
+        if (rateSlider == null) return 50; // neutral (middle of 0-100 range)
+        return (int) Math.round(rateSlider.getValue()); // Direct 0-100 UI value for InbuiltVoiceSynthesizer
+    }
+
     public void shutdownServices() {
         shutdownRequested = true;
 
-        if (ttsEngine != null) {
-            ttsEngine.shutdown();
-        }
         if (chatListenerService != null) {
             chatListenerService.stop();
         }

@@ -3,11 +3,12 @@ C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\ChatMessage
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\ChatDataHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\HtmlEscape.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\AudioRouter.java
+C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\QuotaExhaustedException.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\ChatProperties.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\Chat.java
+C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\OutdatedVersioningException.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\LockFileHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\InbuiltVoiceSynthesizer.java
-C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\TtsEngine.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\Message.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\Main.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoice\RiotClientDetails.java

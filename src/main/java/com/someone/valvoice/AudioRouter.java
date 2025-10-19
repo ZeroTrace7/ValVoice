@@ -75,107 +75,26 @@ public class AudioRouter {
     /**
      * Route via PowerShell AudioDeviceCmdlets module (NO external tools needed!)
      * This is the recommended method as it uses built-in Windows PowerShell capabilities.
+     *
+     * NOTE: AudioDeviceCmdlets cannot do per-application routing, only system-wide changes.
+     * This method is now disabled to prevent changing system audio. Use SoundVolumeView instead.
      */
     private static boolean routeViaAudioDeviceCmdlets() {
-        try {
-            // First, ensure AudioDeviceCmdlets module is installed
-            if (!ensureAudioDeviceCmdlets()) {
-                logger.debug("AudioDeviceCmdlets module not available");
-                return false;
-            }
-
-            // Find VB-CABLE device ID
-            String findDeviceScript =
-                "$ErrorActionPreference='Stop'; " +
-                "Import-Module AudioDeviceCmdlets -ErrorAction Stop; " +
-                "$device = Get-AudioDevice -List | Where-Object { $_.Name -like '*CABLE Input*' -and $_.Type -eq 'Playback' } | Select-Object -First 1; " +
-                "if ($device) { Write-Output $device.ID } else { Write-Output 'NOT_FOUND' }";
-
-            String deviceId = executePowerShell(findDeviceScript, 10);
-            if (deviceId == null || deviceId.trim().isEmpty() || deviceId.contains("NOT_FOUND")) {
-                logger.debug("VB-CABLE Input device not found via AudioDeviceCmdlets");
-                return false;
-            }
-
-            deviceId = deviceId.trim();
-            logger.debug("Found VB-CABLE Input device ID: {}", deviceId);
-
-            // Route PowerShell processes to VB-CABLE
-            // Note: We'll start PowerShell with specific audio device using Windows Audio Session API
-            String routeScript =
-                "$ErrorActionPreference='Stop'; " +
-                "Import-Module AudioDeviceCmdlets -ErrorAction Stop; " +
-                "$device = Get-AudioDevice -List | Where-Object { $_.Name -like '*CABLE Input*' -and $_.Type -eq 'Playback' } | Select-Object -First 1; " +
-                "if ($device) { " +
-                "  Set-AudioDevice -ID $device.ID; " +
-                "  Write-Output 'SUCCESS'; " +
-                "} else { Write-Output 'FAILED' }";
-
-            String result = executePowerShell(routeScript, 10);
-            boolean success = result != null && result.contains("SUCCESS");
-
-            if (success) {
-                logger.info("✓ PowerShell audio routed to VB-CABLE via AudioDeviceCmdlets");
-                audioDeviceCmdletsAvailable = true;
-            }
-
-            return success;
-
-        } catch (Exception e) {
-            logger.debug("AudioDeviceCmdlets routing failed", e);
-            return false;
-        }
+        // DISABLED: AudioDeviceCmdlets changes system-wide default audio device
+        // which causes users to lose all system audio. We need per-app routing only.
+        logger.debug("AudioDeviceCmdlets routing disabled (would change system default)");
+        return false;
     }
 
     /**
      * Ensures AudioDeviceCmdlets PowerShell module is installed.
      * Attempts to install it if not present.
+     *
+     * NOTE: This method is now unused since AudioDeviceCmdlets routing is disabled.
      */
     private static boolean ensureAudioDeviceCmdlets() {
-        try {
-            // Check if module is already installed
-            String checkScript =
-                "$ErrorActionPreference='SilentlyContinue'; " +
-                "if (Get-Module -ListAvailable -Name AudioDeviceCmdlets) { " +
-                "  Write-Output 'INSTALLED' " +
-                "} else { " +
-                "  Write-Output 'NOT_INSTALLED' " +
-                "}";
-
-            String result = executePowerShell(checkScript, 5);
-
-            if (result != null && result.contains("INSTALLED")) {
-                logger.debug("AudioDeviceCmdlets module already installed");
-                return true;
-            }
-
-            // Try to install the module
-            logger.info("Installing AudioDeviceCmdlets PowerShell module (one-time setup)...");
-            String installScript =
-                "$ErrorActionPreference='Stop'; " +
-                "try { " +
-                "  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -ErrorAction SilentlyContinue | Out-Null; " +
-                "  Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop; " +
-                "  Write-Output 'INSTALL_SUCCESS' " +
-                "} catch { " +
-                "  Write-Output \"INSTALL_FAILED: $($_.Exception.Message)\" " +
-                "}";
-
-            result = executePowerShell(installScript, 30);
-            boolean installed = result != null && result.contains("INSTALL_SUCCESS");
-
-            if (installed) {
-                logger.info("✓ AudioDeviceCmdlets module installed successfully");
-            } else {
-                logger.debug("AudioDeviceCmdlets installation failed: {}", result);
-            }
-
-            return installed;
-
-        } catch (Exception e) {
-            logger.debug("Failed to ensure AudioDeviceCmdlets module", e);
-            return false;
-        }
+        // No longer needed - kept for potential future use
+        return false;
     }
 
     private static void registerShutdownUnroute() {
@@ -190,30 +109,25 @@ public class AudioRouter {
     }
 
     /**
-     * Clears app-specific routing for powershell.exe back to Default.
+     * Clears app-specific routing for the Java process back to Default.
+     * Only uses SoundVolumeView for per-app routing cleanup.
      */
     public static void clearAppRouting() {
         try {
-            if (audioDeviceCmdletsAvailable) {
-                // Use AudioDeviceCmdlets to restore default
-                String restoreScript =
-                    "$ErrorActionPreference='SilentlyContinue'; " +
-                    "Import-Module AudioDeviceCmdlets; " +
-                    "$default = Get-AudioDevice -Playback | Where-Object { $_.Default -eq 'True' } | Select-Object -First 1; " +
-                    "if ($default) { Set-AudioDevice -ID $default.ID }";
-                executePowerShell(restoreScript, 5);
-                logger.info("✓ Restored default audio device");
-            } else {
-                // Fallback to SoundVolumeView if available
-                Path svv = locateSoundVolumeView();
-                if (svv != null) {
-                    String exe = '"' + svv.toAbsolutePath().toString() + '"';
-                    String cmd = exe + " /SetAppDefault \"Default\" all \"powershell.exe\"";
-                    int exit = run(cmd);
-                    if (exit == 0) {
-                        logger.info("✓ Cleared PowerShell app-specific routing (back to Default)");
-                    }
+            // Only use SoundVolumeView for per-app cleanup (never change system default)
+            Path svv = locateSoundVolumeView();
+            if (svv != null) {
+                long pid = ProcessHandle.current().pid();
+                String exe = '"' + svv.toAbsolutePath().toString() + '"';
+                String cmd = exe + " /SetAppDefault \"Default\" all " + pid;
+                int exit = run(cmd);
+                if (exit == 0) {
+                    logger.info("✓ Cleared Java process (PID {}) routing (back to Default)", pid);
+                } else {
+                    logger.debug("SoundVolumeView cleanup returned exit code: {}", exit);
                 }
+            } else {
+                logger.debug("SoundVolumeView not available for cleanup");
             }
         } catch (Exception e) {
             logger.debug("Exception while clearing app-specific routing", e);
@@ -295,8 +209,8 @@ public class AudioRouter {
     }
 
     /**
-     * Route via SoundVolumeView - FALLBACK method if AudioDeviceCmdlets not available
-     * This leaves your game audio completely untouched.
+     * Route via SoundVolumeView - Routes ONLY this Java application to VB-Cable
+     * This leaves your game audio, system audio, and everything else completely untouched.
      */
     private static boolean routeViaSoundVolumeView() {
         try {
@@ -305,12 +219,16 @@ public class AudioRouter {
                 logger.debug("SoundVolumeView.exe not found");
                 return false;
             }
+
+            // CRITICAL: Route only THIS Java process by PID (not PowerShell, not system default!)
+            long pid = ProcessHandle.current().pid();
             String exe = '"' + svv.toAbsolutePath().toString() + '"';
-            String cmdPs = exe + " /SetAppDefault \"" + VB_CABLE_DEVICE_NAME + "\" all \"powershell.exe\"";
-            int exitCode = run(cmdPs);
+            String cmd = exe + " /SetAppDefault \"" + VB_CABLE_DEVICE_NAME + "\" all " + pid;
+
+            int exitCode = run(cmd);
             boolean ok = (exitCode == 0);
             if (ok) {
-                logger.info("PowerShell TTS routed to VB-CABLE via SoundVolumeView (game audio unchanged)");
+                logger.info("Java process (PID {}) audio routed to VB-CABLE (game audio unchanged)", pid);
             } else {
                 logger.debug("SoundVolumeView returned exit code: {}", exitCode);
             }

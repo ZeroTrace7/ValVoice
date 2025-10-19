@@ -427,12 +427,34 @@ async function connectXMPP() {
     let connectError = null;
     try {
       xmppSocket = tls.connect(tlsOptions);
+
+      // Add error handler immediately to prevent unhandled errors
+      xmppSocket.on('error', (err) => {
+        emit({ type: 'error', error: `XMPP socket error during connection: ${err.message}`, code: err.code, ts: Date.now() });
+        console.error('XMPP socket error:', err);
+      });
+
+      xmppSocket.on('close', () => {
+        emit({ type: 'debug', message: 'XMPP socket closed during connection phase', ts: Date.now() });
+      });
+
       await waitForConnect(xmppSocket);
     } catch (err) {
       connectError = err;
       emit({ type: 'debug', message: `TLS connect failed (${err.code || err.name}); retrying without cert validation`, ts: Date.now() });
       try {
         xmppSocket = tls.connect({ ...tlsOptions, rejectUnauthorized: false });
+
+        // Add error handler for retry attempt too
+        xmppSocket.on('error', (err) => {
+          emit({ type: 'error', error: `XMPP socket error during retry: ${err.message}`, code: err.code, ts: Date.now() });
+          console.error('XMPP socket error (retry):', err);
+        });
+
+        xmppSocket.on('close', () => {
+          emit({ type: 'debug', message: 'XMPP socket closed during retry connection phase', ts: Date.now() });
+        });
+
         await waitForConnect(xmppSocket);
       } catch (err2) {
         throw err2;

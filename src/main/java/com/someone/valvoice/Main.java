@@ -133,8 +133,37 @@ public class Main {
                         String type = obj.has("type") && !obj.get("type").isJsonNull() ? obj.get("type").getAsString() : "";
                         switch (type) {
                             case "incoming" -> handleIncomingStanza(obj);
+                            case "outgoing" -> {
+                                // XMPP stanza sent to server (for debugging)
+                                if (obj.has("data") && !obj.get("data").isJsonNull()) {
+                                    String data = obj.get("data").getAsString();
+                                    logger.debug("[XmppBridge:outgoing] {}", abbreviateXml(data));
+                                }
+                            }
+                            case "open-valorant" -> {
+                                // Connection opened to Riot XMPP server
+                                String host = obj.has("host") ? obj.get("host").getAsString() : "unknown";
+                                int port = obj.has("port") ? obj.get("port").getAsInt() : 0;
+                                logger.info("[XmppBridge] Connecting to {}:{}", host, port);
+                                ValVoiceController.updateXmppStatus("Connecting...", false);
+                            }
+                            case "open-riot" -> {
+                                // Riot server acknowledged connection
+                                logger.info("[XmppBridge] Connection established, authenticating...");
+                                ValVoiceController.updateXmppStatus("Connected", true);
+                            }
                             case "error" -> {
-                                String err = obj.has("error") ? obj.get("error").getAsString() : "(unknown)";
+                                // Support both "error" and "reason" fields for compatibility
+                                String err = "(unknown)";
+                                if (obj.has("error") && !obj.get("error").isJsonNull()) {
+                                    err = obj.get("error").getAsString();
+                                } else if (obj.has("reason") && !obj.get("reason").isJsonNull()) {
+                                    err = obj.get("reason").getAsString();
+                                }
+                                // Include error code if present
+                                if (obj.has("code") && !obj.get("code").isJsonNull()) {
+                                    err = "(" + obj.get("code").getAsInt() + ") " + err;
+                                }
                                 logger.warn("XMPP error event: {}", err);
                                 ValVoiceController.updateXmppStatus("Error", false);
                             }
@@ -355,6 +384,15 @@ public class Main {
         } catch (Exception e) {
             logger.debug("Failed to stop ChatListenerService", e);
         }
+    }
+
+    /**
+     * Abbreviates XML strings for logging to avoid excessive output
+     */
+    private static String abbreviateXml(String xml) {
+        if (xml == null) return null;
+        if (xml.length() <= 200) return xml;
+        return xml.substring(0, 197) + "...";
     }
 
     public static void main(String[] args) {
