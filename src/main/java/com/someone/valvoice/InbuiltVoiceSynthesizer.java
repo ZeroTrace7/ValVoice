@@ -29,8 +29,12 @@ public class InbuiltVoiceSynthesizer {
             e.printStackTrace();
         }
 
+        // Initialize the SpeechSynthesizer ONCE and keep it in the PowerShell session
         try {
-            String command = "Add-Type -AssemblyName System.Speech;$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1; echo 'END_OF_VOICES'";
+            String initCommand = "Add-Type -AssemblyName System.Speech;$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;";
+            powershellWriter.println(initCommand);
+
+            String command = "$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1; echo 'END_OF_VOICES'";
             powershellWriter.println(command);
 
             String line;
@@ -104,7 +108,9 @@ public class InbuiltVoiceSynthesizer {
         rate = (short) (rate / 10.0 - 10);
 
         try {
-            String command = String.format("Add-Type -AssemblyName System.Speech;$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, text);
+            // Use the EXISTING $speak object - just set voice, rate, and speak
+            // This is MUCH faster than creating a new SpeechSynthesizer every time!
+            String command = String.format("$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, text);
             powershellWriter.println(command);
         } catch (Exception e) {
             e.printStackTrace();
