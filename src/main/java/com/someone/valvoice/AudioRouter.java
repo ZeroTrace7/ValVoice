@@ -91,14 +91,19 @@ public class AudioRouter {
      */
     private static String executePowerShell(String script, int timeoutSeconds) {
         StringBuilder output = new StringBuilder();
-        String command = String.format(
-            "powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"%s\"",
-            script.replace("\"", "\\\"")
-        );
 
         Process process = null;
         try {
-            process = Runtime.getRuntime().exec(command);
+            // Use ProcessBuilder instead of deprecated Runtime.exec()
+            ProcessBuilder pb = new ProcessBuilder(
+                "powershell.exe",
+                "-WindowStyle", "Hidden",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-Command", script
+            );
+            process = pb.start();
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;

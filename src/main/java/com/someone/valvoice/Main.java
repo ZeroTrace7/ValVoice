@@ -33,28 +33,34 @@ public class Main {
 
     // Node.js XMPP process management (external exe stdout reader)
     private static Process xmppNodeProcess;
-    private static ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
+    private static final ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "xmpp-node-io");
         t.setDaemon(true);
         return t;
     });
 
-    private static final Pattern IQ_ID_PATTERN = Pattern.compile("<iq[^>]*id=([\"\'])_xmpp_bind1\\1", Pattern.CASE_INSENSITIVE);
+    private static final Pattern IQ_ID_PATTERN = Pattern.compile("<iq[^>]*id=([\"'])_xmpp_bind1\\1", Pattern.CASE_INSENSITIVE);
     private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE);
     private static final Pattern MESSAGE_START_PATTERN = Pattern.compile("^<message", Pattern.CASE_INSENSITIVE);
     private static final Pattern IQ_START_PATTERN = Pattern.compile("^<iq", Pattern.CASE_INSENSITIVE);
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-xmpp.exe";
 
+    // Store lock file resources to prevent leak
+    private static RandomAccessFile lockFileAccess;
+    private static FileLock instanceLock;
+
     private static boolean lockInstance() {
         try {
             Files.createDirectories(Path.of(CONFIG_DIR));
             File file = new File(LOCK_FILE);
-            file.createNewFile();
-            RandomAccessFile randomAccessFile = new RandomAccessFile(file, "rw");
-            FileLock lock = randomAccessFile.getChannel().tryLock();
+            if (!file.exists()) {
+                file.createNewFile();
+            }
+            lockFileAccess = new RandomAccessFile(file, "rw");
+            instanceLock = lockFileAccess.getChannel().tryLock();
 
-            if (lock == null) {
-                randomAccessFile.close();
+            if (instanceLock == null) {
+                lockFileAccess.close();
                 ValVoiceApplication.showPreStartupDialog(
                         APP_NAME,
                         "Another instance of this application is already running!",
@@ -65,13 +71,17 @@ public class Main {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
-                    lock.release();
-                    randomAccessFile.close();
+                    if (instanceLock != null && instanceLock.isValid()) {
+                        instanceLock.release();
+                    }
+                    if (lockFileAccess != null) {
+                        lockFileAccess.close();
+                    }
                     Files.deleteIfExists(Paths.get(LOCK_FILE));
                 } catch (IOException e) {
                     logger.error("Error releasing lock", e);
                 }
-            }));
+            }, "lock-cleanup"));
         } catch (IOException e) {
             logger.error("Error creating lock file", e);
         }
@@ -257,6 +267,16 @@ public class Main {
                 xmppNodeProcess.destroy();
                 try { xmppNodeProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }
+            // Shutdown executor service to prevent thread leak
+            xmppIoPool.shutdown();
+            try {
+                if (!xmppIoPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    xmppIoPool.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                xmppIoPool.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
         }, "xmpp-bridge-shutdown"));
     }
 
@@ -318,18 +338,38 @@ public class Main {
     private static int runAndWait(ProcessBuilder pb, long timeout, TimeUnit unit) throws IOException, InterruptedException {
         pb.redirectErrorStream(true);
         Process proc = pb.start();
-        Executors.newSingleThreadExecutor(r -> { Thread t = new Thread(r, "proc-log"); t.setDaemon(true); return t; })
-                .submit(() -> {
-                    try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
-                        String line; while ((line = br.readLine()) != null) logger.info("[bridge-build] {}", line);
-                    } catch (IOException ignored) {}
-                });
-        if (!proc.waitFor(timeout, unit)) {
-            proc.destroyForcibly();
-            logger.warn("Process timed out: {}", String.join(" ", pb.command()));
-            return -1;
+        ExecutorService logExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "proc-log");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            logExecutor.submit(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        logger.info("[bridge-build] {}", line);
+                    }
+                } catch (IOException ignored) {}
+            });
+
+            if (!proc.waitFor(timeout, unit)) {
+                proc.destroyForcibly();
+                logger.warn("Process timed out: {}", String.join(" ", pb.command()));
+                return -1;
+            }
+            return proc.exitValue();
+        } finally {
+            logExecutor.shutdown();
+            try {
+                if (!logExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    logExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                logExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
         }
-        return proc.exitValue();
     }
 
     private static void handleIncomingStanza(JsonObject obj) {
@@ -368,21 +408,6 @@ public class Main {
             }
         } catch (Exception e) {
             logger.debug("Failed to parse bind iq for self ID", e);
-        }
-    }
-
-    private static void stopChatListenerIfRunning() {
-        try {
-            ValVoiceController controller = ValVoiceController.getLatestInstance();
-            if (controller != null) {
-                ChatListenerService service = controller.getChatListenerService();
-                if (service != null) {
-                    service.stop();
-                    logger.info("Stopped ChatListenerService due to game closure");
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Failed to stop ChatListenerService", e);
         }
     }
 

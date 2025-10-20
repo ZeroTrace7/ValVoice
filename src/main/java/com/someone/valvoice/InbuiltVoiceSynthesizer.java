@@ -26,7 +26,7 @@ public class InbuiltVoiceSynthesizer {
             powershellWriter = new PrintWriter(new OutputStreamWriter(powershellProcess.getOutputStream()), true);
             powershellReader = new BufferedReader(new InputStreamReader(powershellProcess.getInputStream()));
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Failed to start PowerShell process", e);
         }
 
         // Initialize the SpeechSynthesizer ONCE and keep it in the PowerShell session
@@ -47,7 +47,7 @@ public class InbuiltVoiceSynthesizer {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Failed to initialize voices", e);
         }
 
         if (voices.isEmpty()) {
@@ -84,8 +84,15 @@ public class InbuiltVoiceSynthesizer {
 
             if (svvFile != null && svvFile.exists()) {
                 long pid = powershellProcess.pid();
-                String command = "\"" + fileLocation + "\" /SetAppDefault \"CABLE Input\" all " + pid;
-                Runtime.getRuntime().exec(command);
+                // Use ProcessBuilder instead of deprecated Runtime.exec()
+                ProcessBuilder pb = new ProcessBuilder(
+                    fileLocation,
+                    "/SetAppDefault",
+                    "CABLE Input",
+                    "all",
+                    String.valueOf(pid)
+                );
+                pb.start();
                 logger.info("✓ PowerShell process (PID {}) routed to VB-CABLE using: {}", pid, fileLocation);
             } else {
                 logger.warn("⚠ SoundVolumeView.exe not found! PowerShell TTS will NOT be routed to VB-CABLE.");
@@ -113,7 +120,7 @@ public class InbuiltVoiceSynthesizer {
             String command = String.format("$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, text);
             powershellWriter.println(command);
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Failed to speak text", e);
         }
     }
 
