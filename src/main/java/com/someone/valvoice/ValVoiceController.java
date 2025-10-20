@@ -1049,16 +1049,6 @@ public class ValVoiceController {
         return null;
     }
 
-    // New: route short-lived powershell.exe TTS processes to VB-CABLE using SoundVolumeView
-    private void routePowershellToCable(Path soundVolumeViewPath) {
-        if (soundVolumeViewPath == null) return;
-        try {
-            String cmd = '"' + soundVolumeViewPath.toAbsolutePath().toString() + '"' +
-                    " /SetAppDefault \"CABLE Input\" all \"powershell.exe\"";
-            Runtime.getRuntime().exec(cmd);
-            logger.info("Requested audio routing of powershell.exe to 'CABLE Input' via SoundVolumeView");
-        } catch (Exception e) {
-            logger.debug("Failed to route powershell.exe via SoundVolumeView", e);
-        }
-    }
+    // REMOVED: routePowershellToCable() - dangerous system-wide routing
+    // Audio routing is handled per-process in InbuiltVoiceSynthesizer only
 }
