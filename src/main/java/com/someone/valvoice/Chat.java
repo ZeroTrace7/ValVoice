@@ -101,11 +101,13 @@ public class Chat {
     /**
      * Unified source selection parser (SELF, PARTY, TEAM, ALL tokens joined by '+').
      * Updates both modern enum set and legacy boolean flags.
+     * Note: WHISPER/PRIVATE tokens can be used but whispers are enabled by default.
      */
     public synchronized void applySourceSelection(String selection) {
         if (selection == null || selection.isBlank()) return;
         enabledChannels.clear();
         includeOwnMessages = false;
+        // Don't reset whispersEnabled - it stays enabled unless explicitly disabled via UI
         String[] parts = selection.toUpperCase(Locale.ROOT).split("\\+");
         for (String raw : parts) {
             String p = raw.trim();
@@ -114,6 +116,7 @@ public class Chat {
                 case "PARTY" -> enabledChannels.add(ChatMessageType.PARTY);
                 case "TEAM" -> enabledChannels.add(ChatMessageType.TEAM);
                 case "ALL" -> enabledChannels.add(ChatMessageType.ALL);
+                case "WHISPER", "PRIVATE" -> whispersEnabled = true; // Explicit enable
                 default -> { /* ignore unknown */ }
             }
         }
