@@ -77,6 +77,17 @@ public class Chat {
         enabledChannels.add(ChatMessageType.TEAM);
     }
 
+    /**
+     * Legacy constructor for ValNarrator compatibility (quotaLimit parameter).
+     * Note: This doesn't create a new instance due to singleton pattern.
+     * Use getInstance() instead. This constructor only sets the quota limit.
+     */
+    public Chat(int quotaLimit) {
+        this(); // Call private constructor
+        this.quotaLimit = quotaLimit;
+        logger.debug("Chat instance created with quota limit: {}", quotaLimit);
+    }
+
     public static Chat getInstance() { return INSTANCE; }
 
     // === Configuration ===
@@ -195,6 +206,23 @@ public class Chat {
         String c = message.getContent();
         if (c != null) legacyCharactersSent.addAndGet(c.length());
     }
+
+    /**
+     * Get self player ID (for ValNarrator compatibility).
+     * Delegates to ChatProperties via ChatDataHandler.
+     */
+    public String getSelfID() {
+        return ChatDataHandler.getInstance().getProperties().getSelfID();
+    }
+
+    /**
+     * Set self player ID (for ValNarrator compatibility).
+     * Delegates to ChatProperties via ChatDataHandler.
+     */
+    public void setSelfID(String selfID) {
+        ChatDataHandler.getInstance().getProperties().setSelfID(selfID);
+    }
+
 
     public String getMucID() { return mucId; }
     public void setMucID(String mucId) { this.mucId = mucId; }

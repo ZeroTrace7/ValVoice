@@ -94,6 +94,17 @@ public class Message {
         }
     }
 
+    /**
+     * Copy constructor with modified content (for text expansion)
+     */
+    public Message(Message original, String newContent) {
+        this.id = original.id;
+        this.userId = original.userId;
+        this.ownMessage = original.ownMessage;
+        this.messageType = original.messageType;
+        this.content = newContent;
+    }
+
     private ChatMessageType classifyMessage(String fromTag, String typeAttr) {
         if (fromTag == null) return null;
         String[] splitTag = fromTag.split("@");

@@ -55,13 +55,40 @@ public class InbuiltVoiceSynthesizer {
 
         // CRITICAL: Route ONLY PowerShell process to VB-CABLE (NOT Java app!)
         try {
-            String fileLocation = String.format("%s/ValVoice/SoundVolumeView.exe", System.getenv("ProgramFiles").replace("\\", "/"));
-            long pid = powershellProcess.pid();
-            String command = fileLocation + " /SetAppDefault \"CABLE Input\" all " + pid;
-            Runtime.getRuntime().exec(command);
-            logger.info("PowerShell process (PID {}) routed to VB-CABLE", pid);
+            String fileLocation = null;
+            File svvFile = null;
+
+            // Try multiple locations for SoundVolumeView.exe
+            String programFiles = System.getenv("ProgramFiles");
+            if (programFiles != null) {
+                // Try Program Files\ValVoice\ first
+                fileLocation = String.format("%s/ValVoice/SoundVolumeView.exe", programFiles.replace("\\", "/"));
+                svvFile = new File(fileLocation);
+
+                if (!svvFile.exists()) {
+                    // Try Program Files\ directly
+                    fileLocation = String.format("%s/SoundVolumeView.exe", programFiles.replace("\\", "/"));
+                    svvFile = new File(fileLocation);
+                }
+            }
+
+            // Try project directory (user.dir)
+            if (svvFile == null || !svvFile.exists()) {
+                fileLocation = new File(System.getProperty("user.dir"), "SoundVolumeView.exe").getAbsolutePath();
+                svvFile = new File(fileLocation);
+            }
+
+            if (svvFile != null && svvFile.exists()) {
+                long pid = powershellProcess.pid();
+                String command = "\"" + fileLocation + "\" /SetAppDefault \"CABLE Input\" all " + pid;
+                Runtime.getRuntime().exec(command);
+                logger.info("✓ PowerShell process (PID {}) routed to VB-CABLE using: {}", pid, fileLocation);
+            } else {
+                logger.warn("⚠ SoundVolumeView.exe not found! PowerShell TTS will NOT be routed to VB-CABLE.");
+                logger.warn("  Please place SoundVolumeView.exe in: {}", System.getProperty("user.dir"));
+            }
         } catch (IOException e) {
-            logger.error(String.format("SoundVolumeView.exe generated an error: %s", (Object) e.getStackTrace()));
+            logger.error("SoundVolumeView.exe execution failed", e);
         }
     }
 
