@@ -29,6 +29,10 @@ public class ChatListenerService {
     private static final int MAX_FAILURES_BEFORE_WARN = 5;
     private static final int MAX_POLL_INTERVAL_MS = 30_000; // max 30 seconds between polls
 
+    // Track startup time to ignore old messages
+    private long startupTimeMs = 0;
+    private boolean initialLoadComplete = false;
+
     public ChatListenerService(Consumer<String> xmlConsumer) {
         this.xmlConsumer = xmlConsumer;
     }
@@ -36,11 +40,13 @@ public class ChatListenerService {
     public void start() {
         if (running) return;
         running = true;
+        startupTimeMs = System.currentTimeMillis(); // Record startup time
+        initialLoadComplete = false;
         consecutiveFailures = 0; // reset on start
         worker = new Thread(this::loop, "ValorantChatPoller");
         worker.setDaemon(true);
         worker.start();
-        logger.info("ChatListenerService started");
+        logger.info("ChatListenerService started at {}. Will skip old messages from chat history.", startupTimeMs);
     }
 
     public void stop() {
@@ -124,6 +130,26 @@ public class ChatListenerService {
             messages = root.getAsJsonArray("msgs");
         }
         if (messages == null) return;
+
+        // On first poll, mark all existing messages as "seen" but don't narrate them
+        if (!initialLoadComplete) {
+            int skippedCount = 0;
+            for (JsonElement el : messages) {
+                if (!el.isJsonObject()) continue;
+                JsonObject m = el.getAsJsonObject();
+                String mid = getString(m, "id", getString(m, "messageId", null));
+                if (mid != null) {
+                    seenIds.add(mid);
+                    lastMessageId = mid;
+                    skippedCount++;
+                }
+            }
+            initialLoadComplete = true;
+            logger.info("Initial chat history load complete. Skipped {} old messages. Now listening for new messages only.", skippedCount);
+            return; // Don't process any messages from the first poll
+        }
+
+        // After initial load, process only NEW messages
         for (JsonElement el : messages) {
             if (!el.isJsonObject()) continue;
             JsonObject m = el.getAsJsonObject();

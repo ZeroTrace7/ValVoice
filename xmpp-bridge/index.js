@@ -3,6 +3,7 @@
  * ValVoice XMPP Bridge - Real Riot XMPP Client
  * Based on valorant-xmpp-watcher implementation
  * Connects to Riot Games XMPP service for Valorant chat
+ * FIXED: Now includes MUC room joining for team/party/all chat
  */
 
 const tls = require('tls');
@@ -25,7 +26,11 @@ let reconnectTimer = null;
 let heartbeatTimer = null;
 let isShuttingDown = false;
 
-emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '2.2.1-fixed' });
+// Track joined MUC rooms to avoid duplicate joins
+const joinedRooms = new Set();
+let currentPuuid = null; // Store puuid for room joining
+
+emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '2.3.0-muc-fixed' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
 const DEFAULT_UA = 'ValVoice-XMPP/2.2 (Windows; Node.js)';
@@ -359,6 +364,48 @@ function asyncSocketRead(socket) {
 }
 
 /**
+ * NEW: Join a MUC room (party, pregame, in-game)
+ */
+async function joinMUCRoom(roomJid, nickname) {
+  if (!xmppSocket || xmppSocket.destroyed) return;
+
+  if (joinedRooms.has(roomJid)) {
+    emit({ type: 'debug', message: `Already in room: ${roomJid}`, ts: Date.now() });
+    return;
+  }
+
+  try {
+    const presenceStanza = `<presence to="${roomJid}/${nickname}"><x xmlns="http://jabber.org/protocol/muc"/></presence>`;
+    await asyncSocketWrite(xmppSocket, presenceStanza);
+    joinedRooms.add(roomJid);
+    emit({ type: 'info', message: `✅ Joined MUC room: ${roomJid}`, ts: Date.now() });
+    console.error(`✅ Joined MUC room: ${roomJid}`);
+  } catch (err) {
+    emit({ type: 'error', error: `Failed to join room ${roomJid}: ${err.message}`, ts: Date.now() });
+  }
+}
+
+/**
+ * NEW: Extract room JID from presence/message stanza
+ */
+function extractRoomJid(dataStr) {
+  const fromMatch = dataStr.match(/from=['"]([^'"]+)['"]/);
+  if (!fromMatch) return null;
+
+  const from = fromMatch[1];
+  const roomJid = from.split('/')[0]; // Remove resource part
+
+  // Only return if it's a MUC room
+  if (roomJid.includes('@ares-parties.') ||
+      roomJid.includes('@ares-pregame.') ||
+      roomJid.includes('@ares-coregame.')) {
+    return roomJid;
+  }
+
+  return null;
+}
+
+/**
  * Connect to XMPP server with proper authentication
  */
 async function connectXMPP() {
@@ -376,6 +423,7 @@ async function connectXMPP() {
     }
 
     const { accessToken, entitlement, puuid, region } = authData;
+    currentPuuid = puuid; // Store for room joining
 
     emit({ type: 'info', message: 'Fetching PAS token...', ts: Date.now() });
     const pasToken = await fetchPASToken(accessToken, entitlement);
@@ -502,6 +550,9 @@ async function connectXMPP() {
     emit({ type: 'info', message: 'Sending presence...', ts: Date.now() });
     await asyncSocketWrite(xmppSocket, '<presence/>');
 
+    // Clear joined rooms on reconnect
+    joinedRooms.clear();
+
     setupMessageHandlers();
     startKeepalive();
 
@@ -537,14 +588,22 @@ function setupMessageHandlers() {
       data: dataStr
     });
 
+    // NEW: Auto-join MUC rooms when we see presence from them
+    if (dataStr.includes('<presence')) {
+      const roomJid = extractRoomJid(dataStr);
+      if (roomJid && currentPuuid) {
+        // Join the room automatically
+        joinMUCRoom(roomJid, currentPuuid.substring(0, 8));
+      }
+      console.error('[PRESENCE] received');
+    }
+
     if (dataStr.includes('<message')) {
       const fromMatch = dataStr.match(/from=['"]([^'\"]+)['"]/);
       const bodyMatch = dataStr.match(/<body>([^<]+)<\/body>/);
       if (fromMatch && bodyMatch) {
         console.error(`[MESSAGE] from ${fromMatch[1]}: ${bodyMatch[1].substring(0, 50)}...`);
       }
-    } else if (dataStr.includes('<presence')) {
-      console.error('[PRESENCE] received');
     } else if (dataStr.includes('<iq')) {
       console.error('[IQ] received');
     }
@@ -563,6 +622,9 @@ function setupMessageHandlers() {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
+
+    // Clear joined rooms on disconnect
+    joinedRooms.clear();
 
     if (!isShuttingDown) {
       emit({ type: 'info', message: 'Reconnecting in 5 seconds...', ts: Date.now() });

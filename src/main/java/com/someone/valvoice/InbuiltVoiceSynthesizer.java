@@ -115,12 +115,17 @@ public class InbuiltVoiceSynthesizer {
         rate = (short) (rate / 10.0 - 10);
 
         try {
+            // Escape single quotes in text for PowerShell string interpolation
+            String escapedText = text.replace("'", "''");
+
             // Use the EXISTING $speak object - just set voice, rate, and speak
             // This is MUCH faster than creating a new SpeechSynthesizer every time!
-            String command = String.format("$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, text);
+            String command = String.format("$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, escapedText);
             powershellWriter.println(command);
+
+            logger.debug("✓ Sent TTS command to PowerShell: voice={}, rate={}, textLen={}", voice, rate, text.length());
         } catch (Exception e) {
-            logger.error("Failed to speak text", e);
+            logger.error("Failed to speak text: {}", text, e);
         }
     }
 

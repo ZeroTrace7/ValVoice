@@ -376,6 +376,13 @@ public class Main {
         if (!obj.has("data") || obj.get("data").isJsonNull()) return;
         String xml = obj.get("data").getAsString();
         if (xml == null || xml.isBlank()) return;
+
+        // Debug: Log ALL incoming stanzas to identify party/team messages
+        String xmlLower = xml.toLowerCase();
+        if (xmlLower.contains("<message") && !xmlLower.contains("<presence")) {
+            logger.info("📨 RAW MESSAGE STANZA: {}", abbreviateXml(xml));
+        }
+
         try {
             if (MESSAGE_START_PATTERN.matcher(xml).find()) {
                 Message msg = new Message(xml);
@@ -383,8 +390,21 @@ public class Main {
                 ChatDataHandler.getInstance().message(msg);
             } else if (IQ_START_PATTERN.matcher(xml).find()) {
                 detectSelfIdFromIq(xml);
+            } else if (xmlLower.contains("<message")) {
+                // Message stanza that didn't match pattern - try to parse it anyway
+                logger.warn("⚠️ Message stanza didn't match pattern, attempting parse anyway...");
+                try {
+                    Message msg = new Message(xml);
+                    logger.info("✓ Successfully parsed non-standard message: {}", msg);
+                    ChatDataHandler.getInstance().message(msg);
+                } catch (Exception ex) {
+                    logger.warn("Failed to parse non-standard message stanza", ex);
+                }
             } else {
-                // presence/other stanzas ignored currently
+                // presence/other stanzas ignored (but log if it looks message-like)
+                if (xmlLower.contains("body") || xmlLower.contains("chat")) {
+                    logger.debug("Ignored stanza with body/chat: {}", abbreviateXml(xml));
+                }
             }
         } catch (Exception e) {
             logger.debug("Failed handling incoming stanza", e);
