@@ -45,24 +45,105 @@ public class AudioRouter {
 
         if (!isVbCableInstalled()) {
             logger.warn("VB-Audio Virtual Cable not detected; audio routing unavailable");
+            logger.warn("Download VB-CABLE from: https://vb-audio.com/Cable/");
             return false;
         }
 
-        logger.info("VB-CABLE detected and available for TTS routing");
+        logger.info("VB-CABLE detected - configuring audio routing...");
+
+        // CRITICAL: Setup VB-CABLE listen-through (ValorantNarrator logic)
+        // This allows you to HEAR your own TTS through your speakers
+        setupVbCableListenThrough();
+
         logger.info("Audio routing will be handled per-TTS-process (Java app audio stays on default device)");
 
         // Success - VB-CABLE is available
         // Actual routing happens in InbuiltVoiceSynthesizer when PowerShell process starts
         routingSuccessful = true;
 
-        logger.info("\u2713 VB-CABLE ready for TTS routing (system audio unchanged)");
+        logger.info("✓ VB-CABLE ready for TTS routing (system audio unchanged)");
         return routingSuccessful;
     }
 
     /**
+     * Setup VB-CABLE listen-through so you can hear your own TTS
+     * Matches ValorantNarrator's syncValorantPlayerSettings logic
+     */
+    private static void setupVbCableListenThrough() {
+        try {
+            Path svvPath = locateSoundVolumeView();
+            if (svvPath == null) {
+                logger.debug("SoundVolumeView.exe not found - skipping listen-through setup");
+                return;
+            }
+
+            String fileLocation = svvPath.toString();
+
+            // ValorantNarrator's exact setup sequence:
+
+            // 1. Set CABLE Output to play through default device (so you can hear TTS)
+            String command = fileLocation + " /SetPlaybackThroughDevice \"CABLE Output\" \"Default Playback Device\"";
+            long start = System.currentTimeMillis();
+            Runtime.getRuntime().exec(command);
+            logger.debug("({} ms) Added listen-in from CABLE Output to default playback device",
+                (System.currentTimeMillis() - start));
+
+            // 2. Enable "Listen to this device" on CABLE Output
+            command = fileLocation + " /SetListenToThisDevice \"CABLE Output\" 1";
+            start = System.currentTimeMillis();
+            Runtime.getRuntime().exec(command);
+            logger.debug("({} ms) Enabled listen-in on CABLE Output",
+                (System.currentTimeMillis() - start));
+
+            // 3. Unmute CABLE Output (in case it was muted)
+            command = fileLocation + " /unmute \"CABLE Output\"";
+            start = System.currentTimeMillis();
+            Runtime.getRuntime().exec(command);
+            logger.debug("({} ms) Unmuted CABLE Output",
+                (System.currentTimeMillis() - start));
+
+            logger.info("✓ VB-CABLE listen-through configured - you'll hear your own TTS");
+
+        } catch (IOException e) {
+            logger.warn("Failed to setup VB-CABLE listen-through (non-critical): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Locate SoundVolumeView.exe in multiple possible locations
+     * Matches ValorantNarrator's file location logic
+     */
+    private static Path locateSoundVolumeView() {
+        // Try ValorantNarrator's standard location first
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null) {
+            Path valoNarratorPath = Paths.get(programFiles, "ValorantNarrator", "SoundVolumeView.exe");
+            if (Files.isRegularFile(valoNarratorPath)) {
+                return valoNarratorPath;
+            }
+
+            // Try ValVoice location
+            Path valVoicePath = Paths.get(programFiles, "ValVoice", "SoundVolumeView.exe");
+            if (Files.isRegularFile(valVoicePath)) {
+                return valVoicePath;
+            }
+        }
+
+        // Try current directory (where InbuiltVoiceSynthesizer also looks)
+        Path currentDir = Paths.get(System.getProperty("user.dir"), "SoundVolumeView.exe");
+        if (Files.isRegularFile(currentDir)) {
+            return currentDir;
+        }
+
+        return null;
+    }
+
+    /**
      * Check if VB-Audio Virtual Cable is installed by querying audio devices.
+     * Matches ValorantNarrator's detection logic with multiple device name checks.
      */
     public static boolean isVbCableInstalled() {
+        // Method 1: Check sound devices via Win32_SoundDevice
         String psScript =
             "$ErrorActionPreference='SilentlyContinue'; " +
             "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name";
@@ -70,20 +151,43 @@ public class AudioRouter {
             String result = executePowerShell(psScript, 8);
             if (result != null) {
                 String lower = result.toLowerCase();
+                // Check all possible VB-CABLE device name variations
                 boolean found = (lower.contains("vb-audio") && lower.contains("cable")) ||
                                 lower.contains("cable input") ||
-                                lower.contains("cable output");
+                                lower.contains("cable output") ||
+                                lower.contains("vb-audio virtual cable");
                 if (found) {
-                    logger.debug("VB-CABLE detected via Win32_SoundDevice");
+                    logger.info("✓ VB-CABLE detected: Device found in Win32_SoundDevice");
                     return true;
                 }
             }
-            logger.debug("VB-CABLE not found in sound devices");
-            return false;
         } catch (Exception e) {
-            logger.debug("VB-CABLE detection failed", e);
-            return false;
+            logger.debug("Win32_SoundDevice query failed", e);
         }
+
+        // Method 2: Try to get CABLE Output device ID (more reliable)
+        // This is what ValorantNarrator uses in syncValorantPlayerSettings
+        Path svvPath = locateSoundVolumeView();
+        if (svvPath != null) {
+            try {
+                String command = String.format("%s /GetColumnValue \"VB-Audio Virtual Cable\\Device\\CABLE Output\\Capture\" \"Item ID\"",
+                    svvPath.toString());
+                Process process = Runtime.getRuntime().exec(command);
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line = reader.readLine();
+                    if (line != null && !line.isEmpty() && line.contains("{")) {
+                        logger.info("✓ VB-CABLE detected: CABLE Output device ID found");
+                        return true;
+                    }
+                }
+                process.waitFor(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                logger.debug("SoundVolumeView device query failed", e);
+            }
+        }
+
+        logger.warn("VB-CABLE not detected - install from: https://vb-audio.com/Cable/");
+        return false;
     }
 
     /**

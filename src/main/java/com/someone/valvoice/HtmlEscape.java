@@ -15,12 +15,13 @@ public final class HtmlEscape {
     public static String unescapeHtml(String input) {
         if (input == null || input.isEmpty()) return input;
         String s = input;
-        // Basic named entities
+        // Basic named entities (HTML4 + HTML5)
         s = s.replace("&amp;", "&");
         s = s.replace("&lt;", "<");
         s = s.replace("&gt;", ">");
         s = s.replace("&quot;", "\"");
         s = s.replace("&#39;", "'");
+        s = s.replace("&apos;", "'");  // HTML5 apostrophe entity
 
         // Numeric decimal entities (e.g., &#65;)
         s = replaceNumericEntities(s, DEC_ENTITY, 10);

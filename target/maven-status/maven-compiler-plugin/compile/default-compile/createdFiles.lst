@@ -6,6 +6,7 @@ com\someone\valvoice\Message.class
 com\someone\valvoice\ChatListenerService.class
 com\someone\valvoice\ChatDataHandler.class
 com\someone\valvoice\OutdatedVersioningException.class
+com\someone\valvoice\VoiceGenerator.class
 com\someone\valvoice\Chat$1.class
 com\someone\valvoice\MessageType.class
 com\someone\valvoice\APIHandler.class

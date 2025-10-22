@@ -181,23 +181,61 @@ public class ChatDataHandler {
         }
     }
 
+    /**
+     * Expands common gaming shortforms to full phrases for better TTS narration.
+     * Uses case-insensitive regex with word boundaries to prevent false matches.
+     * Comprehensive list includes Valorant-specific and general gaming terms.
+     */
     private String expandShortForms(String text) {
-        if (text == null) return "";
-        return text
-            .replace("gg", "good game")
-            .replace("GG", "good game")
-            .replace("wp", "well played")
-            .replace("WP", "well played")
-            .replace("gj", "good job")
-            .replace("GJ", "good job")
-            .replace("ty", "thank you")
-            .replace("TY", "thank you")
-            .replace("np", "no problem")
-            .replace("NP", "no problem")
-            .replace("omw", "on my way")
-            .replace("OMW", "on my way")
-            .replace("brb", "be right back")
-            .replace("BRB", "be right back");
+        if (text == null || text.isEmpty()) return "";
+
+        // Use replaceAll with word boundaries for accurate matching
+        // (?i) = case insensitive, \\b = word boundary
+        String expanded = text;
+
+        // Common gaming shortforms (high priority)
+        expanded = expanded.replaceAll("(?i)\\bGGWP\\b", "Good game, well played");
+        expanded = expanded.replaceAll("(?i)\\bGG\\b", "Good game");
+        expanded = expanded.replaceAll("(?i)\\bWP\\b", "Well played");
+        expanded = expanded.replaceAll("(?i)\\bGLHF\\b", "Good luck, have fun");
+        expanded = expanded.replaceAll("(?i)\\bGL\\b", "Good luck");
+        expanded = expanded.replaceAll("(?i)\\bGJ\\b", "Good job");
+        expanded = expanded.replaceAll("(?i)\\bNJ\\b", "Nice job");
+        expanded = expanded.replaceAll("(?i)\\bNT\\b", "Nice try");
+        expanded = expanded.replaceAll("(?i)\\bNS\\b", "Nice shot");
+        expanded = expanded.replaceAll("(?i)\\bMB\\b", "My bad");
+        expanded = expanded.replaceAll("(?i)\\bTY\\b", "Thank you");
+        expanded = expanded.replaceAll("(?i)\\bNP\\b", "No problem");
+        expanded = expanded.replaceAll("(?i)\\bSRY\\b", "Sorry");
+        expanded = expanded.replaceAll("(?i)\\bPLS\\b", "Please");
+
+        // Valorant-specific terms
+        expanded = expanded.replaceAll("(?i)\\bGH\\b", "Good half");
+        expanded = expanded.replaceAll("(?i)\\bHP\\b", "Health");
+        expanded = expanded.replaceAll("(?i)\\bTPED\\b", "Teleported");
+        expanded = expanded.replaceAll("(?i)\\bDM\\b", "Deathmatch");
+        expanded = expanded.replaceAll("(?i)\\bUNR\\b", "Unrated");
+        expanded = expanded.replaceAll("(?i)\\bCOMP\\b", "Competitive");
+
+        // Common internet slang
+        expanded = expanded.replaceAll("(?i)\\bBRB\\b", "Be right back");
+        expanded = expanded.replaceAll("(?i)\\bOMW\\b", "On my way");
+        expanded = expanded.replaceAll("(?i)\\bBTW\\b", "By the way");
+        expanded = expanded.replaceAll("(?i)\\bNVM\\b", "Nevermind");
+        expanded = expanded.replaceAll("(?i)\\bLOL\\b", "Laughing out loud");
+        expanded = expanded.replaceAll("(?i)\\bFR\\b", "For real");
+        expanded = expanded.replaceAll("(?i)\\bIC\\b", "I see");
+        expanded = expanded.replaceAll("(?i)\\bIKR\\b", "I know right");
+        expanded = expanded.replaceAll("(?i)\\bIG\\b", "I guess");
+        expanded = expanded.replaceAll("(?i)\\bSMH\\b", "Shake my head");
+        expanded = expanded.replaceAll("(?i)\\bWDYM\\b", "What do you mean");
+        expanded = expanded.replaceAll("(?i)\\bEZ\\b", "Easy");
+        expanded = expanded.replaceAll("(?i)\\bNC\\b", "Nice");
+
+        // Pattern for "50hp" → "50 health"
+        expanded = expanded.replaceAll("(?i)(\\d+)hp\\b", "$1 health");
+
+        return expanded;
     }
 
     private String getPlayerName(String userId) {

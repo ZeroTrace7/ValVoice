@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Console Appender - outputs logs to console -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!--
+                Log Pattern Breakdown:
+                %d{HH:mm:ss.SSS} - Timestamp (e.g., 13:52:44.123)
+                [%thread] - Thread name (e.g., [xmpp-node-io], [JavaFX Application Thread])
+                %-5level - Log level (DEBUG, INFO, WARN, ERROR) padded to 5 chars
+                %logger{36} - Logger name/class (max 36 characters)
+                %msg - The actual log message
+                %n - Newline
+
+                Example output:
+                13:52:44.123 [xmpp-node-io] DEBUG com.someone.valvoice.Main - [XmppBridge:debug] Connected to XMPP
+            -->
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- File Appender - persists logs to disk for debugging -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!--
+            Log file location: C:\Users\HP\AppData\Roaming\ValVoice\debug.log
+            ${APPDATA} automatically resolves to user's AppData\Roaming folder
+        -->
+        <file>${APPDATA}/ValVoice/debug.log</file>
+
+        <!-- Rolling policy to prevent log file from growing too large -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- Archive logs daily and when they reach 10MB -->
+            <fileNamePattern>${APPDATA}/ValVoice/debug.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>100MB</totalSizeCap>
+        </rollingPolicy>
+
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Root logger configuration -->
+    <root level="debug">
+        <!--
+            Debug level shows ALL logs: DEBUG, INFO, WARN, ERROR
+            Both appenders active: logs go to console AND file
+
+            Benefits:
+            ✅ Console output for real-time monitoring
+            ✅ File output for troubleshooting after crashes
+            ✅ Persists across sessions
+            ✅ Automatic log rotation (max 10MB per file, 7 days history)
+
+            Change to "info" for less verbose output:
+            <root level="info">
+        -->
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+    <!-- Optional: Reduce verbosity for specific packages -->
+    <!-- Uncomment these lines to reduce noise from JavaFX internals -->
+    <!--
+    <logger name="javafx" level="warn"/>
+    <logger name="com.sun.javafx" level="warn"/>
+    -->
+</configuration>
+

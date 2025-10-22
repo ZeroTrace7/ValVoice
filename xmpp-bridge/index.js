@@ -33,7 +33,7 @@ let currentPuuid = null; // Store puuid for room joining
 emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '2.3.0-muc-fixed' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
-const DEFAULT_UA = 'ValVoice-XMPP/2.2 (Windows; Node.js)';
+const DEFAULT_UA = 'ValVoice-XMPP/2.3 (Windows; Node.js)';
 
 // Disable global keep-alive to prevent connection reuse issues
 http.globalAgent.keepAlive = false;
@@ -395,10 +395,15 @@ function extractRoomJid(dataStr) {
   const from = fromMatch[1];
   const roomJid = from.split('/')[0]; // Remove resource part
 
-  // Only return if it's a MUC room
-  if (roomJid.includes('@ares-parties.') ||
-      roomJid.includes('@ares-pregame.') ||
-      roomJid.includes('@ares-coregame.')) {
+  // Debug: Log what we're checking
+  console.error(`[DEBUG] Checking JID: ${roomJid}`);
+
+  // Only return if it's a MUC room - check for all Valorant MUC room types
+  // Rooms can be: ares-parties, ares-pregame, ares-coregame (team/party/all chat)
+  if (roomJid.includes('@ares-parties') ||
+      roomJid.includes('@ares-pregame') ||
+      roomJid.includes('@ares-coregame')) {
+    console.error(`[DEBUG] ✅ MUC ROOM DETECTED: ${roomJid}`);
     return roomJid;
   }
 
@@ -555,6 +560,7 @@ async function connectXMPP() {
 
     setupMessageHandlers();
     startKeepalive();
+    startGameRoomMonitor(accessToken, authData);
 
   } catch (error) {
     emit({ type: 'error', error: `Connection failed: ${error.message}`, stack: error.stack, ts: Date.now() });
@@ -634,6 +640,121 @@ function setupMessageHandlers() {
 }
 
 /**
+ * Monitor Valorant game state and join rooms proactively
+ */
+let gameRoomMonitorTimer = null;
+let currentGameId = null;
+
+async function startGameRoomMonitor(accessToken, authData) {
+  if (gameRoomMonitorTimer) {
+    clearInterval(gameRoomMonitorTimer);
+  }
+
+  const checkGameState = async () => {
+    if (!xmppSocket || xmppSocket.destroyed || !currentPuuid) return;
+
+    try {
+      // Get lockfile to access local Riot API
+      const lockfilePath = path.join(
+        process.env.LOCALAPPDATA || process.env.APPDATA,
+        'Riot Games/Riot Client/Config/lockfile'
+      );
+
+      if (!fs.existsSync(lockfilePath)) return;
+
+      const lockfileData = fs.readFileSync(lockfilePath, 'utf8');
+      const [name, pid, port, password, protocol] = lockfileData.split(':');
+      const basicAuth = Buffer.from(`riot:${password}`).toString('base64');
+      const baseUrl = `${protocol}://127.0.0.1:${port}`;
+
+      // Check current game session
+      const sessionResponse = await httpsRequest(`${baseUrl}/chat/v4/presences`, {
+        headers: { 'Authorization': `Basic ${basicAuth}` },
+        rejectUnauthorized: false,
+        timeout: 5000
+      });
+
+      if (sessionResponse.statusCode === 200 && sessionResponse.data && sessionResponse.data.presences) {
+        const selfPresence = sessionResponse.data.presences.find(p => p.puuid === currentPuuid);
+
+        if (selfPresence && selfPresence.private) {
+          const privateData = JSON.parse(Buffer.from(selfPresence.private, 'base64').toString('utf-8'));
+
+          // Priority 1: Check for active match (INGAME state)
+          if (privateData.sessionLoopState === 'INGAME' && privateData.partyId) {
+            const matchId = privateData.partyId; // Use partyId as room identifier when in-game
+            const roomKey = `game:${matchId}`;
+
+            if (roomKey !== currentGameId) {
+              currentGameId = roomKey;
+              const region = authData.region || 'jp1';
+              const gameRoomJid = `${matchId}@ares-coregame.${region}.pvp.net`;
+
+              emit({ type: 'info', message: `🎮 IN-GAME detected! Joining game room: ${gameRoomJid}`, ts: Date.now() });
+              console.error(`🎮 IN-GAME! Joining: ${gameRoomJid}`);
+
+              await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
+            }
+          }
+          // Priority 2: Check for pregame lobby
+          else if (privateData.sessionLoopState === 'PREGAME' && privateData.partyId) {
+            const matchId = privateData.partyId;
+            const roomKey = `pregame:${matchId}`;
+
+            if (roomKey !== currentGameId) {
+              currentGameId = roomKey;
+              const region = authData.region || 'jp1';
+              const pregameRoomJid = `${matchId}@ares-pregame.${region}.pvp.net`;
+
+              emit({ type: 'info', message: `⏳ PREGAME detected! Joining pregame room: ${pregameRoomJid}`, ts: Date.now() });
+              console.error(`⏳ PREGAME! Joining: ${pregameRoomJid}`);
+
+              await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
+            }
+          }
+          // Priority 3: Check for party (lobby)
+          else if (privateData.partyId && privateData.sessionLoopState === 'MENUS') {
+            const partyId = privateData.partyId;
+            const roomKey = `party:${partyId}`;
+
+            if (roomKey !== currentGameId) {
+              currentGameId = roomKey;
+              const region = authData.region || 'jp1';
+              const partyRoomJid = `${partyId}@ares-parties.${region}.pvp.net`;
+
+              emit({ type: 'info', message: `🎉 PARTY detected! Joining party room: ${partyRoomJid}`, ts: Date.now() });
+              console.error(`🎉 PARTY! Joining: ${partyRoomJid}`);
+
+              await joinMUCRoom(partyRoomJid, currentPuuid.substring(0, 8));
+            }
+          }
+          // Not in game/party anymore
+          else if (!privateData.partyId) {
+            if (currentGameId) {
+              emit({ type: 'info', message: '👋 Left game/party', ts: Date.now() });
+              console.error('👋 Left game/party');
+              currentGameId = null;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Silently ignore errors - this is a background monitor
+      if (err.code !== 'ECONNREFUSED' && err.code !== 'ETIMEDOUT') {
+        emit({ type: 'debug', message: `Game monitor error: ${err.message}`, ts: Date.now() });
+      }
+    }
+  };
+
+  // Check immediately, then every 5 seconds
+  checkGameState();
+  gameRoomMonitorTimer = setInterval(checkGameState, 5000);
+
+  emit({ type: 'info', message: 'Game room monitor started (checking every 5s)', ts: Date.now() });
+  console.error('🔍 Game room monitor started');
+}
+
+/**
  * Start keepalive timer
  */
 function startKeepalive() {
@@ -663,6 +784,7 @@ function shutdown(reason) {
 
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (gameRoomMonitorTimer) clearInterval(gameRoomMonitorTimer);
 
   if (xmppSocket && !xmppSocket.destroyed) {
     xmppSocket.destroy();

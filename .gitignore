@@ -28,5 +28,9 @@ bin/
 ### Mac OS ###
 .DS_Store
 
+### Maven ###
+dependency-reduced-pom.xml
+
 ### Executable Files ###
 *.exe
+*.bat

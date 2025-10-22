@@ -106,24 +106,42 @@ public class Message {
     }
 
     private ChatMessageType classifyMessage(String fromTag, String typeAttr) {
-        if (fromTag == null) return null;
+        if (fromTag == null) {
+            logger.debug("❌ Cannot classify: fromTag is null");
+            return null;
+        }
         String[] splitTag = fromTag.split("@");
-        if (splitTag.length < 2) return null; // malformed
+        if (splitTag.length < 2) {
+            logger.debug("❌ Cannot classify: malformed JID '{}'", fromTag);
+            return null;
+        }
         String idPart = splitTag[0];
         String serverPartRaw = splitTag[1];
         String serverType = serverPartRaw.split("\\.")[0]; // e.g. ares-coregame
 
+        logger.debug("🔍 Classifying message: serverType='{}', idPart='{}', typeAttr='{}'", serverType, idPart, typeAttr);
+
         switch (serverType) {
             case "ares-parties":
+                logger.debug("✅ Classified as PARTY (from {})", fromTag);
                 return ChatMessageType.PARTY;
             case "ares-pregame":
+                logger.debug("✅ Classified as TEAM/PREGAME (from {})", fromTag);
                 return ChatMessageType.TEAM;
             case "ares-coregame":
                 // Distinguish ALL chat if id ends with 'all'
-                if (idPart.endsWith("all")) return ChatMessageType.ALL;
+                if (idPart.endsWith("all")) {
+                    logger.debug("✅ Classified as ALL (from {})", fromTag);
+                    return ChatMessageType.ALL;
+                }
+                logger.debug("✅ Classified as TEAM/COREGAME (from {})", fromTag);
                 return ChatMessageType.TEAM;
             default:
-                if ("chat".equalsIgnoreCase(typeAttr)) return ChatMessageType.WHISPER;
+                if ("chat".equalsIgnoreCase(typeAttr)) {
+                    logger.debug("✅ Classified as WHISPER (from {}, type={})", fromTag, typeAttr);
+                    return ChatMessageType.WHISPER;
+                }
+                logger.warn("⚠️ Unknown server type '{}' for message from '{}' (typeAttr='{}')", serverType, fromTag, typeAttr);
                 return null;
         }
     }

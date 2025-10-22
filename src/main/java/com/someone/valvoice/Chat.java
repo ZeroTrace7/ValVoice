@@ -139,16 +139,34 @@ public class Chat {
     // === Decision Logic ===
 
     public boolean shouldNarrate(Message msg) {
-        if (msg == null || disabled) return false;
+        if (msg == null || disabled) {
+            logger.debug("❌ shouldNarrate=false: msg={} disabled={}", msg, disabled);
+            return false;
+        }
         ChatMessageType type = msg.getMessageType();
-        if (type == null) return false;
+        if (type == null) {
+            logger.debug("❌ shouldNarrate=false: message type is null");
+            return false;
+        }
         boolean own = msg.isOwnMessage();
-        if (isIgnored(msg.getUserId())) return false;
-        if (own && !includeOwnMessages && type != ChatMessageType.WHISPER) return false;
-        return switch (type) {
+        if (isIgnored(msg.getUserId())) {
+            logger.debug("❌ shouldNarrate=false: user {} is ignored", msg.getUserId());
+            return false;
+        }
+        if (own && !includeOwnMessages && type != ChatMessageType.WHISPER) {
+            logger.debug("❌ shouldNarrate=false: own message but includeOwnMessages={}", includeOwnMessages);
+            return false;
+        }
+
+        boolean result = switch (type) {
             case PARTY, TEAM, ALL -> enabledChannels.contains(type);
             case WHISPER -> whispersEnabled && (!own || includeOwnMessages);
         };
+
+        logger.info("📊 shouldNarrate={} for type={} | enabledChannels={} | includeOwn={} | whispers={} | isOwn={}",
+            result, type, enabledChannels, includeOwnMessages, whispersEnabled, own);
+
+        return result;
     }
 
     // === Statistics ===

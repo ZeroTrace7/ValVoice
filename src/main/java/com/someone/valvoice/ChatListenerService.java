@@ -115,6 +115,9 @@ public class ChatListenerService {
         }
         consecutiveFailures = 0;
 
+        // Log raw API response for debugging
+        logger.trace("📥 Raw chat API response: {}", json);
+
         JsonObject root;
         try {
             root = gson.fromJson(json, JsonObject.class);
@@ -129,7 +132,12 @@ public class ChatListenerService {
         } else if (root.has("msgs") && root.get("msgs").isJsonArray()) { // alternative
             messages = root.getAsJsonArray("msgs");
         }
-        if (messages == null) return;
+        if (messages == null) {
+            logger.trace("No messages array found in API response");
+            return;
+        }
+
+        logger.trace("Found {} messages in API response", messages.size());
 
         // On first poll, mark all existing messages as "seen" but don't narrate them
         if (!initialLoadComplete) {
@@ -159,15 +167,38 @@ public class ChatListenerService {
             if (body == null || body.isBlank()) continue;
             String from = getString(m, "from", getString(m, "sender", getString(m, "fromId", null)));
             if (from == null) from = "unknown";
-            String cid = getString(m, "cid", getString(m, "channel", ""));
+            String cid = getChatChannel(m); // Use comprehensive channel detection with all fallbacks
+            if (cid == null) cid = ""; // fallback to empty string if no channel found
             String type = getString(m, "type", "groupchat");
+
+            logger.info("🔔 NEW MESSAGE DETECTED:");
+            logger.info("  - Raw from: '{}'", from);
+            logger.info("  - Raw cid: '{}'", cid);
+            logger.info("  - Raw type: '{}'", type);
+            logger.info("  - Body: '{}'", body);
+            logger.info("  - Message ID: '{}'", mid);
+            logger.info("  - FULL MESSAGE JSON: {}", m.toString());
+
+            // Extract username from 'from' field if it contains @ or is a full JID
+            String username = from;
+            if (from.contains("@")) {
+                username = from.substring(0, from.indexOf("@"));
+                logger.debug("  - Extracted username '{}' from JID '{}'", username, from);
+            }
 
             // Basic classification heuristics via synthetic domain
             String domain = buildDomainForCid(cid);
-            String syntheticFrom = from + "@" + domain + ".pvp.net"; // consistent with earlier parser expectations
+            String syntheticFrom = username + "@" + domain + ".pvp.net"; // consistent with earlier parser expectations
+
+            logger.info("  - Built domain: '{}'", domain);
+            logger.info("  - Synthesized from: '{}'", syntheticFrom);
 
             String escapedBody = HtmlEscape.escapeHtml(body); // ensure valid XML
             String xml = "<message from='" + syntheticFrom + "' type='" + type + "'><body>" + escapedBody + "</body></message>";
+
+            logger.info("  - Final XML: {}", xml);
+            logger.info("🔔 END MESSAGE DETAILS\n");
+
             if (mid != null) {
                 seenIds.add(mid);
                 lastMessageId = mid;
@@ -182,12 +213,92 @@ public class ChatListenerService {
         }
     }
 
+    /**
+     * Extract chat channel identifier from message with comprehensive fallback strategies
+     */
+    private String getChatChannel(JsonObject m) {
+        // Try multiple possible field names
+        String cid = getString(m, "cid", null);
+        if (cid != null) {
+            logger.debug("✅ Found channel in 'cid' field: {}", cid);
+            return cid;
+        }
+
+        cid = getString(m, "channel", null);
+        if (cid != null) {
+            logger.debug("✅ Found channel in 'channel' field: {}", cid);
+            return cid;
+        }
+
+        cid = getString(m, "channelId", null);
+        if (cid != null) {
+            logger.debug("✅ Found channel in 'channelId' field: {}", cid);
+            return cid;
+        }
+
+        cid = getString(m, "conversationId", null);
+        if (cid != null) {
+            logger.debug("✅ Found channel in 'conversationId' field: {}", cid);
+            return cid;
+        }
+
+        cid = getString(m, "room", null);
+        if (cid != null) {
+            logger.debug("✅ Found channel in 'room' field: {}", cid);
+            return cid;
+        }
+
+        // Check if it's embedded in 'from' or 'to' fields
+        String fromField = getString(m, "from", "");
+        if (fromField.contains("ares-parties") || fromField.contains("ares-pregame")
+            || fromField.contains("ares-coregame")) {
+            logger.debug("✅ Found channel embedded in 'from' field: {}", fromField);
+            return fromField;
+        }
+
+        String toField = getString(m, "to", "");
+        if (toField.contains("ares-parties") || toField.contains("ares-pregame")
+            || toField.contains("ares-coregame")) {
+            logger.debug("✅ Found channel embedded in 'to' field: {}", toField);
+            return toField;
+        }
+
+        logger.warn("⚠️ No channel identifier found in message. Full JSON: {}", m.toString());
+        return null;
+    }
+
     private String buildDomainForCid(String cid) {
-        if (cid == null) return "prod.chat"; // fallback -> whisper classification if type=chat
+        if (cid == null) {
+            logger.debug("⚠️ cid is null, defaulting to prod.chat (WHISPER)");
+            return "prod.chat"; // fallback -> whisper classification if type=chat
+        }
         String lower = cid.toLowerCase();
-        if (lower.startsWith("party")) return "ares-parties";
-        if (lower.contains("pregame") || lower.startsWith("ares-pregame")) return "ares-pregame";
-        if (lower.contains("coregame") || lower.contains("match") || lower.startsWith("ares-coregame")) return "ares-coregame";
+
+        // Party chat
+        if (lower.startsWith("party") || lower.contains("ares-parties")) {
+            logger.debug("✅ Detected PARTY chat from cid: {}", cid);
+            return "ares-parties";
+        }
+
+        // Pregame (agent select)
+        if (lower.contains("pregame") || lower.startsWith("ares-pregame")) {
+            logger.debug("✅ Detected PREGAME/TEAM chat from cid: {}", cid);
+            return "ares-pregame";
+        }
+
+        // In-game (coregame) - team or all chat
+        if (lower.contains("coregame") || lower.contains("match") || lower.startsWith("ares-coregame")) {
+            logger.debug("✅ Detected IN-GAME TEAM/ALL chat from cid: {}", cid);
+            return "ares-coregame";
+        }
+
+        // If cid contains @ it's likely a direct message JID
+        if (cid.contains("@")) {
+            logger.debug("ℹ️ cid appears to be a player JID (direct message): {}", cid);
+        } else {
+            logger.debug("⚠️ Unknown cid format, defaulting to prod.chat: {}", cid);
+        }
+
         return "prod.chat"; // unknown -> whisper if type=chat
     }
 

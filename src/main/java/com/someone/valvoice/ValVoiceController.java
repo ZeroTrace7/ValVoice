@@ -9,13 +9,13 @@ import javafx.scene.layout.AnchorPane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.AWTException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 
-import static com.someone.valvoice.ValVoiceApplication.*;
 
 public class ValVoiceController {
     private static final Logger logger = LoggerFactory.getLogger(ValVoiceController.class);
@@ -81,14 +81,13 @@ public class ValVoiceController {
 
     // ========== State Variables ==========
     private boolean isLoading = true;
-    private boolean isAppDisabled = false;
-    private AnchorPane lastAnchorPane;
+    private final boolean isAppDisabled = false;
 
     private ChatListenerService chatListenerService; // polls local Riot chat REST
     private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
 
     // Performance: Use ScheduledExecutorService instead of raw threads with sleep
-    private ScheduledExecutorService scheduledExecutor;
+    private final ScheduledExecutorService scheduledExecutor;
     private volatile boolean shutdownRequested = false;
 
     // Cache for voice enumeration to avoid repeated PowerShell calls
@@ -128,9 +127,6 @@ public class ValVoiceController {
         return latestInstance;
     }
 
-    public ChatListenerService getChatListenerService() {
-        return chatListenerService;
-    }
 
     /**
      * Called automatically after FXML is loaded
@@ -149,8 +145,6 @@ public class ValVoiceController {
             }
         }, true);
 
-        // Set initial visible panel
-        lastAnchorPane = panelUser;
         // Initialize status labels early (default to info/warning look)
         ensureBaseStatusClass(statusXmpp);
         ensureBaseStatusClass(statusBridgeMode);
@@ -182,6 +176,14 @@ public class ValVoiceController {
         inbuiltSynth = new InbuiltVoiceSynthesizer();
         if (inbuiltSynth.isReady()) {
             logger.info("InbuiltVoiceSynthesizer ready with {} voices", inbuiltSynth.getAvailableVoices().size());
+
+            // Initialize VoiceGenerator (coordinates TTS + Push-to-Talk)
+            try {
+                VoiceGenerator.initialize(inbuiltSynth);
+                logger.info("✓ VoiceGenerator initialized with keybind: {}", VoiceGenerator.getInstance().getCurrentKeybind());
+            } catch (AWTException e) {
+                logger.error("Failed to initialize VoiceGenerator (keybind automation disabled)", e);
+            }
         }
         if (SIMULATE_CHAT) {
             startChatSimulation();
@@ -376,6 +378,10 @@ public class ValVoiceController {
             "SELF+PARTY+ALL",
             "SELF+PARTY+TEAM+ALL"
         );
+
+        // Set default value to PARTY+TEAM (matches Chat.java defaults)
+        sources.setValue("PARTY+TEAM");
+        logger.info("Default chat source set to: PARTY+TEAM");
 
         // Async load voices to avoid blocking FX thread
         loadVoicesAsync(false);
@@ -599,22 +605,6 @@ public class ValVoiceController {
     }
 
     /**
-     * Helper to create delayed task without blocking threads
-     */
-    private CompletableFuture<Void> delayedTask(long delayMs, Runnable action) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        scheduledExecutor.schedule(() -> {
-            try {
-                action.run();
-                future.complete(null);
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-            }
-        }, delayMs, TimeUnit.MILLISECONDS);
-        return future;
-    }
-
-    /**
      * Updates loading status label (rate-limited to avoid spammy rapid updates)
      */
     private void updateLoadingStatus(String status) {
@@ -701,7 +691,6 @@ public class ValVoiceController {
         } else {
             panelToShow.setVisible(true);
         }
-        lastAnchorPane = panelToShow;
         logger.debug("Showing panel: {}", panelToShow.getId());
     }
 
@@ -711,9 +700,6 @@ public class ValVoiceController {
         Platform.runLater(() -> userIDLabel.setText(userID));
     }
 
-    public void setQuotaLabel(String quota) {
-        Platform.runLater(() -> quotaLabel.setText(quota));
-    }
 
     public void setMessagesSentLabel(long count) {
         Platform.runLater(() -> messagesSentLabel.setText(String.valueOf(count)));
@@ -723,11 +709,7 @@ public class ValVoiceController {
         Platform.runLater(() -> charactersNarratedLabel.setText(String.valueOf(count)));
     }
 
-    public void updateQuotaBar(double progress) {
-        Platform.runLater(() -> quotaBar.setProgress(progress));
-    }
-
-    // ========== Event Handlers (Placeholders) ==========
+    // ========== Event Handlers ==========
 
     @FXML
     public void selectVoice() {
@@ -737,8 +719,13 @@ public class ValVoiceController {
         }
         logger.info("Voice selected: {}", selectedVoice);
         showInformation("Voice Selected", "You selected: " + selectedVoice);
-        // Play a brief sample using the persistent inbuilt synthesizer for immediate feedback
-        if (inbuiltSynth != null && inbuiltSynth.isReady()) {
+
+        // Play a brief sample using VoiceGenerator for proper coordination
+        if (VoiceGenerator.isInitialized()) {
+            int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
+            VoiceGenerator.getInstance().speakVoice(selectedVoice, "Sample voice confirmation", (short) uiRate);
+        } else if (inbuiltSynth != null && inbuiltSynth.isReady()) {
+            // Fallback to direct call if VoiceGenerator not initialized
             int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
             inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", (short) uiRate);
         }
@@ -841,15 +828,17 @@ public class ValVoiceController {
         ValVoiceController c = latestInstance;
         if (c == null || msg == null) return;
         if (msg.getContent() == null) return;
+
         try {
-            // Use InbuiltVoiceSynthesizer (persistent PowerShell with proper VB-Cable routing)
-            if (c.inbuiltSynth != null && c.inbuiltSynth.isReady()) {
+            // Use VoiceGenerator for coordinated TTS with Push-to-Talk automation
+            if (VoiceGenerator.isInitialized()) {
+                VoiceGenerator voiceGen = VoiceGenerator.getInstance();
                 int uiRate = c.mapSliderToUiRate(); // Get UI rate (0-100)
                 String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
 
                 // If no voice selected, use first available voice
                 if (selectedVoice == null || selectedVoice.isEmpty()) {
-                    java.util.List<String> availableVoices = c.inbuiltSynth.getAvailableVoices();
+                    java.util.List<String> availableVoices = voiceGen.getAvailableVoices();
                     if (!availableVoices.isEmpty()) {
                         selectedVoice = availableVoices.get(0);
                     } else {
@@ -858,16 +847,33 @@ public class ValVoiceController {
                     }
                 }
 
-                // Log TTS trigger so user can see it's working
-                logger.info("🔊 TTS TRIGGERED: \"{}\" (voice: {}, rate: {})",
+                // Log TTS trigger
+                logger.info("🔊 TTS TRIGGERED: \"{}\" (voice: {}, rate: {}, PTT: {})",
                     msg.getContent().length() > 50 ? msg.getContent().substring(0, 47) + "..." : msg.getContent(),
                     selectedVoice,
-                    uiRate);
+                    uiRate,
+                    voiceGen.isPushToTalkEnabled());
 
-                // Automatically speak the message using InbuiltVoiceSynthesizer (properly routed to VB-Cable!)
+                // Speak using VoiceGenerator (automatic queue + Push-to-Talk)
+                voiceGen.speakVoice(msg.getContent(), selectedVoice, (short) uiRate);
+            } else if (c.inbuiltSynth != null && c.inbuiltSynth.isReady()) {
+                // Fallback: Direct call if VoiceGenerator failed to initialize
+                logger.warn("⚠ VoiceGenerator not initialized - using direct TTS (no Push-to-Talk)");
+                int uiRate = c.mapSliderToUiRate();
+                String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
+
+                if (selectedVoice == null || selectedVoice.isEmpty()) {
+                    java.util.List<String> availableVoices = c.inbuiltSynth.getAvailableVoices();
+                    if (!availableVoices.isEmpty()) {
+                        selectedVoice = availableVoices.get(0);
+                    } else {
+                        return;
+                    }
+                }
+
                 c.inbuiltSynth.speakInbuiltVoice(selectedVoice, msg.getContent(), (short) uiRate);
             } else {
-                logger.warn("⚠ InbuiltVoiceSynthesizer not ready - cannot narrate message!");
+                logger.warn("⚠ TTS system not ready - cannot narrate message!");
             }
 
             // Update UI stats from Chat (already incremented by ChatDataHandler)
@@ -875,7 +881,7 @@ public class ValVoiceController {
             c.setMessagesSentLabel(chat.getNarratedMessages());
             c.setCharactersNarratedLabel(chat.getNarratedCharacters());
         } catch (Exception e) {
-            logger.debug("narrateMessage failed", e);
+            logger.error("narrateMessage failed", e);
         }
     }
 
@@ -892,17 +898,36 @@ public class ValVoiceController {
         logger.debug("Processed incoming chat XML via unified handler: {}", message);
     }
 
-    private int mapSliderToSapiRate() {
-        if (rateSlider == null) return 0; // neutral
-        double v = rateSlider.getValue(); // 0..100
-        // Linear map 0 -> -5, 50 -> 0, 100 -> +5 (conservative to keep quality) or extend to -10..10 if desired
-        // Adjusted to full SAPI range:
-        return (int) Math.round((v / 100.0) * 20.0 - 10.0); // 0..100 -> -10..10
-    }
 
     private int mapSliderToUiRate() {
         if (rateSlider == null) return 50; // neutral (middle of 0-100 range)
         return (int) Math.round(rateSlider.getValue()); // Direct 0-100 UI value for InbuiltVoiceSynthesizer
+    }
+
+    /**
+     * Shows an information alert dialog to the user
+     */
+    private void showInformation(String title, String message) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
+    }
+
+    /**
+     * Shows an error alert dialog to the user
+     */
+    private void showAlert(String title, String message) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle(title);
+            alert.setHeaderText(null);
+            alert.setContentText(message);
+            alert.showAndWait();
+        });
     }
 
     public void shutdownServices() {
@@ -949,12 +974,6 @@ public class ValVoiceController {
         });
     }
 
-    // Placeholder for future real Valorant chat integration.
-    // A future implementation could establish authenticated WebSocket / XMPP connection
-    // and forward raw XML / JSON converted messages to handleIncomingChatXml().
-    private void startValorantChatBridge() {
-        // TODO: Implement Valorant chat capture
-    }
 
     private void verifyExternalDependencies() {
         Path workingDir = Paths.get(System.getProperty("user.dir"));
