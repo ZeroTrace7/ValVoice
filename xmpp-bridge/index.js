@@ -678,70 +678,81 @@ async function startGameRoomMonitor(accessToken, authData) {
         const selfPresence = sessionResponse.data.presences.find(p => p.puuid === currentPuuid);
 
         if (selfPresence && selfPresence.private) {
-          const privateData = JSON.parse(Buffer.from(selfPresence.private, 'base64').toString('utf-8'));
+          const privateJson = Buffer.from(selfPresence.private, 'base64').toString('utf-8');
+          let privateData = {};
+          try { privateData = JSON.parse(privateJson); } catch (_) {}
 
-          // Priority 1: Check for active match (INGAME state)
-          if (privateData.sessionLoopState === 'INGAME' && privateData.partyId) {
-            const matchId = privateData.partyId; // Use partyId as room identifier when in-game
-            const roomKey = `game:${matchId}`;
+          // Log loop state and candidate IDs for diagnostics
+          const loop = privateData.sessionLoopState;
+          const partyId = privateData.partyId || privateData.partyID || null;
+          const pregameId = privateData.pregameId || privateData.preGameId || null;
+          const coreGameId = privateData.matchId || privateData.coreGameId || privateData.gameId || null;
+          const region = (authData.region || 'jp1');
 
-            if (roomKey !== currentGameId) {
-              currentGameId = roomKey;
-              const region = authData.region || 'jp1';
-              const gameRoomJid = `${matchId}@ares-coregame.${region}.pvp.net`;
+          console.error(`[GAME] loop=${loop} partyId=${partyId || '-'} pregameId=${pregameId || '-'} coreGameId=${coreGameId || '-'} region=${region}`);
 
-              emit({ type: 'info', message: `🎮 IN-GAME detected! Joining game room: ${gameRoomJid}`, ts: Date.now() });
-              console.error(`🎮 IN-GAME! Joining: ${gameRoomJid}`);
-
-              await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
+          // Priority 1: INGAME -> coregame MUC using coreGameId if available; fallback to partyId
+          if (loop === 'INGAME') {
+            const id = coreGameId || partyId;
+            if (id) {
+              const roomKey = `game:${id}`;
+              if (roomKey !== currentGameId) {
+                currentGameId = roomKey;
+                const gameRoomJid = `${id}@ares-coregame.${region}.pvp.net`;
+                emit({ type: 'info', message: `🎮 IN-GAME detected! Joining game room: ${gameRoomJid}`, ts: Date.now() });
+                console.error(`🎮 IN-GAME! Joining: ${gameRoomJid}`);
+                await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
+              }
+            } else {
+              console.error('[GAME] INGAME without coreGameId/partyId - cannot compute room JID');
             }
           }
-          // Priority 2: Check for pregame lobby
-          else if (privateData.sessionLoopState === 'PREGAME' && privateData.partyId) {
-            const matchId = privateData.partyId;
-            const roomKey = `pregame:${matchId}`;
-
-            if (roomKey !== currentGameId) {
-              currentGameId = roomKey;
-              const region = authData.region || 'jp1';
-              const pregameRoomJid = `${matchId}@ares-pregame.${region}.pvp.net`;
-
-              emit({ type: 'info', message: `⏳ PREGAME detected! Joining pregame room: ${pregameRoomJid}`, ts: Date.now() });
-              console.error(`⏳ PREGAME! Joining: ${pregameRoomJid}`);
-
-              await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
+          // Priority 2: PREGAME -> pregame MUC using pregameId if available; fallback to partyId
+          else if (loop === 'PREGAME') {
+            const id = pregameId || partyId;
+            if (id) {
+              const roomKey = `pregame:${id}`;
+              if (roomKey !== currentGameId) {
+                currentGameId = roomKey;
+                const pregameRoomJid = `${id}@ares-pregame.${region}.pvp.net`;
+                emit({ type: 'info', message: `⏳ PREGAME detected! Joining pregame room: ${pregameRoomJid}`, ts: Date.now() });
+                console.error(`⏳ PREGAME! Joining: ${pregameRoomJid}`);
+                await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
+              }
+            } else {
+              console.error('[GAME] PREGAME without pregameId/partyId - cannot compute room JID');
             }
           }
-          // Priority 3: Check for party (lobby)
-          else if (privateData.partyId && privateData.sessionLoopState === 'MENUS') {
-            const partyId = privateData.partyId;
+          // Priority 3: MENUS but in a party -> parties MUC using partyId
+          else if (partyId && loop === 'MENUS') {
             const roomKey = `party:${partyId}`;
-
             if (roomKey !== currentGameId) {
               currentGameId = roomKey;
-              const region = authData.region || 'jp1';
               const partyRoomJid = `${partyId}@ares-parties.${region}.pvp.net`;
-
               emit({ type: 'info', message: `🎉 PARTY detected! Joining party room: ${partyRoomJid}`, ts: Date.now() });
               console.error(`🎉 PARTY! Joining: ${partyRoomJid}`);
-
               await joinMUCRoom(partyRoomJid, currentPuuid.substring(0, 8));
             }
           }
           // Not in game/party anymore
-          else if (!privateData.partyId) {
+          else if (!partyId) {
             if (currentGameId) {
               emit({ type: 'info', message: '👋 Left game/party', ts: Date.now() });
               console.error('👋 Left game/party');
               currentGameId = null;
             }
           }
+        } else {
+          console.error('[GAME] Self presence missing or has no private payload');
         }
+      } else {
+        console.error(`[GAME] presences request failed: status=${sessionResponse.statusCode}`);
       }
     } catch (err) {
       // Silently ignore errors - this is a background monitor
       if (err.code !== 'ECONNREFUSED' && err.code !== 'ETIMEDOUT') {
         emit({ type: 'debug', message: `Game monitor error: ${err.message}`, ts: Date.now() });
+        console.error('[GAME] monitor error:', err.message);
       }
     }
   };

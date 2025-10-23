@@ -131,7 +131,7 @@ public class ChatDataHandler {
         }
 
         // Message passed all filters!
-        logger.info("✓ Message will be narrated: ({}) from {}", message.getMessageType(), message.getUserId());
+        logger.info("\u2713 Message will be narrated: ({}) from {}", message.getMessageType(), message.getUserId());
 
 
         // Record narration statistics
@@ -156,8 +156,8 @@ public class ChatDataHandler {
             }
         });
 
-        // Update UI statistics
-        Platform.runLater(() -> {
+        // Update UI statistics (safe for headless tests)
+        safeFx(() -> {
             ValVoiceController c = ValVoiceController.getLatestInstance();
             if (c != null) {
                 c.setMessagesSentLabel(chat.getNarratedMessages());
@@ -172,12 +172,24 @@ public class ChatDataHandler {
             chat.getPlayerIDTable().put(playerID, playerName);
             chat.getPlayerNameTable().put(playerName, playerID);
 
-            Platform.runLater(() -> {
+            safeFx(() -> {
                 ValVoiceController c = ValVoiceController.getLatestInstance();
                 if (c != null && c.addIgnoredPlayer != null) {
                     c.addIgnoredPlayer.getItems().add(playerName);
                 }
             });
+        }
+    }
+
+    // Execute runnable on JavaFX thread if available; ignore if toolkit not initialized (e.g., unit tests)
+    private void safeFx(Runnable r) {
+        try {
+            Platform.runLater(r);
+        } catch (IllegalStateException ex) {
+            // JavaFX toolkit not initialized; skip UI update in headless context
+            logger.trace("Skipping FX update (toolkit not initialized)");
+        } catch (Throwable t) {
+            logger.trace("FX update skipped due to error", t);
         }
     }
 
@@ -244,4 +256,3 @@ public class ChatDataHandler {
         return chat.getDisplayName(userId).orElse(userId);
     }
 }
-
