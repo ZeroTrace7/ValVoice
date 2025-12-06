@@ -11,7 +11,7 @@
 
 <AnchorPane prefHeight="650.0" prefWidth="900.0" styleClass="root" stylesheets="@style.css"
             xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
-            fx:controller="com.someone.valvoice.ValVoiceController">
+            fx:controller="com.someone.valvoicegui.ValVoiceController">
 
     <!-- ========== TOP BAR (Draggable) ========== -->
     <AnchorPane fx:id="topBar" prefHeight="50.0" prefWidth="900.0" styleClass="top-bar"
@@ -542,6 +542,11 @@
             <HBox spacing="10" alignment="CENTER_LEFT" minWidth="160">
                 <Label text="Audio:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
                 <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
+            </HBox>
+
+            <!-- Self ID Status -->
+            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="180">
+                <Label fx:id="statusSelfId" text="Self: (pending)" styleClass="status-label" style="-fx-font-size: 13px;" />
             </HBox>
 
             <Region HBox.hgrow="ALWAYS" />

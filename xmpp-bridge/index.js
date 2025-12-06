@@ -29,6 +29,7 @@ let isShuttingDown = false;
 // Track joined MUC rooms to avoid duplicate joins
 const joinedRooms = new Set();
 let currentPuuid = null; // Store puuid for room joining
+let currentRegion = null; // Store region for room JID construction
 
 emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '2.3.0-muc-fixed' });
 
@@ -364,24 +365,45 @@ function asyncSocketRead(socket) {
 }
 
 /**
- * NEW: Join a MUC room (party, pregame, in-game)
+ * NEW: Join a MUC room (party, pregame, in-game) with retry logic
  */
-async function joinMUCRoom(roomJid, nickname) {
-  if (!xmppSocket || xmppSocket.destroyed) return;
+async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
+  if (!xmppSocket || xmppSocket.destroyed) {
+    emit({ type: 'error', error: `Cannot join ${roomJid}: socket not connected`, ts: Date.now() });
+    return false;
+  }
 
   if (joinedRooms.has(roomJid)) {
     emit({ type: 'debug', message: `Already in room: ${roomJid}`, ts: Date.now() });
-    return;
+    return true;
   }
 
   try {
-    const presenceStanza = `<presence to="${roomJid}/${nickname}"><x xmlns="http://jabber.org/protocol/muc"/></presence>`;
+    // Use full puuid as nickname for uniqueness, or fallback
+    const nick = nickname || (currentPuuid ? currentPuuid.substring(0, 8) : 'valvoice');
+    const presenceStanza = `<presence to="${roomJid}/${nick}"><x xmlns="http://jabber.org/protocol/muc"><history maxstanzas="0"/></x></presence>`;
+
+    emit({ type: 'debug', message: `Sending MUC join: ${roomJid}`, ts: Date.now() });
+    console.error(`[MUC] Sending join presence to: ${roomJid}`);
+
     await asyncSocketWrite(xmppSocket, presenceStanza);
     joinedRooms.add(roomJid);
+
     emit({ type: 'info', message: `✅ Joined MUC room: ${roomJid}`, ts: Date.now() });
     console.error(`✅ Joined MUC room: ${roomJid}`);
+    return true;
   } catch (err) {
     emit({ type: 'error', error: `Failed to join room ${roomJid}: ${err.message}`, ts: Date.now() });
+    console.error(`❌ Failed to join ${roomJid}:`, err.message);
+
+    // Retry up to 3 times with exponential backoff
+    if (retryCount < 3) {
+      const delay = 1000 * Math.pow(2, retryCount);
+      emit({ type: 'debug', message: `Retrying join ${roomJid} in ${delay}ms (attempt ${retryCount + 1}/3)`, ts: Date.now() });
+      await new Promise(r => setTimeout(r, delay));
+      return joinMUCRoom(roomJid, nickname, retryCount + 1);
+    }
+    return false;
   }
 }
 
@@ -429,7 +451,9 @@ async function connectXMPP() {
 
     const { accessToken, entitlement, puuid, region } = authData;
     currentPuuid = puuid; // Store for room joining
+    currentRegion = region; // Store for room JID construction
 
+    emit({ type: 'info', message: `Auth ready: puuid=${puuid?.substring(0,8)}..., region=${region}`, ts: Date.now() });
     emit({ type: 'info', message: 'Fetching PAS token...', ts: Date.now() });
     const pasToken = await fetchPASToken(accessToken, entitlement);
 
@@ -560,6 +584,9 @@ async function connectXMPP() {
 
     setupMessageHandlers();
     startKeepalive();
+
+    // Start game room monitor - this checks game state immediately, then every 5 seconds
+    emit({ type: 'info', message: 'Starting game room monitor...', ts: Date.now() });
     startGameRoomMonitor(accessToken, authData);
 
   } catch (error) {
@@ -601,14 +628,33 @@ function setupMessageHandlers() {
         // Join the room automatically
         joinMUCRoom(roomJid, currentPuuid.substring(0, 8));
       }
-      console.error('[PRESENCE] received');
+      // Log presence type for debugging
+      const fromMatch = dataStr.match(/from=['"]([^'"]+)['"]/);
+      console.error(`[PRESENCE] from: ${fromMatch ? fromMatch[1] : 'unknown'}`);
     }
 
+    // Enhanced message detection for MUC messages
     if (dataStr.includes('<message')) {
       const fromMatch = dataStr.match(/from=['"]([^'\"]+)['"]/);
       const bodyMatch = dataStr.match(/<body>([^<]+)<\/body>/);
-      if (fromMatch && bodyMatch) {
-        console.error(`[MESSAGE] from ${fromMatch[1]}: ${bodyMatch[1].substring(0, 50)}...`);
+      const typeMatch = dataStr.match(/type=['"]([^'"]+)['"]/);
+
+      if (fromMatch) {
+        const from = fromMatch[1];
+        const isMucMessage = from.includes('@ares-parties') ||
+                            from.includes('@ares-pregame') ||
+                            from.includes('@ares-coregame');
+
+        if (bodyMatch) {
+          const msgType = typeMatch ? typeMatch[1] : 'unknown';
+          const body = bodyMatch[1].substring(0, 50);
+          if (isMucMessage) {
+            console.error(`📨 [MUC MESSAGE] type=${msgType} from=${from}: ${body}...`);
+            emit({ type: 'debug', message: `MUC message received from ${from}`, ts: Date.now() });
+          } else {
+            console.error(`[MESSAGE] type=${msgType} from=${from}: ${body}...`);
+          }
+        }
       }
     } else if (dataStr.includes('<iq')) {
       console.error('[IQ] received');
@@ -687,7 +733,8 @@ async function startGameRoomMonitor(accessToken, authData) {
           const partyId = privateData.partyId || privateData.partyID || null;
           const pregameId = privateData.pregameId || privateData.preGameId || null;
           const coreGameId = privateData.matchId || privateData.coreGameId || privateData.gameId || null;
-          const region = (authData.region || 'jp1');
+          // Use globally stored region, fallback to authData.region, then default
+          const region = currentRegion || authData.region || 'ap';
 
           console.error(`[GAME] loop=${loop} partyId=${partyId || '-'} pregameId=${pregameId || '-'} coreGameId=${coreGameId || '-'} region=${region}`);
 
@@ -698,10 +745,18 @@ async function startGameRoomMonitor(accessToken, authData) {
               const roomKey = `game:${id}`;
               if (roomKey !== currentGameId) {
                 currentGameId = roomKey;
+
+                // Join TEAM chat room (main game room)
                 const gameRoomJid = `${id}@ares-coregame.${region}.pvp.net`;
-                emit({ type: 'info', message: `🎮 IN-GAME detected! Joining game room: ${gameRoomJid}`, ts: Date.now() });
-                console.error(`🎮 IN-GAME! Joining: ${gameRoomJid}`);
+                emit({ type: 'info', message: `🎮 IN-GAME detected! Joining TEAM room: ${gameRoomJid}`, ts: Date.now() });
+                console.error(`🎮 IN-GAME! Joining TEAM: ${gameRoomJid}`);
                 await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
+
+                // Also join ALL chat room (appends 'all' to the id)
+                const allChatRoomJid = `${id}all@ares-coregame.${region}.pvp.net`;
+                emit({ type: 'info', message: `🌍 Joining ALL chat room: ${allChatRoomJid}`, ts: Date.now() });
+                console.error(`🌍 Joining ALL: ${allChatRoomJid}`);
+                await joinMUCRoom(allChatRoomJid, currentPuuid.substring(0, 8));
               }
             } else {
               console.error('[GAME] INGAME without coreGameId/partyId - cannot compute room JID');
@@ -723,8 +778,9 @@ async function startGameRoomMonitor(accessToken, authData) {
               console.error('[GAME] PREGAME without pregameId/partyId - cannot compute room JID');
             }
           }
-          // Priority 3: MENUS but in a party -> parties MUC using partyId
-          else if (partyId && loop === 'MENUS') {
+          // Priority 3: In a party (lobby/menus) -> parties MUC using partyId
+          // Note: loop can be 'MENUS', undefined, or null when in lobby
+          else if (partyId && loop !== 'INGAME' && loop !== 'PREGAME') {
             const roomKey = `party:${partyId}`;
             if (roomKey !== currentGameId) {
               currentGameId = roomKey;

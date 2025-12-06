@@ -29,6 +29,7 @@ bin/
 .DS_Store
 
 ### Maven ###
+target/
 dependency-reduced-pom.xml
 
 ### Executable Files ###
