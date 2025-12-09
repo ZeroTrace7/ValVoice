@@ -147,15 +147,40 @@ public class ChatDataHandler {
             return;
         }
 
+        // Log message details for debugging
+        logger.info("📥 Processing message: type={}, userId={}, content='{}', isOwn={}",
+            message.getMessageType(),
+            message.getUserId(),
+            message.getContent() != null ?
+                (message.getContent().length() > 50 ? message.getContent().substring(0, 47) + "..." : message.getContent())
+                : "(null)",
+            message.isOwnMessage());
+
         // Process message through Chat instance
         Chat chat = Chat.getInstance();
-        if (chat.shouldNarrate(message)) {
+
+        // Record incoming message for stats
+        chat.recordIncoming(message);
+
+        boolean shouldNarrate = chat.shouldNarrate(message);
+        logger.info("📊 shouldNarrate decision: {} for message type={}", shouldNarrate, message.getMessageType());
+
+        if (shouldNarrate) {
+            // Record narrated message for stats
+            chat.recordNarrated(message);
+
             // Narrate the message via ValVoiceController
             try {
+                logger.info("🎤 Sending message to TTS: '{}'",
+                    message.getContent() != null ?
+                        (message.getContent().length() > 50 ? message.getContent().substring(0, 47) + "..." : message.getContent())
+                        : "(null)");
                 com.someone.valvoicegui.ValVoiceController.narrateMessage(message);
             } catch (Exception e) {
                 logger.error("Error narrating message", e);
             }
+        } else {
+            logger.debug("⏭️ Message skipped (shouldNarrate=false)");
         }
     }
 

@@ -48,25 +48,27 @@ public class Message {
         Matcher jidMatcher = JID_PATTERN.matcher(xml);
         Matcher fromMatcher = FROM_PATTERN.matcher(xml);
 
-        String rawId = null;
-        if (jidMatcher.find()) {
-            rawId = jidMatcher.group(2);
-        } else if (fromMatcher.find()) { // reuse existing from matcher result
-            rawId = fromMatcher.group(2);
-        }
-        id = rawId != null ? rawId : "@"; // fallback
-
-        // Extract 'type' attribute value (e.g., chat)
-        String typeAttr = null;
-        if (typeMatcher.find()) {
-            typeAttr = typeMatcher.group(2);
-        }
-
-        // Reset fromMatcher (since we may have consumed it above while resolving id)
-        fromMatcher = FROM_PATTERN.matcher(xml);
+        // Extract 'from' attribute first (needed for message classification)
         String fromAttr = null;
         if (fromMatcher.find()) {
             fromAttr = fromMatcher.group(2);
+        }
+
+        // Extract ID (prefer jid, fallback to from)
+        // Reset fromMatcher if we need to use it again
+        String rawId = null;
+        if (jidMatcher.find()) {
+            rawId = jidMatcher.group(2);
+        } else if (fromAttr != null) {
+            // Use already extracted fromAttr instead of re-matching
+            rawId = fromAttr;
+        }
+        id = rawId != null ? rawId : "@"; // fallback
+
+        // Extract 'type' attribute value (e.g., chat, groupchat)
+        String typeAttr = null;
+        if (typeMatcher.find()) {
+            typeAttr = typeMatcher.group(2);
         }
 
         // Message body (HTML unescaped)
@@ -87,7 +89,7 @@ public class Message {
         String selfId = ChatDataHandler.getInstance().getSelfID();
         ownMessage = selfId != null && selfId.equalsIgnoreCase(userId);
 
-        // Classify channel
+        // Classify channel - use fromAttr (already extracted) or fallback to id
         String derivedType = null;
         try {
             derivedType = classifyMessage(Objects.requireNonNullElse(fromAttr, id), typeAttr);
@@ -95,6 +97,11 @@ public class Message {
             logger.debug("Could not classify message. from='{}' type='{}'", fromAttr, typeAttr, e);
         }
         messageType = derivedType;
+
+        // Log parsed message at INFO level for debugging
+        logger.info("📝 Parsed Message: type={} userId={} own={} from='{}' body='{}'",
+            messageType, userId, ownMessage, fromAttr,
+            content != null ? (content.length() > 50 ? content.substring(0, 47) + "..." : content) : "(null)");
 
         if (logger.isTraceEnabled()) {
             logger.trace("Parsed Message: type={} userId={} own={} body='{}'", messageType, userId, ownMessage, content);

@@ -88,6 +88,11 @@ public class Chat {
         // Default: enable SELF + PARTY + TEAM (includeOwnMessages already true above)
         enabledChannels.add(TYPE_PARTY);
         enabledChannels.add(TYPE_TEAM);
+
+        // Sync legacy flags immediately after initialization
+        syncLegacyFlagsFromModern();
+        logger.info("Chat initialized: enabledChannels={} includeOwn={} whispersEnabled={}",
+            enabledChannels, includeOwnMessages, whispersEnabled);
     }
 
     /**
@@ -162,38 +167,98 @@ public class Chat {
 
     // === Decision Logic ===
 
+    /**
+     * Determines if a message should be narrated.
+     * MATCHES ValorantNarrator's ChatDataHandler.message() logic exactly.
+     */
     public boolean shouldNarrate(Message msg) {
-        if (msg == null || disabled) {
-            logger.debug("❌ shouldNarrate=false: msg={} disabled={}", msg, disabled);
+        if (msg == null) {
+            logger.debug("❌ shouldNarrate=false: msg is null");
             return false;
         }
+
+        // Check global disable
+        if (disabled) {
+            logger.info("❌ shouldNarrate=false: Chat is globally disabled");
+            return false;
+        }
+
         String type = msg.getMessageType();
         if (type == null) {
             logger.debug("❌ shouldNarrate=false: message type is null");
             return false;
         }
-        boolean own = msg.isOwnMessage();
+
+        // Check ignored players
         if (isIgnored(msg.getUserId())) {
-            logger.debug("❌ shouldNarrate=false: user {} is ignored", msg.getUserId());
-            return false;
-        }
-        if (own && !includeOwnMessages && !TYPE_WHISPER.equals(type)) {
-            logger.debug("❌ shouldNarrate=false: own message but includeOwnMessages={}", includeOwnMessages);
+            logger.info("❌ shouldNarrate=false: user {} is ignored", msg.getUserId());
             return false;
         }
 
-        boolean result;
+        boolean own = msg.isOwnMessage();
+
+        // ValorantNarrator logic: Check message type and own message state
+        // Reference: ChatDataHandler.message() in ValorantNarrator
+
+        // WHISPER check
         if (TYPE_WHISPER.equals(type)) {
-            result = whispersEnabled && (!own || includeOwnMessages);
-        } else {
-            result = enabledChannels.contains(type);
+            if (!privateState) {
+                logger.info("❌ shouldNarrate=false: WHISPER disabled (privateState=false)");
+                return false;
+            }
+            if (own && !selfState) {
+                logger.info("❌ shouldNarrate=false: own WHISPER but selfState=false");
+                return false;
+            }
+            logger.info("✅ shouldNarrate=true: WHISPER message");
+            return true;
         }
 
-        logger.info("📊 shouldNarrate={} for type={} | enabledChannels={} | includeOwn={} | whispers={} | isOwn={}",
-            result, type, enabledChannels, includeOwnMessages, whispersEnabled, own);
+        // Own message check (for non-whisper)
+        if (own && selfState) {
+            // Self messages enabled, skipping other filtering checks (ValorantNarrator behavior)
+            logger.info("✅ shouldNarrate=true: own message and selfState=true");
+            return true;
+        }
 
-        return result;
+        // PARTY check
+        if (TYPE_PARTY.equals(type)) {
+            if (!partyState) {
+                logger.info("❌ shouldNarrate=false: PARTY disabled (partyState=false)");
+                return false;
+            }
+            logger.info("✅ shouldNarrate=true: PARTY message");
+            return true;
+        }
+
+        // TEAM check
+        if (TYPE_TEAM.equals(type)) {
+            if (!teamState) {
+                logger.info("❌ shouldNarrate=false: TEAM disabled (teamState=false)");
+                return false;
+            }
+            logger.info("✅ shouldNarrate=true: TEAM message");
+            return true;
+        }
+
+        // ALL check
+        if (TYPE_ALL.equals(type)) {
+            if (!allState) {
+                logger.info("❌ shouldNarrate=false: ALL disabled (allState=false)");
+                return false;
+            }
+            if (own && !selfState) {
+                logger.info("❌ shouldNarrate=false: own ALL message but selfState=false");
+                return false;
+            }
+            logger.info("✅ shouldNarrate=true: ALL message");
+            return true;
+        }
+
+        logger.warn("❌ shouldNarrate=false: unknown message type '{}'", type);
+        return false;
     }
+
 
     // === Statistics ===
     public void recordIncoming(Message msg) {

@@ -72,6 +72,27 @@
     </dependencies>
 
     <build>
+        <resources>
+            <!-- Include standard resources -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+            <!-- Bundle xmpp-bridge directory for Node.js fallback -->
+            <resource>
+                <directory>${project.basedir}/xmpp-bridge</directory>
+                <targetPath>xmpp-bridge</targetPath>
+                <includes>
+                    <include>**/*</include>
+                </includes>
+                <excludes>
+                    <exclude>node_modules/**</exclude>
+                    <exclude>.pkg-cache/**</exclude>
+                    <exclude>*.log</exclude>
+                </excludes>
+            </resource>
+        </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -120,6 +141,28 @@
                 <configuration>
                     <mainClass>com.someone.valvoice/com.someone.valvoice.valvoicegui.Main</mainClass>
                 </configuration>
+            </plugin>
+
+            <!-- Maven Assembly Plugin to package xmpp-bridge alongside the JAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>create-distribution</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/distribution.xml</descriptor>
+                            </descriptors>
+                            <appendAssemblyId>false</appendAssemblyId>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

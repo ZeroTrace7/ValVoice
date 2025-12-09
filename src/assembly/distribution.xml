@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.1.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.1.0 http://maven.apache.org/xsd/assembly-2.1.0.xsd">
+    <id>dist</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+
+    <fileSets>
+        <!-- Include the shaded JAR -->
+        <fileSet>
+            <directory>${project.build.directory}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>${project.artifactId}-${project.version}.jar</include>
+            </includes>
+        </fileSet>
+
+        <!-- Include xmpp-bridge directory -->
+        <fileSet>
+            <directory>${project.basedir}/xmpp-bridge</directory>
+            <outputDirectory>/xmpp-bridge</outputDirectory>
+            <includes>
+                <include>**/*</include>
+            </includes>
+            <excludes>
+                <exclude>node_modules/**</exclude>
+                <exclude>.pkg-cache/**</exclude>
+                <exclude>*.log</exclude>
+            </excludes>
+        </fileSet>
+
+        <!-- Include SoundVolumeView.exe if present -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>SoundVolumeView.exe</include>
+                <include>valvoice-xmpp.exe</include>
+            </includes>
+        </fileSet>
+
+        <!-- Include README -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.md</include>
+                <include>TEAM_CHAT_FIX_SUMMARY.md</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>
+
