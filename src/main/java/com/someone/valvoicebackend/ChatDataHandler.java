@@ -139,6 +139,7 @@ public class ChatDataHandler {
 
     /**
      * Process and handle a chat message
+     * MATCHES ValorantNarrator's ChatDataHandler.message() logic exactly.
      * @param message the message to process
      */
     public void message(Message message) {
@@ -147,40 +148,95 @@ public class ChatDataHandler {
             return;
         }
 
-        // Log message details for debugging
-        logger.info("📥 Processing message: type={}, userId={}, content='{}', isOwn={}",
+        Chat properties = Chat.getInstance();
+
+        // Check if globally disabled
+        if (properties.isDisabled()) {
+            logger.info("Valorant Narrator disabled, ignoring message!");
+            return;
+        }
+
+        // Check if player is ignored
+        if (properties.isIgnoredPlayerID(message.getUserId())) {
+            logger.info("Ignoring message from {}!", properties.getPlayerIDTable().get(message.getUserId()));
+            return;
+        }
+
+        // WHISPER check
+        if ("WHISPER".equals(message.getMessageType()) && !properties.isPrivateState()) {
+            logger.info("Private messages disabled, ignoring message!");
+            return;
+        }
+
+        // Self messages check - if own message and selfState enabled, skip other filters
+        if (message.isOwnMessage() && properties.isSelfState()) {
+            // Self messages enabled, skipping filtering checks.
+            logger.info("✅ Own message with selfState=true, will narrate");
+        } else if ("PARTY".equals(message.getMessageType()) && !properties.isPartyState()) {
+            logger.info("Party messages disabled, ignoring message!");
+            return;
+        } else if ("TEAM".equals(message.getMessageType()) && !properties.isTeamState()) {
+            logger.info("Team messages disabled, ignoring message!");
+            return;
+        }
+
+        // ALL chat check
+        if ("ALL".equals(message.getMessageType())) {
+            if (!properties.isAllState()) {
+                logger.info("All messages disabled, ignoring message!");
+                return;
+            } else if (message.isOwnMessage() && !properties.isSelfState()) {
+                logger.info("(ALL)Self messages disabled, ignoring message!");
+                return;
+            }
+        }
+
+        // Clean the message content
+        final String finalBody = message.getContent().replace("/", "").replace("\\", "");
+
+        // Log message details
+        logger.info("🎤 TTS message: type={}, userId={}, content='{}'",
             message.getMessageType(),
             message.getUserId(),
-            message.getContent() != null ?
-                (message.getContent().length() > 50 ? message.getContent().substring(0, 47) + "..." : message.getContent())
-                : "(null)",
-            message.isOwnMessage());
+            finalBody.length() > 50 ? finalBody.substring(0, 47) + "..." : finalBody);
 
-        // Process message through Chat instance
-        Chat chat = Chat.getInstance();
-
-        // Record incoming message for stats
-        chat.recordIncoming(message);
-
-        boolean shouldNarrate = chat.shouldNarrate(message);
-        logger.info("📊 shouldNarrate decision: {} for message type={}", shouldNarrate, message.getMessageType());
-
-        if (shouldNarrate) {
-            // Record narrated message for stats
-            chat.recordNarrated(message);
-
-            // Narrate the message via ValVoiceController
+        // Narrate the message asynchronously
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
-                logger.info("🎤 Sending message to TTS: '{}'",
-                    message.getContent() != null ?
-                        (message.getContent().length() > 50 ? message.getContent().substring(0, 47) + "..." : message.getContent())
-                        : "(null)");
+                // Expand shortforms and speak
+                String expandedText = ChatUtilityHandler.expandShortForms(finalBody);
                 com.someone.valvoicegui.ValVoiceController.narrateMessage(message);
+                logger.info("✅ TTS triggered for: '{}'",
+                    expandedText.length() > 50 ? expandedText.substring(0, 47) + "..." : expandedText);
             } catch (Exception e) {
-                logger.error("Error narrating message", e);
+                logger.error("Failed to narrate message: {}", e.getMessage());
             }
-        } else {
-            logger.debug("⏭️ Message skipped (shouldNarrate=false)");
+        });
+
+        // Update message stats
+        properties.updateMessageStats(message);
+
+        // Update UI stats
+        try {
+            javafx.application.Platform.runLater(() -> {
+                com.someone.valvoicegui.ValVoiceController controller =
+                    com.someone.valvoicegui.ValVoiceController.getLatestInstance();
+                if (controller != null) {
+                    controller.setMessagesSentLabel(properties.getMessagesSent());
+                    controller.setCharactersNarratedLabel(properties.getCharactersSent());
+                }
+            });
+        } catch (Exception e) {
+            logger.debug("Could not update UI stats: {}", e.getMessage());
+        }
+
+        // Add player to mapping if new
+        if (!properties.getPlayerIDTable().containsKey(message.getUserId())) {
+            final String playerID = message.getUserId();
+            final String playerName = ChatUtilityHandler.getPlayerName(playerID).trim();
+            properties.putPlayerId(playerName, playerID);
+            properties.putPlayerName(playerID, playerName);
+            logger.debug("Added new player to mapping: {} -> {}", playerID, playerName);
         }
     }
 

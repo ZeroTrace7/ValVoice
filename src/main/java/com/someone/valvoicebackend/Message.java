@@ -10,6 +10,8 @@ import java.util.regex.Pattern;
 /**
  * Represents a single Valorant XMPP chat message parsed from the raw XML stanza.
  * <p>
+ * MATCHES ValorantNarrator's Message.java implementation exactly.
+ * <p>
  * Responsibilities:
  *  - Extract attributes (from / jid, type)
  *  - Extract and HTML-unescape the body text
@@ -19,25 +21,24 @@ import java.util.regex.Pattern;
 public class Message {
     private static final Logger logger = LoggerFactory.getLogger(Message.class);
 
-    // Precompiled patterns (support both single and double quotes)
-    private static final Pattern TYPE_PATTERN = Pattern.compile("type=([\"'])(.*?)\\1", Pattern.CASE_INSENSITIVE);
+    // Precompiled patterns - support BOTH single and double quotes (Riot uses both)
+    private static final Pattern TYPE_PATTERN = Pattern.compile("type=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
     private static final Pattern BODY_PATTERN = Pattern.compile("<body>(.*?)</body>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern JID_PATTERN = Pattern.compile("jid=([\"'])(.*?)\\1", Pattern.CASE_INSENSITIVE);
-    private static final Pattern FROM_PATTERN = Pattern.compile("from=([\"'])(.*?)\\1", Pattern.CASE_INSENSITIVE);
+    private static final Pattern JID_PATTERN = Pattern.compile("jid=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FROM_PATTERN = Pattern.compile("from=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
 
     private final String content;     // The (unescaped) message content
     private final String id;          // Full JID (user@server/resource) or fallback '@'
     private final String userId;      // Portion before '@' of the JID
     private final boolean ownMessage; // Whether this message was sent by the current user
-    private final String messageType; // Now using String instead of ChatMessageType enum
-
-    private static final Pattern ENCODED_XML = Pattern.compile("&[a-zA-Z]+;");
-    private static final String ENCODED_AMP = "&amp;";
-    private static final String ENCODED_LT = "&lt;";
-    private static final String ENCODED_GT = "&gt;";
+    private final String messageType; // Using String constants (PARTY, TEAM, ALL, WHISPER)
 
     private PlayerAccount sender;     // The player account associated with this message
 
+    /**
+     * Parse XMPP message stanza into Message object.
+     * MATCHES ValorantNarrator's Message constructor exactly.
+     */
     public Message(String xml) {
         if (xml == null) {
             throw new IllegalArgumentException("xml cannot be null");
@@ -48,64 +49,40 @@ public class Message {
         Matcher jidMatcher = JID_PATTERN.matcher(xml);
         Matcher fromMatcher = FROM_PATTERN.matcher(xml);
 
-        // Extract 'from' attribute first (needed for message classification)
-        String fromAttr = null;
-        if (fromMatcher.find()) {
-            fromAttr = fromMatcher.group(2);
-        }
-
-        // Extract ID (prefer jid, fallback to from)
-        // Reset fromMatcher if we need to use it again
-        String rawId = null;
+        // Extract ID: prefer jid attribute, fallback to from attribute
+        // ValorantNarrator: id = jidMatcher.find() ? jidMatcher.group(1) : fromMatcher.find() ? fromMatcher.group(1) : "@";
         if (jidMatcher.find()) {
-            rawId = jidMatcher.group(2);
-        } else if (fromAttr != null) {
-            // Use already extracted fromAttr instead of re-matching
-            rawId = fromAttr;
+            id = jidMatcher.group(1);
+        } else if (fromMatcher.find()) {
+            id = fromMatcher.group(1);
+        } else {
+            id = "@"; // fallback
         }
-        id = rawId != null ? rawId : "@"; // fallback
 
         // Extract 'type' attribute value (e.g., chat, groupchat)
-        String typeAttr = null;
-        if (typeMatcher.find()) {
-            typeAttr = typeMatcher.group(2);
-        }
+        String typeAttr = typeMatcher.find() ? typeMatcher.group(1) : null;
 
-        // Message body (HTML unescaped)
-        String rawContent = null;
-        if (bodyMatcher.find()) {
-            rawContent = bodyMatcher.group(1);
-        }
-        content = rawContent == null ? null : HtmlEscape.unescapeHtml(rawContent.trim());
+        // Re-match from for message classification (ValorantNarrator resets and re-matches)
+        fromMatcher = FROM_PATTERN.matcher(xml);
+        String fromAttr = fromMatcher.find() ? fromMatcher.group(1) : null;
 
-        // Determine userId (segment before '@')
-        if (id.contains("@")) {
-            userId = id.substring(0, id.indexOf('@'));
-        } else {
-            userId = id; // improbable but safe
-        }
+        // Classify message type using from attribute
+        messageType = getMessageType(Objects.requireNonNull(fromAttr, "from attribute is required"), typeAttr);
 
-        // Determine if this is our own message - now using direct selfID access
+        // Extract and unescape body content
+        content = bodyMatcher.find() ? HtmlEscape.unescapeHtml(bodyMatcher.group(1)) : null;
+
+        // Extract userId (portion before '@')
+        userId = id.split("@")[0];
+
+        // Determine if this is our own message
         String selfId = ChatDataHandler.getInstance().getSelfID();
         ownMessage = selfId != null && selfId.equalsIgnoreCase(userId);
 
-        // Classify channel - use fromAttr (already extracted) or fallback to id
-        String derivedType = null;
-        try {
-            derivedType = classifyMessage(Objects.requireNonNullElse(fromAttr, id), typeAttr);
-        } catch (Exception e) {
-            logger.debug("Could not classify message. from='{}' type='{}'", fromAttr, typeAttr, e);
-        }
-        messageType = derivedType;
-
-        // Log parsed message at INFO level for debugging
+        // Log parsed message for debugging
         logger.info("📝 Parsed Message: type={} userId={} own={} from='{}' body='{}'",
             messageType, userId, ownMessage, fromAttr,
             content != null ? (content.length() > 50 ? content.substring(0, 47) + "..." : content) : "(null)");
-
-        if (logger.isTraceEnabled()) {
-            logger.trace("Parsed Message: type={} userId={} own={} body='{}'", messageType, userId, ownMessage, content);
-        }
     }
 
     /**
@@ -117,78 +94,65 @@ public class Message {
         this.ownMessage = original.ownMessage;
         this.messageType = original.messageType;
         this.content = newContent;
+        this.sender = original.sender;
     }
 
-    private static String classifyMessage(String fromTag, String typeAttr) {
-        if (fromTag == null) {
-            logger.debug("❌ Cannot classify: fromTag is null");
+    /**
+     * Classify message type based on 'from' JID and 'type' attribute.
+     * MATCHES ValorantNarrator's getMessageType() exactly.
+     *
+     * @param fromTag The 'from' attribute value (e.g., "roomid@ares-coregame.ap.pvp.net/nickname")
+     * @param type The 'type' attribute value (e.g., "chat", "groupchat")
+     * @return Message type string (PARTY, TEAM, ALL, WHISPER) or null
+     */
+    private static String getMessageType(String fromTag, String type) {
+        if (fromTag == null || !fromTag.contains("@")) {
+            logger.debug("❌ Cannot classify: invalid fromTag '{}'", fromTag);
             return null;
         }
+
         String[] splitTag = fromTag.split("@");
         if (splitTag.length < 2) {
             logger.debug("❌ Cannot classify: malformed JID '{}'", fromTag);
             return null;
         }
-        String idPart = splitTag[0];
-        String serverPartRaw = splitTag[1];
-        String serverType = serverPartRaw.split("\\.")[0]; // e.g. ares-coregame
 
-        logger.debug("🔍 Classifying message: serverType='{}', idPart='{}', typeAttr='{}'", serverType, idPart, typeAttr);
+        String idPart = splitTag[0];
+        String serverPart = splitTag[1];
+        String serverType = serverPart.split("\\.")[0]; // e.g., "ares-coregame"
+
+        logger.debug("🔍 Classifying: serverType='{}', idPart='{}', type='{}'", serverType, idPart, type);
 
         switch (serverType) {
             case "ares-parties":
-                logger.debug("✅ Classified as PARTY (from {})", fromTag);
+                logger.debug("✅ Classified as PARTY");
                 return Chat.TYPE_PARTY;
+
             case "ares-pregame":
-                logger.debug("✅ Classified as TEAM/PREGAME (from {})", fromTag);
+                logger.debug("✅ Classified as TEAM (pregame)");
                 return Chat.TYPE_TEAM;
+
             case "ares-coregame":
-                // Distinguish ALL chat if id ends with 'all'
+                // Distinguish ALL chat if room id ends with 'all'
                 if (idPart.endsWith("all")) {
-                    logger.debug("✅ Classified as ALL (from {})", fromTag);
+                    logger.debug("✅ Classified as ALL");
                     return Chat.TYPE_ALL;
                 }
-                logger.debug("✅ Classified as TEAM/COREGAME (from {})", fromTag);
+                logger.debug("✅ Classified as TEAM (coregame)");
                 return Chat.TYPE_TEAM;
+
             default:
-                if ("chat".equalsIgnoreCase(typeAttr)) {
-                    logger.debug("✅ Classified as WHISPER (from {}, type={})", fromTag, typeAttr);
+                // Direct messages (whispers) have type="chat"
+                if ("chat".equalsIgnoreCase(type)) {
+                    logger.debug("✅ Classified as WHISPER");
                     return Chat.TYPE_WHISPER;
                 }
-                logger.warn("⚠️ Unknown server type '{}' for message from '{}' (typeAttr='{}')", serverType, fromTag, typeAttr);
+                logger.warn("⚠️ Unknown server type '{}' from '{}' (type='{}')", serverType, fromTag, type);
                 return null;
         }
     }
 
-    // Helper method to extract attribute value from XML string
-    private static String extractAttribute(String xml, String attr) {
-        int start = xml.indexOf(attr + "='");
-        if (start == -1) return null;
-        start += attr.length() + 2;
-        int end = xml.indexOf("'", start);
-        return end == -1 ? null : xml.substring(start, end);
-    }
-
-    // Helper method to extract body content from XML string
-    private static String extractBody(String xml) {
-        int start = xml.indexOf("<body>");
-        if (start == -1) return null;
-        start += 6;
-        int end = xml.indexOf("</body>", start);
-        return end == -1 ? null : xml.substring(start, end);
-    }
-
-    // Simple XML content decoder for encoded entities
-    private static String decodeXml(String encoded) {
-        if (encoded == null) return null;
-        if (!ENCODED_XML.matcher(encoded).find()) return encoded;
-
-        return encoded.replace(ENCODED_AMP, "&")
-                     .replace(ENCODED_LT, "<")
-                     .replace(ENCODED_GT, ">");
-    }
-
-    /**
+   /**
      * Sets the player account associated with this message
      * @param account The player account
      */
@@ -222,8 +186,6 @@ public class Message {
 
     @Override
     public String toString() {
-        return String.format("Message[type=%s from=%s content=%s]",
-            messageType, userId, content == null ? null :
-            (content.length() > 50 ? content.substring(0, 47) + "..." : content));
+        return String.format("(%s)%s: %s", messageType, userId, content);
     }
 }

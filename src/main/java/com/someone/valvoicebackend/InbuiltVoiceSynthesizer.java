@@ -120,21 +120,107 @@ public class InbuiltVoiceSynthesizer {
         return powershellProcess != null && powershellProcess.isAlive() && !voices.isEmpty();
     }
 
+    /**
+     * Speak text using Windows TTS. This method BLOCKS until speech is complete.
+     * Uses a sentinel marker to know when PowerShell has finished speaking.
+     */
     public void speakInbuiltVoice(String voice, String text, short rate) {
+        speakInbuiltVoiceBlocking(voice, text, rate);
+    }
+
+    /**
+     * Speak text and BLOCK until speech completes.
+     * This is critical for proper Push-to-Talk key timing.
+     */
+    public void speakInbuiltVoiceBlocking(String voice, String text, short rate) {
         rate = (short) (rate / 10.0 - 10);
 
         try {
             // Escape single quotes for PowerShell
             String escapedText = text.replace("'", "''");
 
-            // Create new SpeechSynthesizer each time (ValorantNarrator approach)
-            String command = String.format("Add-Type -AssemblyName System.Speech;$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;$speak.SelectVoice('%s');$speak.Rate=%d;$speak.Speak('%s');", voice, rate, escapedText);
+            // Generate unique sentinel to detect completion
+            String sentinel = "TTS_DONE_" + System.currentTimeMillis();
+
+            // Create speech command with error handling that outputs sentinel when done
+            // The try-finally in PowerShell ensures sentinel is ALWAYS written
+            // $speak.Speak() is SYNCHRONOUS in PowerShell - it blocks until speech completes
+            String command = String.format(
+                "try { " +
+                "Add-Type -AssemblyName System.Speech; " +
+                "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+                "$speak.SelectVoice('%s'); " +
+                "$speak.Rate = %d; " +
+                "$speak.Speak('%s') " +
+                "} catch { Write-Error $_.Exception.Message } finally { Write-Output '%s' }",
+                voice, rate, escapedText, sentinel);
+
             powershellWriter.println(command);
 
-            logger.info("🔊 Speaking: voice='{}', rate={}, text='{}'", voice, rate, text.length() > 50 ? text.substring(0, 47) + "..." : text);
+            logger.info("🔊 Speaking: voice='{}', rate={}, text='{}'", voice, rate,
+                text.length() > 50 ? text.substring(0, 47) + "..." : text);
+
+            // Wait for the sentinel to appear in output (speech completed)
+            long startTime = System.currentTimeMillis();
+            long maxWaitMs = Math.max(30000, text.length() * 200); // At least 30s, or 200ms per char
+
+            StringBuilder lineBuffer = new StringBuilder();
+            while (System.currentTimeMillis() - startTime < maxWaitMs) {
+                // Check if data is available (non-blocking)
+                if (powershellReader.ready()) {
+                    int ch = powershellReader.read();
+                    if (ch == -1) break; // EOF
+                    if (ch == '\n' || ch == '\r') {
+                        String line = lineBuffer.toString();
+                        lineBuffer.setLength(0);
+                        if (line.contains(sentinel)) {
+                            long elapsed = System.currentTimeMillis() - startTime;
+                            logger.debug("✅ TTS completed in {}ms", elapsed);
+                            return;
+                        }
+                    } else {
+                        lineBuffer.append((char) ch);
+                    }
+                } else {
+                    // No data available, sleep briefly to avoid busy-waiting
+                    Thread.sleep(50);
+                }
+            }
+
+            // Timeout reached
+            logger.warn("⚠ TTS timeout after {}ms - continuing anyway", maxWaitMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("TTS interrupted");
         } catch (Exception e) {
             logger.error("Failed to speak text", e);
         }
+    }
+
+    /**
+     * Estimate speech duration based on text length and rate.
+     * Used as fallback if blocking read fails.
+     * @param text The text to speak
+     * @param rate The speech rate (-10 to 10 scale)
+     * @return Estimated duration in milliseconds
+     */
+    public long estimateSpeechDuration(String text, short rate) {
+        if (text == null || text.isEmpty()) return 0;
+
+        // Average speaking rate is ~150 words per minute at rate=0
+        // Rate -10 is slowest, +10 is fastest
+        // Base: ~100ms per character at rate 0
+        double baseMs = 100.0;
+
+        // Adjust for rate: each rate unit changes speed by ~10%
+        // rate < 0 = slower, rate > 0 = faster
+        double rateMultiplier = 1.0 - (rate * 0.1);
+        rateMultiplier = Math.max(0.3, Math.min(2.0, rateMultiplier)); // Clamp to reasonable range
+
+        long estimatedMs = (long) (text.length() * baseMs * rateMultiplier);
+
+        // Add buffer for speech synthesis startup
+        return estimatedMs + 500;
     }
 
     public void shutdown() {

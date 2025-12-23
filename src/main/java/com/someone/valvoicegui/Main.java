@@ -2,13 +2,10 @@ package com.someone.valvoicegui;
 
 import com.someone.valvoicebackend.*;
 import javafx.application.Application;
-import static com.someone.valvoicegui.ValVoiceController.*;
-import static com.someone.valvoicegui.MessageType.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.URISyntaxException;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +24,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+// MITM imports
+import com.someone.valvoicebackend.RiotClientUtils;
+
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
@@ -37,10 +37,19 @@ public class Main {
     public static double currentVersion;
     private static Properties properties;
 
-    // Node.js XMPP process management (external exe stdout reader)
+    // MITM Configuration
+    private static final int HTTP_MITM_PORT = 35479;
+    private static final int XMPP_MITM_PORT = 35478;
+    private static final String MITM_HOST = "127.0.0.1";
+
+    // MITM Proxy instances
+    private static ConfigMITM configMitm;
+    private static XmppMITM xmppMitm;
+
+    // Node.js XMPP process management (external exe stdout reader) - LEGACY, kept for fallback
     private static Process xmppNodeProcess;
     private static final ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "xmpp-node-io");
+        Thread t = new Thread(r, "xmpp-mitm-io");
         t.setDaemon(true);
         return t;
     });
@@ -184,6 +193,200 @@ public class Main {
     }
 
     private static void startXmppNodeProcess() {
+        // Use MITM proxy approach instead of Node.js bridge
+        startMitmProxy();
+    }
+
+    /**
+     * Start the MITM proxy system for intercepting Riot XMPP traffic.
+     * This approach:
+     * 1. Checks if Riot Client is running (must be closed)
+     * 2. Starts ConfigMITM HTTP proxy on port 35479
+     * 3. Starts XmppMITM XMPP proxy on port 35478
+     * 4. Launches Riot Client with custom config URL
+     * 5. Intercepts and relays all XMPP traffic
+     */
+    private static void startMitmProxy() {
+        logger.info("Starting MITM proxy system...");
+        ValVoiceController.updateXmppStatus("Starting MITM...", false);
+        System.setProperty("valvoice.bridgeMode", "mitm-proxy");
+        ValVoiceController.updateBridgeModeLabel("mitm-proxy");
+
+        xmppIoPool.submit(() -> {
+            try {
+                int httpPort = HTTP_MITM_PORT;
+                int xmppPort = XMPP_MITM_PORT;
+                String host = MITM_HOST;
+
+                // Check if Riot client is running
+                boolean isRunning = RiotClientUtils.isRiotClientRunning().get();
+                if (isRunning) {
+                    JsonObject errorJson = new JsonObject();
+                    errorJson.addProperty("type", "error");
+                    errorJson.addProperty("code", 409);
+                    errorJson.addProperty("reason", "Riot client is running, please close it before running this tool.");
+                    System.out.println(errorJson.toString());
+                    logger.error("Riot Client is already running. Please close it first.");
+                    ValVoiceController.updateXmppStatus("Close Riot Client!", false);
+                    return;
+                }
+
+                // Start ConfigMITM
+                logger.info("Starting ConfigMITM on port {}...", httpPort);
+                ValVoiceController.updateXmppStatus("Starting HTTP proxy...", false);
+                configMitm = new ConfigMITM(httpPort, host, xmppPort);
+                configMitm.start().get();
+                logger.info("ConfigMITM started successfully");
+
+                // Start XmppMITM
+                logger.info("Starting XmppMITM on port {}...", xmppPort);
+                ValVoiceController.updateXmppStatus("Starting XMPP proxy...", false);
+                xmppMitm = new XmppMITM(xmppPort, host, configMitm);
+                xmppMitm.setStanzaCallback(stanza -> handleMitmStanza(stanza));
+                xmppMitm.start();
+                logger.info("XmppMITM started successfully");
+
+                // Get Riot client path
+                String riotClientPath = RiotClientUtils.getRiotClientPath().get();
+
+                if (riotClientPath.equals("Error:404")) {
+                    JsonObject errorJson = new JsonObject();
+                    errorJson.addProperty("type", "error");
+                    errorJson.addProperty("code", 404);
+                    errorJson.addProperty("reason", "Valorant Installation not found. Please install Valorant and try again.");
+                    System.out.println(errorJson.toString());
+                    logger.error("Valorant installation not found.");
+                    ValVoiceController.updateXmppStatus("Valorant not found", false);
+                    return;
+                }
+
+                if (riotClientPath.startsWith("Error")) {
+                    JsonObject errorJson = new JsonObject();
+                    errorJson.addProperty("type", "error");
+                    errorJson.addProperty("code", 500);
+                    errorJson.addProperty("reason", riotClientPath);
+                    System.out.println(errorJson.toString());
+                    logger.error("Error getting Riot Client path: {}", riotClientPath);
+                    ValVoiceController.updateXmppStatus("Path error", false);
+                    return;
+                }
+
+                // Launch Riot client
+                logger.info("Launching Riot Client with MITM config...");
+                ValVoiceController.updateXmppStatus("Launching Riot...", false);
+
+                String command = String.format(
+                    "\"%s\" --client-config-url=\"http://%s:%d\" --launch-product=valorant --launch-patchline=live",
+                    riotClientPath, host, httpPort
+                );
+
+                try {
+                    logger.info("Executing: {}", command);
+                    Runtime.getRuntime().exec(command);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    ValVoiceController.updateXmppStatus("Launch failed", false);
+                    return;
+                }
+
+                // Wait a moment for client to start
+                Thread.sleep(3000);
+                ValVoiceController.updateXmppStatus("Waiting for connection...", false);
+                logger.info("MITM proxy system started. Waiting for Riot Client to connect...");
+
+            } catch (Exception e) {
+                logger.error("Failed to start MITM proxy", e);
+                e.printStackTrace();
+                ValVoiceController.updateXmppStatus("MITM failed", false);
+            }
+        });
+
+        // Register shutdown hook for MITM cleanup
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("Shutting down MITM proxies...");
+
+            if (xmppMitm != null) {
+                xmppMitm.stop();
+            }
+            if (configMitm != null) {
+                configMitm.stop();
+            }
+
+            xmppIoPool.shutdown();
+            try {
+                if (!xmppIoPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    xmppIoPool.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                xmppIoPool.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+
+            logger.info("MITM cleanup complete");
+        }, "mitm-shutdown"));
+    }
+
+    /**
+     * Handle intercepted XMPP stanzas from the MITM proxy
+     *
+     * IMPORTANT: We process INCOMING messages because:
+     * - When YOU type a message, it goes to the server
+     * - The server echoes it back as an INCOMING message
+     * - Message.isOwnMessage() returns true for YOUR messages
+     * - Chat.shouldNarrate() checks selfState - if true, YOUR messages get TTS
+     * - TTS speaks through VB-CABLE → Valorant mic → Teammates hear
+     */
+    private static void handleMitmStanza(XmppMITM.XmppStanza stanza) {
+        String type = stanza.getType();
+        String data = stanza.getData();
+
+        switch (type) {
+            case "incoming" -> {
+                // Process ALL incoming messages (includes YOUR echoed messages)
+                if (data != null && !data.isBlank()) {
+                    JsonObject obj = new JsonObject();
+                    obj.addProperty("type", "incoming");
+                    obj.addProperty("data", data);
+                    obj.addProperty("time", stanza.getTimestamp());
+
+                    // Process for TTS - Chat.shouldNarrate() will filter:
+                    // - YOUR messages (isOwnMessage=true) get TTS if selfState=true
+                    // - Teammate messages get TTS if their type is enabled
+                    handleIncomingStanza(obj);
+                }
+            }
+            case "outgoing" -> {
+                // Log outgoing for debugging only
+                if (data != null) {
+                    logger.debug("[MITM:outgoing] {}", abbreviateXml(data));
+                }
+            }
+            case "open-valorant" -> {
+                String host = stanza.getFrom();
+                int port = stanza.getPort();
+                logger.info("[MITM] Connecting to Riot XMPP: {}:{}", host, port);
+                ValVoiceController.updateXmppStatus("Connecting...", false);
+            }
+            case "open-riot" -> {
+                logger.info("[MITM] Connected to Riot XMPP server");
+                ValVoiceController.updateXmppStatus("Connected", true);
+            }
+            case "close" -> {
+                logger.info("[MITM] XMPP connection closed");
+                ValVoiceController.updateXmppStatus("Disconnected", false);
+            }
+            case "error" -> {
+                String error = data != null ? data : "Unknown error";
+                logger.error("[MITM] Error: {}", error);
+                ValVoiceController.updateXmppStatus("Error", false);
+            }
+            default -> logger.debug("[MITM:{}] {}", type, stanza);
+        }
+    }
+
+    // Legacy method - kept for compatibility but not used in MITM mode
+    @Deprecated
+    private static void startXmppNodeProcessLegacy() {
         if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
             logger.warn("Xmpp-Node process already running");
             return;
@@ -698,6 +901,97 @@ public class Main {
             }
         } catch (Exception e) {
             logger.debug("Failed to parse bind iq for self ID", e);
+        }
+    }
+
+    /**
+     * Handle incoming stanzas ONLY for self-ID detection (from IQ bind response)
+     * We don't TTS incoming messages - only YOUR outgoing messages get TTS
+     */
+    private static void handleIncomingStanzaForSelfIdOnly(JsonObject obj) {
+        if (!obj.has("data") || obj.get("data").isJsonNull()) return;
+        String xml = obj.get("data").getAsString();
+        if (xml == null || xml.isBlank()) return;
+
+        try {
+            // Only process IQ stanzas for self ID detection
+            if (IQ_START_PATTERN.matcher(xml).find()) {
+                detectSelfIdFromIq(xml);
+            }
+        } catch (Exception e) {
+            logger.debug("Failed handling incoming stanza for self ID", e);
+        }
+    }
+
+    /**
+     * Handle YOUR outgoing messages for TTS
+     * This is the key method that makes teammates hear your messages via VB-CABLE mic
+     */
+    private static void handleOutgoingStanzaForTTS(JsonObject obj) {
+        if (!obj.has("data") || obj.get("data").isJsonNull()) return;
+        String xml = obj.get("data").getAsString();
+        if (xml == null || xml.isBlank()) return;
+
+        String xmlLower = xml.toLowerCase();
+
+        // Only process message stanzas with body (actual chat messages you typed)
+        if (!xmlLower.contains("<message") || !xmlLower.contains("<body>")) {
+            return;
+        }
+
+        logger.info("🎤 YOUR OUTGOING MESSAGE detected - will TTS for teammates to hear");
+
+        try {
+            // Extract message stanzas
+            Matcher messageMatcher = MESSAGE_STANZA_PATTERN.matcher(xml);
+            int messageCount = 0;
+
+            while (messageMatcher.find()) {
+                String singleMessageXml = messageMatcher.group();
+                messageCount++;
+
+                try {
+                    // Only process messages that have a body
+                    if (singleMessageXml.toLowerCase().contains("<body>")) {
+                        Message msg = new Message(singleMessageXml);
+
+                        // Force this as YOUR message for TTS
+                        String content = msg.getContent();
+                        if (content != null && !content.isBlank()) {
+                            logger.info("🎤 TTS YOUR MESSAGE #{}: type={} body='{}'",
+                                messageCount, msg.getMessageType(),
+                                content.length() > 30 ? content.substring(0, 27) + "..." : content);
+
+                            // Directly trigger TTS for YOUR message
+                            // This goes through VB-CABLE to your mic so teammates hear it
+                            try {
+                                ValVoiceController.narrateMessage(msg);
+                                logger.info("✅ TTS triggered - teammates will hear via your mic");
+                            } catch (Exception e) {
+                                logger.error("Error narrating your message", e);
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    logger.warn("Failed to parse your outgoing message #{}: {}", messageCount, ex.getMessage());
+                }
+            }
+
+            // Fallback if pattern didn't match
+            if (messageCount == 0 && xmlLower.contains("<message") && xmlLower.contains("<body>")) {
+                logger.warn("⚠️ Pattern didn't match, trying direct parse for your message...");
+                try {
+                    Message msg = new Message(xml);
+                    if (msg.getContent() != null && !msg.getContent().isBlank()) {
+                        logger.info("✓ Fallback parse succeeded for your message");
+                        ValVoiceController.narrateMessage(msg);
+                    }
+                } catch (Exception ex) {
+                    logger.warn("Fallback parse also failed: {}", ex.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed handling your outgoing stanza for TTS", e);
         }
     }
 

@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.*;
 
@@ -18,9 +18,9 @@ import com.google.gson.*;
  * VoiceGenerator - Coordinates TTS playback and Push-to-Talk automation
  *
  * MATCHES ValorantNarrator EXACTLY:
- * ✅ Key held down continuously from startup
+ * ✅ Key held down continuously from startup (when PTT enabled)
  * ✅ Release→Press to "refresh" key during speech
- * ✅ Speaking queue (prevents overlapping)
+ * ✅ Uses ResponseProcess (isVoiceActive) to track voice state
  * ✅ Thread-safe coordination
  */
 public class VoiceGenerator {
@@ -32,12 +32,12 @@ public class VoiceGenerator {
     private static final String CONFIG_FILE = "voice-config.json";
     private static final int DEFAULT_KEY_EVENT = KeyEvent.VK_V;
 
-    // State
+    // State - MATCHES ValorantNarrator exactly
     private final Robot robot;
     private final InbuiltVoiceSynthesizer synthesizer;
-    private final AtomicBoolean isSpeaking = new AtomicBoolean(false);
+    private final ResponseProcess isVoiceActive = new ResponseProcess();
     private int keyEvent = DEFAULT_KEY_EVENT;
-    private boolean isPushToTalkEnabled = true;
+    private boolean isTeamKeyEnabled = true;
     private String currentVoice = "Microsoft Zira Desktop";
     private short currentVoiceRate = 50; // 0-100 UI scale
 
@@ -46,22 +46,8 @@ public class VoiceGenerator {
         this.robot = new Robot();
         loadConfig();
 
-        // CRITICAL: Press and HOLD the keybind from startup (ValorantNarrator behavior)
-        // The key stays pressed until app closes or PTT is disabled
-        if (isPushToTalkEnabled) {
-            robot.keyPress(keyEvent);
-            logger.info("✓ VoiceGenerator initialized - keybind {} HELD DOWN", KeyEvent.getKeyText(keyEvent));
-        } else {
-            logger.info("✓ VoiceGenerator initialized - Push-to-Talk disabled");
-        }
-
-        // Register shutdown hook to release key when app closes
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (isPushToTalkEnabled) {
-                robot.keyRelease(keyEvent);
-                logger.info("Released keybind {} on shutdown", KeyEvent.getKeyText(keyEvent));
-            }
-        }, "VoiceGenerator-shutdown"));
+        logger.info("✓ VoiceGenerator initialized - keybind={}, PTT={}",
+            KeyEvent.getKeyText(keyEvent), isTeamKeyEnabled ? "enabled" : "disabled");
     }
 
     public static synchronized void initialize(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
@@ -83,10 +69,10 @@ public class VoiceGenerator {
 
     /**
      * Speak text - MATCHES ValorantNarrator logic exactly:
-     * 1. Queue system (wait if already speaking)
-     * 2. Release→Press key to "refresh" state
-     * 3. Speak via InbuiltVoiceSynthesizer
-     * 4. Mark as finished
+     * 1. handleAudioLifecycle pattern
+     * 2. Press key before speaking
+     * 3. Speak via InbuiltVoiceSynthesizer (BLOCKING until done)
+     * 4. Release key when speech completes
      */
     public void speakVoice(String text, String voice, short rate) {
         if (text == null || text.isEmpty()) {
@@ -103,36 +89,67 @@ public class VoiceGenerator {
         logger.info(String.format("(%s)Narrating message: '%s' with voice %s",
             (isTextOverflowed) ? "-" : "+", text, voice));
 
-        // Wait for previous speech to finish (queue system)
-        while (!isSpeaking.compareAndSet(false, true)) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
+        // Run TTS in background thread to not block UI, but the TTS itself is blocking
+        CompletableFuture.runAsync(() -> handleAudioLifecycle(() -> synthesizer.speakInbuiltVoice(voice, text, rate)));
+    }
+
+    /**
+     * MATCHES ValorantNarrator's handleAudioLifecycle:
+     * 1. Press key (if enabled)
+     * 2. Run the TTS task (BLOCKING - waits for speech to complete)
+     * 3. Release key when done
+     *
+     * The InbuiltVoiceSynthesizer.speakInbuiltVoice() is now BLOCKING,
+     * so the key will be held for the entire duration of the speech.
+     */
+    private void handleAudioLifecycle(Runnable ttsTask) {
+        // Reset voice state
+        isVoiceActive.reset();
 
         try {
-            logger.debug("Using inbuilt voice: {}", voice);
-
-            // CRITICAL: ValorantNarrator's exact logic for inbuilt voices
-            // Release→Press to "refresh" the key state before speaking
-            if (isPushToTalkEnabled) {
-                robot.keyRelease(keyEvent);
-                robot.keyPress(keyEvent);
-                logger.debug("Refreshed keybind: {} (release→press)", KeyEvent.getKeyText(keyEvent));
+            if (isTeamKeyEnabled) {
+                pressKey();
+                // Delay to ensure key press is registered before audio starts
+                // 150ms is sufficient for Valorant to detect the key press
+                Thread.sleep(150);
             }
 
-            // Speak the text
-            synthesizer.speakInbuiltVoice(voice, text, rate);
-
+            if (ttsTask != null) {
+                // This is now BLOCKING - it waits until speech completes
+                ttsTask.run();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("TTS interrupted");
         } catch (Exception e) {
-            logger.error("Error during speech", e);
+            logger.error("TTS error: {}", e.getMessage());
         } finally {
-            // Mark speaking as finished
-            isSpeaking.set(false);
+            // Always release key and mark as finished
+            if (isTeamKeyEnabled) {
+                // Delay to ensure last audio is transmitted before key release
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                releaseKey();
+            }
+            try {
+                isVoiceActive.setFinished();
+            } catch (Exception e) {
+                // Already finished - ignore
+            }
         }
+    }
+
+    private void pressKey() {
+        logger.info("Pressing key: {}", KeyEvent.getKeyText(keyEvent));
+        robot.keyPress(keyEvent);
+    }
+
+    private void releaseKey() {
+        logger.info("Releasing key: {}", KeyEvent.getKeyText(keyEvent));
+        robot.keyRelease(keyEvent);
     }
 
     public void speak(String text) {
@@ -140,24 +157,8 @@ public class VoiceGenerator {
     }
 
     public synchronized void setKeybind(int keyCode) {
-        int oldKeyEvent = this.keyEvent;
-
-        // Release old key if PTT is enabled
-        if (isPushToTalkEnabled && oldKeyEvent != keyCode) {
-            robot.keyRelease(oldKeyEvent);
-            logger.debug("Released old keybind: {}", KeyEvent.getKeyText(oldKeyEvent));
-        }
-
         this.keyEvent = keyCode;
-
-        // Press new key if PTT is enabled
-        if (isPushToTalkEnabled) {
-            robot.keyPress(keyEvent);
-            logger.info("✓ Keybind changed to: {} (now held down)", KeyEvent.getKeyText(keyEvent));
-        } else {
-            logger.info("✓ Keybind changed to: {}", KeyEvent.getKeyText(keyEvent));
-        }
-
+        logger.info("✓ Keybind changed to: {}", KeyEvent.getKeyText(keyEvent));
         saveConfig();
     }
 
@@ -166,25 +167,14 @@ public class VoiceGenerator {
     }
 
     public void setPushToTalkEnabled(boolean enabled) {
-        boolean wasEnabled = this.isPushToTalkEnabled;
-        this.isPushToTalkEnabled = enabled;
-
-        // Handle key state change
-        if (enabled && !wasEnabled) {
-            // Enabling: Press and hold key
-            robot.keyPress(keyEvent);
-            logger.info("✓ Push-to-Talk enabled - keybind {} pressed", KeyEvent.getKeyText(keyEvent));
-        } else if (!enabled && wasEnabled) {
-            // Disabling: Release key
-            robot.keyRelease(keyEvent);
-            logger.info("✓ Push-to-Talk disabled - keybind {} released", KeyEvent.getKeyText(keyEvent));
-        }
-
+        this.isTeamKeyEnabled = enabled;
+        logger.info("✓ Push-to-Talk {} - keybind: {}",
+            enabled ? "enabled" : "disabled", KeyEvent.getKeyText(keyEvent));
         saveConfig();
     }
 
     public boolean isPushToTalkEnabled() {
-        return isPushToTalkEnabled;
+        return isTeamKeyEnabled;
     }
 
     public void setCurrentVoice(String voice) {
@@ -205,7 +195,7 @@ public class VoiceGenerator {
     }
 
     public boolean isBusy() {
-        return isSpeaking.get();
+        return isVoiceActive.isRunning();
     }
 
     private void loadConfig() {
@@ -218,8 +208,9 @@ public class VoiceGenerator {
                 if (config.has("keyEvent")) {
                     keyEvent = config.get("keyEvent").getAsInt();
                 }
-                if (config.has("pushToTalkEnabled")) {
-                    isPushToTalkEnabled = config.get("pushToTalkEnabled").getAsBoolean();
+                // ValorantNarrator uses "isTeamKeyDisabled" but stores the enabled state
+                if (config.has("isTeamKeyDisabled")) {
+                    isTeamKeyEnabled = config.get("isTeamKeyDisabled").getAsBoolean();
                 }
                 if (config.has("currentVoice")) {
                     currentVoice = config.get("currentVoice").getAsString();
@@ -229,7 +220,7 @@ public class VoiceGenerator {
                 }
 
                 logger.info("Loaded config: keybind={}, PTT={}, voice={}",
-                    KeyEvent.getKeyText(keyEvent), isPushToTalkEnabled, currentVoice);
+                    KeyEvent.getKeyText(keyEvent), isTeamKeyEnabled, currentVoice);
             } else {
                 logger.info("No config found, using defaults");
                 saveConfig();
@@ -245,7 +236,8 @@ public class VoiceGenerator {
 
             JsonObject config = new JsonObject();
             config.addProperty("keyEvent", keyEvent);
-            config.addProperty("pushToTalkEnabled", isPushToTalkEnabled);
+            // ValorantNarrator uses "isTeamKeyDisabled" naming
+            config.addProperty("isTeamKeyDisabled", isTeamKeyEnabled);
             config.addProperty("currentVoice", currentVoice);
             config.addProperty("currentVoiceRate", currentVoiceRate);
 
