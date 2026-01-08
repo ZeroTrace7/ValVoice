@@ -105,6 +105,10 @@ logs/
 # Exclude the bundled PowerShell folder (large, users can download separately if needed)
 PowerShell/
 
+# ==================== Executable Files ====================
+# Exclude .exe files - users should build from source or download from releases
+*.exe
+
 # ==================== KEEP THESE FILES ====================
 # These are tracked and should be uploaded to GitHub:
 #
@@ -115,6 +119,9 @@ PowerShell/
 # ✅ xmpp-bridge/index.js       - XMPP bridge source
 # ✅ xmpp-bridge/package.json   - Node dependencies
 # ✅ xmpp-bridge/README.md      - Bridge documentation
-# ✅ valvoice-xmpp.exe          - Pre-built XMPP bridge (for users)
-# ✅ SoundVolumeView.exe        - Audio routing tool (for users)
 # ✅ dino-game/                 - Easter egg (if you want to keep it)
+#
+# ❌ EXCLUDED (download separately or build from source):
+# ❌ valvoice-xmpp.exe          - Build with: cd xmpp-bridge && npm run build:exe
+# ❌ SoundVolumeView.exe        - Download from: https://www.nirsoft.net/utils/sound_volume_view.html
+# ❌ PowerShell/                - Bundled runtime (too large)

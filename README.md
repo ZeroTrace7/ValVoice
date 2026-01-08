@@ -140,7 +140,13 @@ java -jar target/valvoice-1.0.0.jar
 
 - Java JDK 23+
 - Maven 3.8+
-- Node.js 18+ (for XMPP bridge development)
+- Node.js 18+ (for XMPP bridge)
+
+### Required Tools Download
+
+| Tool | Download | Purpose |
+|------|----------|---------|
+| **SoundVolumeView** | [Download from NirSoft](https://www.nirsoft.net/utils/sound_volume_view.html) | Audio routing (place in project root) |
 
 ### Build Steps
 
@@ -149,17 +155,23 @@ java -jar target/valvoice-1.0.0.jar
 git clone https://github.com/yourusername/ValVoice.git
 cd ValVoice
 
+# Download SoundVolumeView.exe from NirSoft and place in project root
+
 # Build the Java application
 mvn clean package
 
 # The executable JAR will be at:
 # target/valvoice-1.0.0.jar
 
-# (Optional) Build XMPP bridge executable
+# Build XMPP bridge executable (REQUIRED)
 cd xmpp-bridge
 npm install
 npm run build:exe
 # Output: ../valvoice-xmpp.exe
+
+# Run the application
+cd ..
+java -jar target/valvoice-1.0.0.jar
 ```
 
 ### Project Structure
