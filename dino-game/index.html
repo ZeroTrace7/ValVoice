@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🦖 Cyber Dino Runner - Neon Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        .game-title {
+            font-size: 3rem;
+            color: #00ffff;
+            text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff, 0 0 40px #00ffff;
+            margin-bottom: 20px;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+
+        @keyframes glow {
+            from { text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff; }
+            to { text-shadow: 0 0 20px #ff00ff, 0 0 40px #ff00ff, 0 0 60px #ff00ff; }
+        }
+
+        .game-container {
+            position: relative;
+            border: 4px solid #00ffff;
+            border-radius: 15px;
+            box-shadow: 0 0 30px #00ffff, inset 0 0 30px rgba(0, 255, 255, 0.1);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        }
+
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            width: 800px;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .hud-item {
+            color: #fff;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .hud-item span {
+            color: #00ffff;
+            font-weight: bold;
+            font-size: 1.5rem;
+            text-shadow: 0 0 10px #00ffff;
+        }
+
+        .power-ups {
+            display: flex;
+            gap: 15px;
+        }
+
+        .power-up {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            opacity: 0.3;
+            transition: all 0.3s;
+        }
+
+        .power-up.active {
+            opacity: 1;
+            animation: pulse 0.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+        }
+
+        .shield { background: linear-gradient(135deg, #00ffff, #0080ff); }
+        .speed { background: linear-gradient(135deg, #ffff00, #ff8800); }
+        .magnet { background: linear-gradient(135deg, #ff00ff, #ff0080); }
+
+        .controls {
+            margin-top: 20px;
+            color: #888;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        .controls kbd {
+            background: #333;
+            padding: 5px 12px;
+            border-radius: 5px;
+            border: 1px solid #555;
+            color: #00ffff;
+            margin: 0 5px;
+        }
+
+        .game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .game-over-screen h2 {
+            font-size: 3rem;
+            color: #ff0055;
+            text-shadow: 0 0 20px #ff0055;
+            margin-bottom: 20px;
+        }
+
+        .game-over-screen .final-score {
+            font-size: 2rem;
+            color: #00ffff;
+            margin-bottom: 30px;
+        }
+
+        .restart-btn {
+            padding: 15px 40px;
+            font-size: 1.3rem;
+            background: linear-gradient(135deg, #00ffff, #0080ff);
+            border: none;
+            border-radius: 30px;
+            color: #000;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .restart-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 30px #00ffff;
+        }
+
+        .start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .start-screen h2 {
+            font-size: 2.5rem;
+            color: #00ffff;
+            margin-bottom: 30px;
+            text-shadow: 0 0 20px #00ffff;
+        }
+
+        .dino-art {
+            font-size: 5rem;
+            margin-bottom: 30px;
+            animation: bounce 1s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .start-btn {
+            padding: 20px 60px;
+            font-size: 1.5rem;
+            background: linear-gradient(135deg, #ff00ff, #00ffff);
+            border: none;
+            border-radius: 30px;
+            color: #fff;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+
+        .start-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 40px #ff00ff;
+        }
+
+        .combo-display {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 2rem;
+            color: #ffff00;
+            text-shadow: 0 0 20px #ffff00;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .combo-display.show {
+            opacity: 1;
+            animation: comboAnim 0.5s ease-out;
+        }
+
+        @keyframes comboAnim {
+            0% { transform: translateX(-50%) scale(0.5); }
+            50% { transform: translateX(-50%) scale(1.3); }
+            100% { transform: translateX(-50%) scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <h1 class="game-title">🦖 CYBER DINO RUNNER 🌟</h1>
+
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+        <div class="start-screen" id="startScreen">
+            <div class="dino-art">🦖</div>
+            <h2>CYBER DINO RUNNER</h2>
+            <p style="color: #888; margin-bottom: 30px;">Survive the neon wasteland!</p>
+            <button class="start-btn" onclick="startGame()">🎮 START GAME</button>
+        </div>
+
+        <div class="game-over-screen" id="gameOverScreen">
+            <h2>💀 GAME OVER 💀</h2>
+            <div class="final-score">Score: <span id="finalScore">0</span></div>
+            <div style="color: #888; margin-bottom: 20px;">High Score: <span id="highScoreDisplay">0</span></div>
+            <button class="restart-btn" onclick="restartGame()">🔄 PLAY AGAIN</button>
+        </div>
+
+        <div class="combo-display" id="comboDisplay">COMBO x1</div>
+    </div>
+
+    <div class="hud">
+        <div class="hud-item">🏆 Score: <span id="score">0</span></div>
+        <div class="hud-item">⚡ Speed: <span id="speed">1.0</span>x</div>
+        <div class="hud-item">💎 Coins: <span id="coins">0</span></div>
+        <div class="power-ups">
+            <div class="power-up shield" id="shieldIndicator" title="Shield">🛡️</div>
+            <div class="power-up speed" id="speedIndicator" title="Speed Boost">⚡</div>
+            <div class="power-up magnet" id="magnetIndicator" title="Coin Magnet">🧲</div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <kbd>SPACE</kbd> or <kbd>↑</kbd> Jump &nbsp;|&nbsp;
+        <kbd>↓</kbd> Duck &nbsp;|&nbsp;
+        <kbd>DOUBLE JUMP</kbd> in air!
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let gameRunning = false;
+        let score = 0;
+        let highScore = localStorage.getItem('cyberDinoHighScore') || 0;
+        let coins = 0;
+        let combo = 0;
+        let lastObstacleTime = 0;
+        let gameSpeed = 5;
+        let speedMultiplier = 1;
+        let frameCount = 0;
+
+        // Dino properties
+        const dino = {
+            x: 80,
+            y: 300,
+            width: 60,
+            height: 70,
+            velocityY: 0,
+            jumping: false,
+            ducking: false,
+            doubleJump: false,
+            jumpCount: 0,
+            color: '#00ffff',
+            trail: []
+        };
+
+        // Power-ups
+        const powerUps = {
+            shield: { active: false, duration: 0 },
+            speed: { active: false, duration: 0 },
+            magnet: { active: false, duration: 0 }
+        };
+
+        // Game objects
+        let obstacles = [];
+        let collectibles = [];
+        let particles = [];
+        let stars = [];
+
+        // Generate stars background
+        for (let i = 0; i < 100; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height * 0.7,
+                size: Math.random() * 2 + 1,
+                speed: Math.random() * 0.5 + 0.2,
+                twinkle: Math.random() * Math.PI
+            });
+        }
+
+        // Ground properties
+        const ground = {
+            y: 350,
+            tiles: []
+        };
+
+        // Initialize ground tiles
+        for (let i = 0; i < 20; i++) {
+            ground.tiles.push({ x: i * 50, pattern: Math.floor(Math.random() * 3) });
+        }
+
+        // Obstacle types
+        const obstacleTypes = [
+            { type: 'cactus', width: 30, height: 60, color: '#ff0055', emoji: '🌵' },
+            { type: 'rock', width: 50, height: 40, color: '#8855ff', emoji: '🪨' },
+            { type: 'bird', width: 50, height: 40, color: '#ff8800', emoji: '🦅', flying: true },
+            { type: 'laser', width: 20, height: 80, color: '#ff0000', emoji: '⚡', animated: true },
+            { type: 'robot', width: 45, height: 70, color: '#00ff88', emoji: '🤖' }
+        ];
+
+        // Collectible types
+        const collectibleTypes = [
+            { type: 'coin', emoji: '💎', points: 10, color: '#ffff00' },
+            { type: 'star', emoji: '⭐', points: 50, color: '#ffaa00' },
+            { type: 'shield', emoji: '🛡️', powerUp: 'shield', color: '#00ffff' },
+            { type: 'speed', emoji: '⚡', powerUp: 'speed', color: '#ffff00' },
+            { type: 'magnet', emoji: '🧲', powerUp: 'magnet', color: '#ff00ff' }
+        ];
+
+        // Physics
+        const gravity = 0.8;
+        const jumpForce = -16;
+        const doubleJumpForce = -14;
+
+        // Input handling
+        const keys = {};
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+
+            if ((e.code === 'Space' || e.code === 'ArrowUp') && gameRunning) {
+                e.preventDefault();
+                jump();
+            }
+
+            if (e.code === 'ArrowDown' && gameRunning) {
+                e.preventDefault();
+                dino.ducking = true;
+                if (!dino.jumping) {
+                    dino.height = 40;
+                    dino.y = 330;
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+
+            if (e.code === 'ArrowDown') {
+                dino.ducking = false;
+                if (!dino.jumping) {
+                    dino.height = 70;
+                    dino.y = 300;
+                }
+            }
+        });
+
+        // Touch controls for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameRunning) jump();
+        });
+
+        function jump() {
+            if (dino.jumpCount < 2) {
+                dino.velocityY = dino.jumpCount === 0 ? jumpForce : doubleJumpForce;
+                dino.jumping = true;
+                dino.jumpCount++;
+
+                // Jump particles
+                for (let i = 0; i < 10; i++) {
+                    particles.push({
+                        x: dino.x + dino.width / 2,
+                        y: dino.y + dino.height,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: Math.random() * 3 + 2,
+                        life: 30,
+                        color: dino.jumpCount === 2 ? '#ff00ff' : '#00ffff',
+                        size: Math.random() * 6 + 3
+                    });
+                }
+
+                playSound('jump');
+            }
+        }
+
+        function spawnObstacle() {
+            const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+            const obstacle = {
+                x: canvas.width + 50,
+                y: type.flying ? 250 + Math.random() * 50 : ground.y - type.height,
+                ...type,
+                passed: false
+            };
+            obstacles.push(obstacle);
+        }
+
+        function spawnCollectible() {
+            const type = collectibleTypes[Math.floor(Math.random() * collectibleTypes.length)];
+            const collectible = {
+                x: canvas.width + 50,
+                y: 200 + Math.random() * 100,
+                width: 30,
+                height: 30,
+                ...type,
+                collected: false,
+                floatOffset: Math.random() * Math.PI * 2
+            };
+            collectibles.push(collectible);
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                const angle = (Math.PI * 2 * i) / 20;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * (Math.random() * 5 + 3),
+                    vy: Math.sin(angle) * (Math.random() * 5 + 3),
+                    life: 40,
+                    color: color,
+                    size: Math.random() * 8 + 4
+                });
+            }
+        }
+
+        function update() {
+            if (!gameRunning) return;
+
+            frameCount++;
+
+            // Update game speed
+            speedMultiplier = 1 + score / 1000;
+            if (powerUps.speed.active) speedMultiplier *= 1.5;
+            gameSpeed = 5 * speedMultiplier;
+
+            // Update dino
+            dino.velocityY += gravity;
+            dino.y += dino.velocityY;
+
+            // Ground collision
+            const groundLevel = dino.ducking ? 330 : 300;
+            if (dino.y >= groundLevel) {
+                dino.y = groundLevel;
+                dino.velocityY = 0;
+                dino.jumping = false;
+                dino.jumpCount = 0;
+            }
+
+            // Update dino trail
+            dino.trail.unshift({ x: dino.x, y: dino.y + dino.height / 2 });
+            if (dino.trail.length > 10) dino.trail.pop();
+
+            // Update power-ups
+            Object.keys(powerUps).forEach(key => {
+                if (powerUps[key].active) {
+                    powerUps[key].duration--;
+                    if (powerUps[key].duration <= 0) {
+                        powerUps[key].active = false;
+                        document.getElementById(`${key}Indicator`).classList.remove('active');
+                    }
+                }
+            });
+
+            // Spawn obstacles
+            if (frameCount % Math.max(60, 120 - score / 50) === 0) {
+                spawnObstacle();
+            }
+
+            // Spawn collectibles
+            if (frameCount % 90 === 0) {
+                spawnCollectible();
+            }
+
+            // Update obstacles
+            obstacles.forEach((obstacle, index) => {
+                obstacle.x -= gameSpeed;
+
+                // Animate laser
+                if (obstacle.animated) {
+                    obstacle.height = 60 + Math.sin(frameCount * 0.2) * 20;
+                    obstacle.y = ground.y - obstacle.height;
+                }
+
+                // Check collision
+                if (!obstacle.passed && checkCollision(dino, obstacle)) {
+                    if (powerUps.shield.active) {
+                        // Shield absorbs hit
+                        powerUps.shield.active = false;
+                        powerUps.shield.duration = 0;
+                        document.getElementById('shieldIndicator').classList.remove('active');
+                        createExplosion(obstacle.x, obstacle.y, '#00ffff');
+                        obstacles.splice(index, 1);
+                        playSound('shield');
+                    } else {
+                        gameOver();
+                    }
+                }
+
+                // Score for passing obstacle
+                if (!obstacle.passed && obstacle.x + obstacle.width < dino.x) {
+                    obstacle.passed = true;
+                    score += 10;
+                    combo++;
+                    updateCombo();
+                }
+
+                // Remove off-screen obstacles
+                if (obstacle.x + obstacle.width < 0) {
+                    obstacles.splice(index, 1);
+                }
+            });
+
+            // Update collectibles
+            collectibles.forEach((collectible, index) => {
+                collectible.x -= gameSpeed;
+                collectible.floatOffset += 0.1;
+
+                // Magnet effect
+                if (powerUps.magnet.active) {
+                    const dx = dino.x - collectible.x;
+                    const dy = dino.y - collectible.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 200) {
+                        collectible.x += dx * 0.1;
+                        collectible.y += dy * 0.1;
+                    }
+                }
+
+                // Check collection
+                if (checkCollision(dino, collectible)) {
+                    if (collectible.powerUp) {
+                        powerUps[collectible.powerUp].active = true;
+                        powerUps[collectible.powerUp].duration = 300;
+                        document.getElementById(`${collectible.powerUp}Indicator`).classList.add('active');
+                        playSound('powerup');
+                    } else {
+                        score += collectible.points * (1 + combo * 0.1);
+                        coins++;
+                        playSound('coin');
+                    }
+                    createExplosion(collectible.x, collectible.y, collectible.color);
+                    collectibles.splice(index, 1);
+                }
+
+                // Remove off-screen collectibles
+                if (collectible.x + collectible.width < 0) {
+                    collectibles.splice(index, 1);
+                    combo = 0;
+                    updateCombo();
+                }
+            });
+
+            // Update particles
+            particles.forEach((particle, index) => {
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                particle.vy += 0.2;
+                particle.life--;
+                particle.size *= 0.95;
+
+                if (particle.life <= 0) {
+                    particles.splice(index, 1);
+                }
+            });
+
+            // Update ground tiles
+            ground.tiles.forEach(tile => {
+                tile.x -= gameSpeed;
+                if (tile.x < -50) {
+                    tile.x = canvas.width;
+                    tile.pattern = Math.floor(Math.random() * 3);
+                }
+            });
+
+            // Update stars
+            stars.forEach(star => {
+                star.x -= star.speed;
+                star.twinkle += 0.05;
+                if (star.x < 0) {
+                    star.x = canvas.width;
+                    star.y = Math.random() * canvas.height * 0.7;
+                }
+            });
+
+            // Update score display
+            document.getElementById('score').textContent = Math.floor(score);
+            document.getElementById('speed').textContent = speedMultiplier.toFixed(1);
+            document.getElementById('coins').textContent = coins;
+
+            // Increase score over time
+            score += 0.1 * speedMultiplier;
+        }
+
+        function checkCollision(a, b) {
+            const padding = 10;
+            return a.x + padding < b.x + b.width - padding &&
+                   a.x + a.width - padding > b.x + padding &&
+                   a.y + padding < b.y + b.height - padding &&
+                   a.y + a.height - padding > b.y + padding;
+        }
+
+        function updateCombo() {
+            const comboDisplay = document.getElementById('comboDisplay');
+            if (combo > 1) {
+                comboDisplay.textContent = `🔥 COMBO x${combo}!`;
+                comboDisplay.classList.add('show');
+            } else {
+                comboDisplay.classList.remove('show');
+            }
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = 'rgba(15, 15, 30, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw stars
+            stars.forEach(star => {
+                const brightness = 0.5 + Math.sin(star.twinkle) * 0.5;
+                ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw neon grid lines
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 50) {
+                ctx.beginPath();
+                ctx.moveTo(i, ground.y);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+
+            // Draw ground
+            ctx.fillStyle = '#1a1a3e';
+            ctx.fillRect(0, ground.y + 20, canvas.width, canvas.height - ground.y);
+
+            // Draw ground line with glow
+            ctx.shadowColor = '#00ffff';
+            ctx.shadowBlur = 20;
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, ground.y + 20);
+            ctx.lineTo(canvas.width, ground.y + 20);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Draw dino trail
+            dino.trail.forEach((pos, i) => {
+                const alpha = (10 - i) / 10 * 0.5;
+                ctx.fillStyle = powerUps.speed.active ?
+                    `rgba(255, 255, 0, ${alpha})` :
+                    `rgba(0, 255, 255, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 5 - i * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw dino
+            ctx.save();
+
+            // Shield effect
+            if (powerUps.shield.active) {
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 30;
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.5 + Math.sin(frameCount * 0.2) * 0.3})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(dino.x + dino.width / 2, dino.y + dino.height / 2, 50, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Dino body
+            const dinoColor = powerUps.speed.active ? '#ffff00' : '#00ffff';
+            ctx.shadowColor = dinoColor;
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = dinoColor;
+
+            // Draw dino shape
+            ctx.font = dino.ducking ? '35px Arial' : '50px Arial';
+            ctx.fillText('🦖', dino.x, dino.y + dino.height - 10);
+
+            ctx.restore();
+
+            // Draw obstacles
+            obstacles.forEach(obstacle => {
+                ctx.save();
+                ctx.shadowColor = obstacle.color;
+                ctx.shadowBlur = 15;
+                ctx.font = obstacle.type === 'bird' ? '35px Arial' : '45px Arial';
+                ctx.fillText(obstacle.emoji, obstacle.x, obstacle.y + obstacle.height - 5);
+                ctx.restore();
+            });
+
+            // Draw collectibles
+            collectibles.forEach(collectible => {
+                ctx.save();
+                const floatY = Math.sin(collectible.floatOffset) * 10;
+                ctx.shadowColor = collectible.color;
+                ctx.shadowBlur = 20;
+                ctx.font = '30px Arial';
+                ctx.fillText(collectible.emoji, collectible.x, collectible.y + floatY);
+                ctx.restore();
+            });
+
+            // Draw particles
+            particles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.globalAlpha = particle.life / 40;
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            });
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            document.getElementById('startScreen').style.display = 'none';
+            gameRunning = true;
+            playSound('start');
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            playSound('gameover');
+
+            // Update high score
+            if (score > highScore) {
+                highScore = Math.floor(score);
+                localStorage.setItem('cyberDinoHighScore', highScore);
+            }
+
+            document.getElementById('finalScore').textContent = Math.floor(score);
+            document.getElementById('highScoreDisplay').textContent = highScore;
+            document.getElementById('gameOverScreen').style.display = 'flex';
+
+            // Death explosion
+            createExplosion(dino.x + dino.width / 2, dino.y + dino.height / 2, '#ff0055');
+        }
+
+        function restartGame() {
+            // Reset game state
+            score = 0;
+            coins = 0;
+            combo = 0;
+            frameCount = 0;
+            speedMultiplier = 1;
+
+            // Reset dino
+            dino.y = 300;
+            dino.height = 70;
+            dino.velocityY = 0;
+            dino.jumping = false;
+            dino.ducking = false;
+            dino.jumpCount = 0;
+            dino.trail = [];
+
+            // Reset power-ups
+            Object.keys(powerUps).forEach(key => {
+                powerUps[key].active = false;
+                powerUps[key].duration = 0;
+                document.getElementById(`${key}Indicator`).classList.remove('active');
+            });
+
+            // Clear arrays
+            obstacles = [];
+            collectibles = [];
+            particles = [];
+
+            // Update displays
+            document.getElementById('score').textContent = '0';
+            document.getElementById('coins').textContent = '0';
+            document.getElementById('comboDisplay').classList.remove('show');
+
+            document.getElementById('gameOverScreen').style.display = 'none';
+            gameRunning = true;
+            playSound('start');
+        }
+
+        // Simple sound effects using Web Audio API
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            switch(type) {
+                case 'jump':
+                    oscillator.frequency.setValueAtTime(400, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                    break;
+                case 'coin':
+                    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.15);
+                    break;
+                case 'powerup':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(900, audioCtx.currentTime + 0.2);
+                    gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'shield':
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+                case 'gameover':
+                    oscillator.type = 'sawtooth';
+                    oscillator.frequency.setValueAtTime(400, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.5);
+                    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.5);
+                    break;
+                case 'start':
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.15);
+                    oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.3);
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.3);
+                    break;
+            }
+        }
+
+        // Start game loop
+        gameLoop();
+    </script>
+</body>
+</html>
+

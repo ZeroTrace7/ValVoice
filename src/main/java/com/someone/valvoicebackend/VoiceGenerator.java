@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.*;
 import java.awt.event.KeyEvent;
-import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -15,39 +14,31 @@ import java.util.concurrent.CompletableFuture;
 import com.google.gson.*;
 
 /**
- * VoiceGenerator - Coordinates TTS playback and Push-to-Talk automation
- *
- * MATCHES ValorantNarrator EXACTLY:
- * ✅ Key held down continuously from startup (when PTT enabled)
- * ✅ Release→Press to "refresh" key during speech
- * ✅ Uses ResponseProcess (isVoiceActive) to track voice state
- * ✅ Thread-safe coordination
+ * Coordinates TTS playback and Push-to-Talk automation.
+ * Handles key press/release timing for Valorant voice chat.
  */
 public class VoiceGenerator {
     private static final Logger logger = LoggerFactory.getLogger(VoiceGenerator.class);
     private static VoiceGenerator instance;
 
-    // Configuration
     private static final String CONFIG_DIR = Paths.get(System.getenv("APPDATA"), "ValVoice").toString();
     private static final String CONFIG_FILE = "voice-config.json";
-    private static final int DEFAULT_KEY_EVENT = KeyEvent.VK_V;
+    private static final int DEFAULT_KEY = KeyEvent.VK_V;
 
-    // State - MATCHES ValorantNarrator exactly
     private final Robot robot;
     private final InbuiltVoiceSynthesizer synthesizer;
-    private final ResponseProcess isVoiceActive = new ResponseProcess();
-    private int keyEvent = DEFAULT_KEY_EVENT;
-    private boolean isTeamKeyEnabled = true;
+    private int keyEvent = DEFAULT_KEY;
+    private boolean pttEnabled = true;
     private String currentVoice = "Microsoft Zira Desktop";
-    private short currentVoiceRate = 50; // 0-100 UI scale
+    private short currentVoiceRate = 50;
+    private volatile boolean isSpeaking = false;
 
     private VoiceGenerator(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
         this.synthesizer = synthesizer;
         this.robot = new Robot();
         loadConfig();
-
-        logger.info("✓ VoiceGenerator initialized - keybind={}, PTT={}",
-            KeyEvent.getKeyText(keyEvent), isTeamKeyEnabled ? "enabled" : "disabled");
+        logger.info("VoiceGenerator initialized - keybind={}, PTT={}",
+            KeyEvent.getKeyText(keyEvent), pttEnabled);
     }
 
     public static synchronized void initialize(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
@@ -58,7 +49,7 @@ public class VoiceGenerator {
 
     public static VoiceGenerator getInstance() {
         if (instance == null) {
-            throw new IllegalStateException("VoiceGenerator not initialized! Call initialize() first.");
+            throw new IllegalStateException("VoiceGenerator not initialized");
         }
         return instance;
     }
@@ -68,98 +59,46 @@ public class VoiceGenerator {
     }
 
     /**
-     * Speak text - MATCHES ValorantNarrator logic exactly:
-     * 1. handleAudioLifecycle pattern
-     * 2. Press key before speaking
-     * 3. Speak via InbuiltVoiceSynthesizer (BLOCKING until done)
-     * 4. Release key when speech completes
+     * Speak text with PTT automation.
      */
     public void speakVoice(String text, String voice, short rate) {
-        if (text == null || text.isEmpty()) {
-            logger.warn("Cannot speak empty text");
-            return;
-        }
+        if (text == null || text.isEmpty() || !synthesizer.isReady()) return;
 
-        if (!synthesizer.isReady()) {
-            logger.warn("⚠ InbuiltVoiceSynthesizer not ready - cannot speak");
-            return;
-        }
+        logger.debug("Narrating: '{}' (voice={})",
+            text.length() > 50 ? text.substring(0, 47) + "..." : text, voice);
 
-        boolean isTextOverflowed = Math.min(text.length(), 71) != text.length();
-        logger.info(String.format("(%s)Narrating message: '%s' with voice %s",
-            (isTextOverflowed) ? "-" : "+", text, voice));
-
-        // Run TTS in background thread to not block UI, but the TTS itself is blocking
-        CompletableFuture.runAsync(() -> handleAudioLifecycle(() -> synthesizer.speakInbuiltVoice(voice, text, rate)));
-    }
-
-    /**
-     * MATCHES ValorantNarrator's handleAudioLifecycle:
-     * 1. Press key (if enabled)
-     * 2. Run the TTS task (BLOCKING - waits for speech to complete)
-     * 3. Release key when done
-     *
-     * The InbuiltVoiceSynthesizer.speakInbuiltVoice() is now BLOCKING,
-     * so the key will be held for the entire duration of the speech.
-     */
-    private void handleAudioLifecycle(Runnable ttsTask) {
-        // Reset voice state
-        isVoiceActive.reset();
-
-        try {
-            if (isTeamKeyEnabled) {
-                pressKey();
-                // Delay to ensure key press is registered before audio starts
-                // 150ms is sufficient for Valorant to detect the key press
-                Thread.sleep(150);
-            }
-
-            if (ttsTask != null) {
-                // This is now BLOCKING - it waits until speech completes
-                ttsTask.run();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("TTS interrupted");
-        } catch (Exception e) {
-            logger.error("TTS error: {}", e.getMessage());
-        } finally {
-            // Always release key and mark as finished
-            if (isTeamKeyEnabled) {
-                // Delay to ensure last audio is transmitted before key release
-                try {
-                    Thread.sleep(200);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                releaseKey();
-            }
+        CompletableFuture.runAsync(() -> {
+            isSpeaking = true;
             try {
-                isVoiceActive.setFinished();
+                if (pttEnabled) {
+                    robot.keyPress(keyEvent);
+                    Thread.sleep(150); // Let Valorant detect key press
+                }
+
+                synthesizer.speakInbuiltVoice(voice, text, rate);
+
+                if (pttEnabled) {
+                    Thread.sleep(200); // Ensure audio transmits before release
+                    robot.keyRelease(keyEvent);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (Exception e) {
-                // Already finished - ignore
+                logger.error("TTS error: {}", e.getMessage());
+            } finally {
+                isSpeaking = false;
             }
-        }
-    }
-
-    private void pressKey() {
-        logger.info("Pressing key: {}", KeyEvent.getKeyText(keyEvent));
-        robot.keyPress(keyEvent);
-    }
-
-    private void releaseKey() {
-        logger.info("Releasing key: {}", KeyEvent.getKeyText(keyEvent));
-        robot.keyRelease(keyEvent);
+        });
     }
 
     public void speak(String text) {
         speakVoice(text, currentVoice, currentVoiceRate);
     }
 
-    public synchronized void setKeybind(int keyCode) {
+    public void setKeybind(int keyCode) {
         this.keyEvent = keyCode;
-        logger.info("✓ Keybind changed to: {}", KeyEvent.getKeyText(keyEvent));
         saveConfig();
+        logger.debug("Keybind set to: {}", KeyEvent.getKeyText(keyEvent));
     }
 
     public String getCurrentKeybind() {
@@ -167,14 +106,12 @@ public class VoiceGenerator {
     }
 
     public void setPushToTalkEnabled(boolean enabled) {
-        this.isTeamKeyEnabled = enabled;
-        logger.info("✓ Push-to-Talk {} - keybind: {}",
-            enabled ? "enabled" : "disabled", KeyEvent.getKeyText(keyEvent));
+        this.pttEnabled = enabled;
         saveConfig();
     }
 
     public boolean isPushToTalkEnabled() {
-        return isTeamKeyEnabled;
+        return pttEnabled;
     }
 
     public void setCurrentVoice(String voice) {
@@ -195,38 +132,22 @@ public class VoiceGenerator {
     }
 
     public boolean isBusy() {
-        return isVoiceActive.isRunning();
+        return isSpeaking;
     }
 
     private void loadConfig() {
         try {
             Path configPath = Paths.get(CONFIG_DIR, CONFIG_FILE);
             if (Files.exists(configPath)) {
-                String json = Files.readString(configPath);
-                JsonObject config = JsonParser.parseString(json).getAsJsonObject();
+                JsonObject config = JsonParser.parseString(Files.readString(configPath)).getAsJsonObject();
 
-                if (config.has("keyEvent")) {
-                    keyEvent = config.get("keyEvent").getAsInt();
-                }
-                // ValorantNarrator uses "isTeamKeyDisabled" but stores the enabled state
-                if (config.has("isTeamKeyDisabled")) {
-                    isTeamKeyEnabled = config.get("isTeamKeyDisabled").getAsBoolean();
-                }
-                if (config.has("currentVoice")) {
-                    currentVoice = config.get("currentVoice").getAsString();
-                }
-                if (config.has("currentVoiceRate")) {
-                    currentVoiceRate = config.get("currentVoiceRate").getAsShort();
-                }
-
-                logger.info("Loaded config: keybind={}, PTT={}, voice={}",
-                    KeyEvent.getKeyText(keyEvent), isTeamKeyEnabled, currentVoice);
-            } else {
-                logger.info("No config found, using defaults");
-                saveConfig();
+                if (config.has("keyEvent")) keyEvent = config.get("keyEvent").getAsInt();
+                if (config.has("isTeamKeyDisabled")) pttEnabled = config.get("isTeamKeyDisabled").getAsBoolean();
+                if (config.has("currentVoice")) currentVoice = config.get("currentVoice").getAsString();
+                if (config.has("currentVoiceRate")) currentVoiceRate = config.get("currentVoiceRate").getAsShort();
             }
         } catch (Exception e) {
-            logger.error("Failed to load config", e);
+            logger.debug("Could not load config: {}", e.getMessage());
         }
     }
 
@@ -236,16 +157,13 @@ public class VoiceGenerator {
 
             JsonObject config = new JsonObject();
             config.addProperty("keyEvent", keyEvent);
-            // ValorantNarrator uses "isTeamKeyDisabled" naming
-            config.addProperty("isTeamKeyDisabled", isTeamKeyEnabled);
+            config.addProperty("isTeamKeyDisabled", pttEnabled);
             config.addProperty("currentVoice", currentVoice);
             config.addProperty("currentVoiceRate", currentVoiceRate);
 
-            Path configPath = Paths.get(CONFIG_DIR, CONFIG_FILE);
-            Files.writeString(configPath, config.toString());
-            logger.debug("Config saved to {}", configPath);
+            Files.writeString(Paths.get(CONFIG_DIR, CONFIG_FILE), config.toString());
         } catch (Exception e) {
-            logger.error("Failed to save config", e);
+            logger.debug("Could not save config: {}", e.getMessage());
         }
     }
 }

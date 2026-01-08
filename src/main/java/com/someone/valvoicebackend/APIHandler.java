@@ -223,17 +223,4 @@ public class APIHandler {
     public boolean isReady() { return client != null; }
 
     public LockFileHandler getLockFileHandler() { return lockFileHandler; }
-
-    /**
-     * Legacy method for quota refresh - now a no-op since quota is handled locally.
-     * Kept for backward compatibility with VoiceTokenHandler.
-     * @throws IOException if network error occurs (not thrown in current implementation)
-     * @throws QuotaExhaustedException if quota is exhausted
-     * @throws OutdatedVersioningException if version mismatch detected
-     */
-    public void addRequestQuota() throws IOException, QuotaExhaustedException, OutdatedVersioningException {
-        // No-op: Quota management is now handled locally without external API calls
-        // The Chat.getInstance().currentQuota handles usage tracking internally
-        logger.debug("addRequestQuota called (no-op - local quota management)");
-    }
 }

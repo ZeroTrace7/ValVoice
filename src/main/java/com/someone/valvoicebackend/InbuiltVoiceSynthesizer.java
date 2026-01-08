@@ -9,9 +9,7 @@ import java.util.List;
 
 /**
  * Persistent PowerShell-based Windows voice synthesizer using System.Speech.
- * Matches ValorantNarrator implementation exactly - simplified and reliable.
- *
- * CRITICAL: Routes ONLY the PowerShell process to VB-CABLE, NOT the Java app!
+ * Routes TTS audio to VB-CABLE for Valorant voice chat integration.
  */
 public class InbuiltVoiceSynthesizer {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltVoiceSynthesizer.class);
@@ -19,8 +17,16 @@ public class InbuiltVoiceSynthesizer {
     private PrintWriter powershellWriter;
     private BufferedReader powershellReader;
     private final List<String> voices = new ArrayList<>();
+    private String soundVolumeViewPath;
 
     public InbuiltVoiceSynthesizer() {
+        initializePowerShell();
+        loadAvailableVoices();
+        findSoundVolumeView();
+        routeAudioToVbCable();
+    }
+
+    private void initializePowerShell() {
         try {
             powershellProcess = new ProcessBuilder("powershell.exe", "-NoExit", "-Command", "-").start();
             powershellWriter = new PrintWriter(new OutputStreamWriter(powershellProcess.getOutputStream()), true);
@@ -28,87 +34,71 @@ public class InbuiltVoiceSynthesizer {
         } catch (IOException e) {
             logger.error("Failed to start PowerShell process", e);
         }
+    }
+
+    private void loadAvailableVoices() {
+        if (powershellWriter == null) return;
 
         try {
-            String command = "Add-Type -AssemblyName System.Speech;$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1; echo 'END_OF_VOICES'";
+            String command = "Add-Type -AssemblyName System.Speech;" +
+                "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;" +
+                "$speak.GetInstalledVoices() | Select-Object -ExpandProperty VoiceInfo | " +
+                "Select-Object -Property Name | ConvertTo-Csv -NoTypeInformation | " +
+                "Select-Object -Skip 1; echo 'END_OF_VOICES'";
             powershellWriter.println(command);
 
             String line;
             while ((line = powershellReader.readLine()) != null) {
-                if (line.trim().equals("END_OF_VOICES")) {
-                    break;
-                }
+                if (line.trim().equals("END_OF_VOICES")) break;
                 if (!line.trim().isEmpty()) {
                     voices.add(line.replace("\"", "").trim());
                 }
             }
-        } catch (Exception e) {
-            logger.error("Failed to initialize voices", e);
-        }
 
-        if (voices.isEmpty()) {
-            logger.warn("No inbuilt voices found.");
-        } else {
-            logger.info(String.format("Found %d inbuilt voices.", voices.size()));
-            speakInbuiltVoice(voices.get(0), "Inbuilt voice synthesizer initialized.", (short) 100);
-        }
-
-        // Route PowerShell process to VB-CABLE using SoundVolumeView.exe
-        try {
-            String fileLocation = String.format("%s/ValorantNarrator/SoundVolumeView.exe", System.getenv("ProgramFiles").replace("\\", "/"));
-            File svvFile = new File(fileLocation);
-
-            // Try alternate location if not found
-            if (!svvFile.exists()) {
-                fileLocation = new File(System.getProperty("user.dir"), "SoundVolumeView.exe").getAbsolutePath();
-                svvFile = new File(fileLocation);
-            }
-
-            if (svvFile.exists()) {
-                long pid = powershellProcess.pid();
-                String command = fileLocation + " /SetAppDefault \"CABLE Input\" all " + pid;
-                Runtime.getRuntime().exec(command);
-                logger.info("✓ PowerShell process (PID {}) routed to VB-CABLE", pid);
+            if (voices.isEmpty()) {
+                logger.warn("No TTS voices found");
             } else {
-                logger.warn("⚠ SoundVolumeView.exe not found - TTS will use default audio device");
+                logger.info("Found {} TTS voices", voices.size());
             }
-        } catch (IOException e) {
-            logger.error(String.format("SoundVolumeView.exe generated an error: %s", (Object) e.getStackTrace()));
+        } catch (Exception e) {
+            logger.error("Failed to load voices", e);
         }
-
-        setupVbCableListenThrough();
     }
 
-    private void setupVbCableListenThrough() {
+    private void findSoundVolumeView() {
+        String[] paths = {
+            System.getProperty("user.dir") + "/SoundVolumeView.exe",
+            System.getenv("ProgramFiles") + "/ValorantNarrator/SoundVolumeView.exe",
+            System.getenv("ProgramFiles") + "/ValVoice/SoundVolumeView.exe"
+        };
+
+        for (String path : paths) {
+            if (path != null && new File(path).exists()) {
+                soundVolumeViewPath = path;
+                logger.debug("Found SoundVolumeView.exe at: {}", path);
+                return;
+            }
+        }
+        logger.warn("SoundVolumeView.exe not found - TTS will use default audio device");
+    }
+
+    private void routeAudioToVbCable() {
+        if (soundVolumeViewPath == null || powershellProcess == null) return;
+
         try {
-            String fileLocation = String.format("%s/ValorantNarrator/SoundVolumeView.exe", System.getenv("ProgramFiles").replace("\\", "/"));
-            File svvFile = new File(fileLocation);
+            long pid = powershellProcess.pid();
 
-            // Try alternate location if not found
-            if (!svvFile.exists()) {
-                fileLocation = new File(System.getProperty("user.dir"), "SoundVolumeView.exe").getAbsolutePath();
-                svvFile = new File(fileLocation);
-            }
+            // Route PowerShell to VB-CABLE Input
+            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetAppDefault \"CABLE Input\" all " + pid);
 
-            if (svvFile.exists()) {
-                // 1. Set CABLE Output to play through default device (so you can hear TTS)
-                String command = fileLocation + " /SetPlaybackThroughDevice \"CABLE Output\" \"Default Playback Device\"";
-                Runtime.getRuntime().exec(command);
+            // Configure VB-CABLE listen-through
+            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetPlaybackThroughDevice \"CABLE Output\" \"Default Playback Device\"");
+            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetListenToThisDevice \"CABLE Output\" 1");
+            Runtime.getRuntime().exec(soundVolumeViewPath + " /unmute \"CABLE Output\"");
 
-                // 2. Enable "Listen to this device" on CABLE Output
-                command = fileLocation + " /SetListenToThisDevice \"CABLE Output\" 1";
-                Runtime.getRuntime().exec(command);
-
-                // 3. Unmute CABLE Output (in case it was muted)
-                command = fileLocation + " /unmute \"CABLE Output\"";
-                Runtime.getRuntime().exec(command);
-
-                logger.info("✓ VB-CABLE listen-through configured successfully");
-            } else {
-                logger.warn("⚠ SoundVolumeView.exe not found - TTS listen-through not configured");
-            }
+            logger.info("✓ Audio routed to VB-CABLE (PID {})", pid);
         } catch (IOException e) {
-            logger.error("Failed to configure VB-CABLE listen-through: {}", e.getMessage());
+            logger.error("Failed to route audio: {}", e.getMessage());
         }
     }
 
@@ -121,30 +111,18 @@ public class InbuiltVoiceSynthesizer {
     }
 
     /**
-     * Speak text using Windows TTS. This method BLOCKS until speech is complete.
-     * Uses a sentinel marker to know when PowerShell has finished speaking.
+     * Speak text using Windows TTS. Blocks until speech completes.
      */
     public void speakInbuiltVoice(String voice, String text, short rate) {
-        speakInbuiltVoiceBlocking(voice, text, rate);
-    }
+        if (!isReady() || text == null || text.isEmpty()) return;
 
-    /**
-     * Speak text and BLOCK until speech completes.
-     * This is critical for proper Push-to-Talk key timing.
-     */
-    public void speakInbuiltVoiceBlocking(String voice, String text, short rate) {
-        rate = (short) (rate / 10.0 - 10);
+        // Convert rate from 0-100 UI scale to -10 to +10 SAPI scale
+        short sapiRate = (short) (rate / 10.0 - 10);
 
         try {
-            // Escape single quotes for PowerShell
             String escapedText = text.replace("'", "''");
-
-            // Generate unique sentinel to detect completion
             String sentinel = "TTS_DONE_" + System.currentTimeMillis();
 
-            // Create speech command with error handling that outputs sentinel when done
-            // The try-finally in PowerShell ensures sentinel is ALWAYS written
-            // $speak.Speak() is SYNCHRONOUS in PowerShell - it blocks until speech completes
             String command = String.format(
                 "try { " +
                 "Add-Type -AssemblyName System.Speech; " +
@@ -152,96 +130,59 @@ public class InbuiltVoiceSynthesizer {
                 "$speak.SelectVoice('%s'); " +
                 "$speak.Rate = %d; " +
                 "$speak.Speak('%s') " +
-                "} catch { Write-Error $_.Exception.Message } finally { Write-Output '%s' }",
-                voice, rate, escapedText, sentinel);
+                "} catch { } finally { Write-Output '%s' }",
+                voice, sapiRate, escapedText, sentinel);
 
             powershellWriter.println(command);
+            logger.debug("Speaking: '{}' (voice={}, rate={})",
+                text.length() > 50 ? text.substring(0, 47) + "..." : text, voice, sapiRate);
 
-            logger.info("🔊 Speaking: voice='{}', rate={}, text='{}'", voice, rate,
-                text.length() > 50 ? text.substring(0, 47) + "..." : text);
-
-            // Wait for the sentinel to appear in output (speech completed)
-            long startTime = System.currentTimeMillis();
-            long maxWaitMs = Math.max(30000, text.length() * 200); // At least 30s, or 200ms per char
-
-            StringBuilder lineBuffer = new StringBuilder();
-            while (System.currentTimeMillis() - startTime < maxWaitMs) {
-                // Check if data is available (non-blocking)
-                if (powershellReader.ready()) {
-                    int ch = powershellReader.read();
-                    if (ch == -1) break; // EOF
-                    if (ch == '\n' || ch == '\r') {
-                        String line = lineBuffer.toString();
-                        lineBuffer.setLength(0);
-                        if (line.contains(sentinel)) {
-                            long elapsed = System.currentTimeMillis() - startTime;
-                            logger.debug("✅ TTS completed in {}ms", elapsed);
-                            return;
-                        }
-                    } else {
-                        lineBuffer.append((char) ch);
-                    }
-                } else {
-                    // No data available, sleep briefly to avoid busy-waiting
-                    Thread.sleep(50);
-                }
-            }
-
-            // Timeout reached
-            logger.warn("⚠ TTS timeout after {}ms - continuing anyway", maxWaitMs);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("TTS interrupted");
+            // Wait for speech completion
+            waitForSentinel(sentinel, text.length());
         } catch (Exception e) {
-            logger.error("Failed to speak text", e);
+            logger.error("TTS failed: {}", e.getMessage());
         }
     }
 
-    /**
-     * Estimate speech duration based on text length and rate.
-     * Used as fallback if blocking read fails.
-     * @param text The text to speak
-     * @param rate The speech rate (-10 to 10 scale)
-     * @return Estimated duration in milliseconds
-     */
-    public long estimateSpeechDuration(String text, short rate) {
-        if (text == null || text.isEmpty()) return 0;
+    private void waitForSentinel(String sentinel, int textLength) {
+        long maxWaitMs = Math.max(30000, textLength * 200);
+        long startTime = System.currentTimeMillis();
+        StringBuilder buffer = new StringBuilder();
 
-        // Average speaking rate is ~150 words per minute at rate=0
-        // Rate -10 is slowest, +10 is fastest
-        // Base: ~100ms per character at rate 0
-        double baseMs = 100.0;
-
-        // Adjust for rate: each rate unit changes speed by ~10%
-        // rate < 0 = slower, rate > 0 = faster
-        double rateMultiplier = 1.0 - (rate * 0.1);
-        rateMultiplier = Math.max(0.3, Math.min(2.0, rateMultiplier)); // Clamp to reasonable range
-
-        long estimatedMs = (long) (text.length() * baseMs * rateMultiplier);
-
-        // Add buffer for speech synthesis startup
-        return estimatedMs + 500;
+        try {
+            while (System.currentTimeMillis() - startTime < maxWaitMs) {
+                if (powershellReader.ready()) {
+                    int ch = powershellReader.read();
+                    if (ch == -1) break;
+                    if (ch == '\n' || ch == '\r') {
+                        if (buffer.toString().contains(sentinel)) {
+                            logger.debug("TTS completed in {}ms", System.currentTimeMillis() - startTime);
+                            return;
+                        }
+                        buffer.setLength(0);
+                    } else {
+                        buffer.append((char) ch);
+                    }
+                } else {
+                    Thread.sleep(50);
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Error waiting for TTS: {}", e.getMessage());
+        }
     }
 
     public void shutdown() {
-        cleanup();
-    }
-
-    public void cleanup() {
         try {
             if (powershellWriter != null) {
                 powershellWriter.println("exit");
                 powershellWriter.close();
             }
-            if (powershellReader != null) {
-                powershellReader.close();
-            }
-            if (powershellProcess != null && powershellProcess.isAlive()) {
-                powershellProcess.destroy();
-            }
-            logger.debug("InbuiltVoiceSynthesizer cleaned up");
+            if (powershellReader != null) powershellReader.close();
+            if (powershellProcess != null && powershellProcess.isAlive()) powershellProcess.destroy();
+            logger.debug("TTS synthesizer shutdown complete");
         } catch (Exception e) {
-            logger.debug("Error during cleanup", e);
+            logger.debug("Error during shutdown", e);
         }
     }
 }

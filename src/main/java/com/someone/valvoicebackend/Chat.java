@@ -72,7 +72,6 @@ public class Chat {
     private final java.util.concurrent.ConcurrentHashMap<String,String> playerIds = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String,String> playerNames = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private volatile MessageQuota currentQuota = MessageQuota.createBasic(100); // Default 100 messages for basic users
 
     // New field for player accounts
     private final ConcurrentHashMap<String, PlayerAccount> playerAccounts = new ConcurrentHashMap<>();
@@ -392,70 +391,6 @@ public class Chat {
         allState = enabledChannels.contains(TYPE_ALL);
     }
 
-    public MessageQuota getCurrentQuota() {
-        return currentQuota;
-    }
-
-    public void setQuota(MessageQuota quota) {
-        if (quota != null) {
-            this.currentQuota = quota;
-            logger.info("Updated message quota: remaining={}, premium={}",
-                quota.remainingQuota(), quota.isPremium());
-        }
-    }
-
-    public void updateQuota(int newQuota, boolean premium, String expiryTime) {
-        long expiryTimeMillis = premium && expiryTime != null ?
-            parseExpiryTime(expiryTime) :
-            System.currentTimeMillis() + 3600000; // 1 hour default
-        MessageQuota quota = premium ?
-            MessageQuota.createPremium(expiryTimeMillis) :
-            MessageQuota.createBasic(newQuota);
-        setQuota(quota);
-    }
-
-    /**
-     * Parse expiry time string to milliseconds
-     */
-    private long parseExpiryTime(String expiryTime) {
-        try {
-            // Try to parse as timestamp
-            return Long.parseLong(expiryTime);
-        } catch (NumberFormatException e) {
-            // If not a number, return current time + 1 hour
-            return System.currentTimeMillis() + 3600000;
-        }
-    }
-
-    /**
-     * Checks if a message can be sent based on current quota and throws an exception if exhausted
-     * @throws QuotaExhaustedException if the quota is exhausted
-     */
-    public void checkQuota() throws QuotaExhaustedException {
-        if (currentQuota == null) {
-            return; // No quota set = unlimited
-        }
-
-        if (!currentQuota.hasMessagesRemaining()) {
-            long refreshTime = currentQuota.getRefreshTime();
-            throw new QuotaExhaustedException(refreshTime);
-        }
-    }
-
-    /**
-     * Processes a message and updates quota
-     * @param message The message to process
-     * @throws QuotaExhaustedException if the quota is exhausted
-     */
-    public void processMessage(Message message) throws QuotaExhaustedException {
-        checkQuota();
-        if (message != null) {
-            if (currentQuota != null) {
-                currentQuota.decrementQuota();
-            }
-            updateMessageStats(message);
-        }
-    }
 
     /**
      * Registers or updates a player account in the chat system

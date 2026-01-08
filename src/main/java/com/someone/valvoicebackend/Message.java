@@ -51,13 +51,7 @@ public class Message {
 
         // Extract ID: prefer jid attribute, fallback to from attribute
         // ValorantNarrator: id = jidMatcher.find() ? jidMatcher.group(1) : fromMatcher.find() ? fromMatcher.group(1) : "@";
-        if (jidMatcher.find()) {
-            id = jidMatcher.group(1);
-        } else if (fromMatcher.find()) {
-            id = fromMatcher.group(1);
-        } else {
-            id = "@"; // fallback
-        }
+        id = jidMatcher.find() ? jidMatcher.group(1) : (fromMatcher.find() ? fromMatcher.group(1) : "@");
 
         // Extract 'type' attribute value (e.g., chat, groupchat)
         String typeAttr = typeMatcher.find() ? typeMatcher.group(1) : null;
@@ -66,7 +60,7 @@ public class Message {
         fromMatcher = FROM_PATTERN.matcher(xml);
         String fromAttr = fromMatcher.find() ? fromMatcher.group(1) : null;
 
-        // Classify message type using from attribute
+        // Classify message type using from attribute - DOMAIN FIRST, TYPE SECOND (ValorantNarrator way)
         messageType = getMessageType(Objects.requireNonNull(fromAttr, "from attribute is required"), typeAttr);
 
         // Extract and unescape body content
@@ -78,6 +72,7 @@ public class Message {
         // Determine if this is our own message
         String selfId = ChatDataHandler.getInstance().getSelfID();
         ownMessage = selfId != null && selfId.equalsIgnoreCase(userId);
+
 
         // Log parsed message for debugging
         logger.info("📝 Parsed Message: type={} userId={} own={} from='{}' body='{}'",
@@ -99,7 +94,10 @@ public class Message {
 
     /**
      * Classify message type based on 'from' JID and 'type' attribute.
-     * MATCHES ValorantNarrator's getMessageType() exactly.
+     * EXACTLY MATCHES ValorantNarrator's getMessageType() logic.
+     *
+     * Key principle: CHECK SERVER DOMAIN FIRST (ares-parties, ares-pregame, ares-coregame)
+     * Only fall back to type attribute if domain doesn't match known MUC servers.
      *
      * @param fromTag The 'from' attribute value (e.g., "roomid@ares-coregame.ap.pvp.net/nickname")
      * @param type The 'type' attribute value (e.g., "chat", "groupchat")
@@ -119,38 +117,56 @@ public class Message {
 
         String idPart = splitTag[0];
         String serverPart = splitTag[1];
-        String serverType = serverPart.split("\\.")[0]; // e.g., "ares-coregame"
 
-        logger.debug("🔍 Classifying: serverType='{}', idPart='{}', type='{}'", serverType, idPart, type);
+        // Remove resource part (everything after /) before extracting server type
+        // Example: "ares-parties.jp1.pvp.net/user123" -> "ares-parties.jp1.pvp.net"
+        if (serverPart.contains("/")) {
+            serverPart = serverPart.substring(0, serverPart.indexOf("/"));
+        }
 
+        // Extract server type (first part before first dot)
+        // Example: "ares-parties.jp1.pvp.net" -> "ares-parties"
+        String serverType = serverPart.split("\\.")[0];
+
+        logger.debug("🔍 Classifying message:");
+        logger.debug("   - Full 'from': '{}'", fromTag);
+        logger.debug("   - ID part: '{}'", idPart);
+        logger.debug("   - Server part (after @): '{}'", serverPart);
+        logger.debug("   - Server type (before first .): '{}'", serverType);
+        logger.debug("   - 'type' attribute: '{}'", type);
+
+        // PRIORITY 1: Check server domain (MUC rooms)
         switch (serverType) {
             case "ares-parties":
-                logger.debug("✅ Classified as PARTY");
+                logger.debug("✅ Classified as PARTY (domain: ares-parties)");
                 return Chat.TYPE_PARTY;
 
             case "ares-pregame":
-                logger.debug("✅ Classified as TEAM (pregame)");
+                logger.debug("✅ Classified as TEAM (domain: ares-pregame)");
                 return Chat.TYPE_TEAM;
 
             case "ares-coregame":
                 // Distinguish ALL chat if room id ends with 'all'
                 if (idPart.endsWith("all")) {
-                    logger.debug("✅ Classified as ALL");
+                    logger.debug("✅ Classified as ALL (domain: ares-coregame, id ends with 'all')");
                     return Chat.TYPE_ALL;
                 }
-                logger.debug("✅ Classified as TEAM (coregame)");
+                logger.debug("✅ Classified as TEAM (domain: ares-coregame)");
                 return Chat.TYPE_TEAM;
 
             default:
-                // Direct messages (whispers) have type="chat"
+                // PRIORITY 2: Fall back to type attribute for direct messages
                 if ("chat".equalsIgnoreCase(type)) {
-                    logger.debug("✅ Classified as WHISPER");
+                    logger.debug("✅ Classified as WHISPER (type=chat, unknown domain '{}'))", serverType);
                     return Chat.TYPE_WHISPER;
                 }
-                logger.warn("⚠️ Unknown server type '{}' from '{}' (type='{}')", serverType, fromTag, type);
+                logger.warn("⚠️ Unknown classification: serverType='{}', from='{}', type='{}'",
+                           serverType, fromTag, type);
                 return null;
         }
     }
+
+
 
    /**
      * Sets the player account associated with this message

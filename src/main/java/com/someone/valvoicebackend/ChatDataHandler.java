@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -138,105 +137,121 @@ public class ChatDataHandler {
     }
 
     /**
-     * Process and handle a chat message
-     * MATCHES ValorantNarrator's ChatDataHandler.message() logic exactly.
+     * Process and handle a chat message.
      * @param message the message to process
      */
     public void message(Message message) {
         if (message == null) {
-            logger.warn("Received null message");
+            logger.debug("❌ Message is null, skipping");
             return;
         }
 
-        Chat properties = Chat.getInstance();
-
-        // Check if globally disabled
-        if (properties.isDisabled()) {
-            logger.info("Valorant Narrator disabled, ignoring message!");
-            return;
-        }
-
-        // Check if player is ignored
-        if (properties.isIgnoredPlayerID(message.getUserId())) {
-            logger.info("Ignoring message from {}!", properties.getPlayerIDTable().get(message.getUserId()));
-            return;
-        }
-
-        // WHISPER check
-        if ("WHISPER".equals(message.getMessageType()) && !properties.isPrivateState()) {
-            logger.info("Private messages disabled, ignoring message!");
-            return;
-        }
-
-        // Self messages check - if own message and selfState enabled, skip other filters
-        if (message.isOwnMessage() && properties.isSelfState()) {
-            // Self messages enabled, skipping filtering checks.
-            logger.info("✅ Own message with selfState=true, will narrate");
-        } else if ("PARTY".equals(message.getMessageType()) && !properties.isPartyState()) {
-            logger.info("Party messages disabled, ignoring message!");
-            return;
-        } else if ("TEAM".equals(message.getMessageType()) && !properties.isTeamState()) {
-            logger.info("Team messages disabled, ignoring message!");
-            return;
-        }
-
-        // ALL chat check
-        if ("ALL".equals(message.getMessageType())) {
-            if (!properties.isAllState()) {
-                logger.info("All messages disabled, ignoring message!");
-                return;
-            } else if (message.isOwnMessage() && !properties.isSelfState()) {
-                logger.info("(ALL)Self messages disabled, ignoring message!");
-                return;
-            }
-        }
-
-        // Clean the message content
-        final String finalBody = message.getContent().replace("/", "").replace("\\", "");
+        Chat chat = Chat.getInstance();
 
         // Log message details
-        logger.info("🎤 TTS message: type={}, userId={}, content='{}'",
-            message.getMessageType(),
-            message.getUserId(),
-            finalBody.length() > 50 ? finalBody.substring(0, 47) + "..." : finalBody);
+        String msgType = message.getMessageType();
+        boolean isOwn = message.isOwnMessage();
+        String content = message.getContent();
+        String userId = message.getUserId();
+        String fullId = message.getId();
 
-        // Narrate the message asynchronously
+        logger.info("┌─ Processing message ─────────────────");
+        logger.info("│ Type: {} | Own: {} | UserId: {} | Content: '{}'",
+                   msgType, isOwn, userId,
+                   content != null ? (content.length() > 30 ? content.substring(0, 27) + "..." : content) : "(null)");
+        logger.info("│ Full ID: {}", fullId);
+        logger.info("│ Chat States:");
+        logger.info("│   - Disabled: {}", chat.isDisabled());
+        logger.info("│   - Self State: {}", chat.isSelfState());
+        logger.info("│   - Private State (Whisper): {}", chat.isPrivateState());
+        logger.info("│   - Party State: {}", chat.isPartyState());
+        logger.info("│   - Team State: {}", chat.isTeamState());
+        logger.info("│   - All State: {}", chat.isAllState());
+        logger.info("│   - User Ignored: {}", chat.isIgnoredPlayerID(userId));
+        logger.info("│ Self ID: {}", selfId);
+
+        // Skip if disabled or player is ignored
+        if (chat.isDisabled()) {
+            logger.info("└─ ❌ FILTERED: Chat is disabled");
+            return;
+        }
+        if (chat.isIgnoredPlayerID(message.getUserId())) {
+            logger.info("└─ ❌ FILTERED: Player is ignored");
+            return;
+        }
+
+        // MATCHES ValorantNarrator FILTERING LOGIC EXACTLY
+        // Reference: ChatDataHandler.message() in ValorantNarrator
+
+        // Check whisper state first
+        if (Chat.TYPE_WHISPER.equals(msgType) && !chat.isPrivateState()) {
+            logger.info("└─ ❌ FILTERED: WHISPER but privateState=false");
+            return;
+        }
+
+        // CRITICAL FIX: If self messages are enabled AND this is own message,
+        // SKIP ALL OTHER FILTERING - narrate everything the user sends!
+        // This matches ValorantNarrator's logic exactly.
+        if (isOwn && chat.isSelfState()) {
+            logger.info("└─ ✅ PASSED (SELF MESSAGE): Own message with selfState=true - skipping other filters");
+        } else {
+            // Only check party/team/all state if NOT a self message (or if self is disabled)
+
+            if (Chat.TYPE_PARTY.equals(msgType) && !chat.isPartyState()) {
+                logger.info("└─ ❌ FILTERED: PARTY but partyState=false");
+                return;
+            }
+
+            if (Chat.TYPE_TEAM.equals(msgType) && !chat.isTeamState()) {
+                logger.info("└─ ❌ FILTERED: TEAM but teamState=false");
+                return;
+            }
+
+            if (Chat.TYPE_ALL.equals(msgType) && !chat.isAllState()) {
+                logger.info("└─ ❌ FILTERED: ALL but allState=false");
+                return;
+            }
+
+            logger.info("└─ ✅ PASSED ALL FILTERS - Proceeding to TTS");
+        }
+
+        // Clean and narrate - handle null content
+        String cleanContent = content != null ? content.replace("/", "").replace("\\", "") : "";
+        logger.debug("TTS: type={}, content='{}'", msgType,
+            cleanContent.length() > 40 ? cleanContent.substring(0, 37) + "..." : cleanContent);
+
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
-                // Expand shortforms and speak
-                String expandedText = ChatUtilityHandler.expandShortForms(finalBody);
                 com.someone.valvoicegui.ValVoiceController.narrateMessage(message);
-                logger.info("✅ TTS triggered for: '{}'",
-                    expandedText.length() > 50 ? expandedText.substring(0, 47) + "..." : expandedText);
             } catch (Exception e) {
-                logger.error("Failed to narrate message: {}", e.getMessage());
+                logger.error("Failed to narrate: {}", e.getMessage());
             }
         });
 
-        // Update message stats
-        properties.updateMessageStats(message);
+        // Update stats
+        chat.updateMessageStats(message);
+        updateUI(chat);
 
-        // Update UI stats
+        // Add new player to mapping
+        if (!chat.getPlayerIDTable().containsKey(message.getUserId())) {
+            String playerId = message.getUserId();
+            String playerName = ChatUtilityHandler.getPlayerName(playerId).trim();
+            chat.putPlayerId(playerName, playerId);
+            chat.putPlayerName(playerId, playerName);
+        }
+    }
+
+    private void updateUI(Chat chat) {
         try {
             javafx.application.Platform.runLater(() -> {
-                com.someone.valvoicegui.ValVoiceController controller =
-                    com.someone.valvoicegui.ValVoiceController.getLatestInstance();
+                var controller = com.someone.valvoicegui.ValVoiceController.getLatestInstance();
                 if (controller != null) {
-                    controller.setMessagesSentLabel(properties.getMessagesSent());
-                    controller.setCharactersNarratedLabel(properties.getCharactersSent());
+                    controller.setMessagesSentLabel(chat.getMessagesSent());
+                    controller.setCharactersNarratedLabel(chat.getCharactersSent());
                 }
             });
         } catch (Exception e) {
-            logger.debug("Could not update UI stats: {}", e.getMessage());
-        }
-
-        // Add player to mapping if new
-        if (!properties.getPlayerIDTable().containsKey(message.getUserId())) {
-            final String playerID = message.getUserId();
-            final String playerName = ChatUtilityHandler.getPlayerName(playerID).trim();
-            properties.putPlayerId(playerName, playerID);
-            properties.putPlayerName(playerID, playerName);
-            logger.debug("Added new player to mapping: {} -> {}", playerID, playerName);
+            // Ignore UI update failures
         }
     }
 

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * ValVoice XMPP Bridge - Real Riot XMPP Client
- * Based on valorant-xmpp-watcher implementation
- * Connects to Riot Games XMPP service for Valorant chat
- * FIXED: Now includes MUC room joining for team/party/all chat
+ * ValVoice XMPP Bridge - MITM Proxy Mode
+ * Intercepts XMPP traffic between Valorant and Riot's servers
+ * This allows capturing YOUR OWN messages for TTS (party/team/whisper)
+ *
+ * Architecture:
+ * Valorant Client <---> MITM Proxy (this script) <---> Riot XMPP Server
  */
 
 const tls = require('tls');
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -21,10 +24,16 @@ function emit(obj) {
   }
 }
 
+// MITM Proxy state
+let proxyServer = null; // TCP server that Valorant connects to
+let clientSocket = null; // Connection from Valorant client
+let serverSocket = null; // Connection to Riot's XMPP server
+let isShuttingDown = false;
+
+// Backwards compatibility: keep existing variables
 let xmppSocket = null;
 let reconnectTimer = null;
 let heartbeatTimer = null;
-let isShuttingDown = false;
 
 // Track joined MUC rooms to avoid duplicate joins
 const joinedRooms = new Set();
@@ -32,7 +41,7 @@ let currentPuuid = null; // Store puuid for room joining
 let currentRegion = null; // Store region for room JID construction
 let currentRoomJid = null; // Current active room for sending messages
 
-emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '2.4.0-bidirectional' });
+emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.0.0-mitm-proxy' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
 const DEFAULT_UA = 'ValVoice-XMPP/2.3 (Windows; Node.js)';
@@ -99,6 +108,49 @@ async function sendXmppMessage(to, body, msgType = 'groupchat') {
     await asyncSocketWrite(xmppSocket, msgStanza);
     emit({ type: 'outgoing', data: msgStanza, ts: Date.now() });
     emit({ type: 'info', message: `📤 Sent message to ${to.split('@')[0].substring(0, 8)}...`, ts: Date.now() });
+
+    // ✨ CAPTURE OWN MESSAGE FOR TTS ✨
+    // Determine message type from 'to' JID
+    let messageCategory = 'WHISPER';
+    let syntheticFrom = '';
+
+    // For MUC messages (party/team), the 'from' should be the room JID with your nickname
+    if (to.includes('@ares-parties') || to.includes('@ares-pregame') || to.includes('@ares-coregame')) {
+      // MUC message - use room JID with your PUUID as nickname
+      const nickname = currentPuuid ? currentPuuid.substring(0, 8) : 'self';
+      syntheticFrom = `${to}/${currentPuuid || nickname}`;
+
+      if (to.includes('@ares-parties')) {
+        messageCategory = 'PARTY';
+      } else if (to.includes('@ares-pregame')) {
+        messageCategory = 'TEAM';
+      } else if (to.includes('all@ares-coregame')) {
+        messageCategory = 'ALL';
+      } else {
+        messageCategory = 'TEAM';
+      }
+    } else {
+      // Whisper - use your user JID
+      syntheticFrom = currentPuuid ? `${currentPuuid}@${currentRegion || 'jp1'}.pvp.net` : to;
+      messageCategory = 'WHISPER';
+    }
+
+    // Create a synthetic message XML that looks like it came from you
+    const syntheticXml = `<message from='${syntheticFrom}' to='${to}' type='${msgType}'><body>${escapedBody}</body></message>`;
+
+    // Send to Java as if it was an incoming message (for TTS processing)
+    emit({
+      type: 'incoming',
+      time: Date.now(),
+      data: syntheticXml
+    });
+
+    emit({
+      type: 'info',
+      message: `🔊 [${messageCategory}] Your message queued for TTS: "${body.substring(0, 30)}${body.length > 30 ? '...' : ''}"`,
+      ts: Date.now()
+    });
+
     return true;
   } catch (err) {
     emit({ type: 'error', error: `Send failed: ${err.message}`, ts: Date.now() });
@@ -203,6 +255,281 @@ function httpsRequest(url, options = {}) {
     }
     req.end();
   });
+}
+
+// ============ MITM PROXY IMPLEMENTATION ============
+
+/**
+ * Start MITM proxy server
+ * Valorant will connect to this instead of directly to Riot's servers
+ * We forward traffic and intercept messages in both directions
+ */
+async function startMITMProxy() {
+  const PROXY_PORT = 5223; // Same port as Riot's XMPP server
+  const PROXY_HOST = '0.0.0.0'; // Listen on all interfaces
+
+  // Note: For this to work, you need to redirect Valorant's DNS or use hosts file:
+  // Add to C:\Windows\System32\drivers\etc\hosts:
+  // 127.0.0.1 jp1.chat.si.riotgames.com
+  // 127.0.0.1 ap1.chat.si.riotgames.com
+  // 127.0.0.1 na2.chat.si.riotgames.com
+  // etc. for all regions
+  
+  // We need TLS certificates to act as a proper MITM
+  // For simplicity, we'll use a transparent TCP proxy instead
+  // This means we need to use iptables/WinDivert for true MITM
+
+  proxyServer = net.createServer((client) => {
+    clientSocket = client;
+    emit({ type: 'info', message: '🔌 Valorant client connected to MITM proxy', ts: Date.now() });
+    
+    let buffer = Buffer.alloc(0);
+    let serverHost = null;
+    let hasConnectedToServer = false;
+
+    const onData = (data) => {
+      buffer = Buffer.concat([buffer, data]);
+
+      // Try to detect target server
+      if (!hasConnectedToServer) {
+        const bufferStr = buffer.toString('utf8', 0, Math.min(buffer.length, 1024));
+
+        // Look for SNI (Server Name Indication) in TLS handshake
+        // Or look for XMPP stream header
+        const streamMatch = bufferStr.match(/to=['"]([^'"]+)['"]/);
+        if (streamMatch) {
+          serverHost = streamMatch[1];
+          if (!serverHost.includes('.')) {
+            serverHost = serverHost + '.pvp.net';
+          }
+
+          // Extract region
+          const regionMatch = serverHost.match(/^([^.]+)\./);
+          if (regionMatch) {
+            currentRegion = regionMatch[1];
+          }
+
+          hasConnectedToServer = true;
+          client.removeListener('data', onData);
+          connectToRiotServer(client, serverHost, 5223, buffer);
+        } else if (buffer.length > 2000) {
+          // Fallback: assume ap1 region if can't detect
+          serverHost = (currentRegion || 'ap1') + '.chat.si.riotgames.com';
+          hasConnectedToServer = true;
+          client.removeListener('data', onData);
+          connectToRiotServer(client, serverHost, 5223, buffer);
+        }
+      }
+    };
+    
+    client.on('data', onData);
+
+    client.on('error', (err) => {
+      emit({ type: 'error', error: `Client socket error: ${err.message}`, ts: Date.now() });
+    });
+    
+    client.on('close', () => {
+      emit({ type: 'info', message: '👋 Valorant client disconnected', ts: Date.now() });
+      if (serverSocket) {
+        serverSocket.end();
+        serverSocket = null;
+      }
+    });
+  });
+  
+  proxyServer.listen(PROXY_PORT, PROXY_HOST, () => {
+    emit({ type: 'info', message: `🚀 MITM Proxy listening on ${PROXY_HOST}:${PROXY_PORT}`, ts: Date.now() });
+    emit({ type: 'info', message: '⚠️  Make sure to add Riot XMPP servers to your hosts file pointing to 127.0.0.1', ts: Date.now() });
+  });
+  
+  proxyServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      emit({ type: 'error', error: `Port ${PROXY_PORT} is already in use. Is Valorant running? Try closing it first.`, ts: Date.now() });
+    } else {
+      emit({ type: 'error', error: `Proxy server error: ${err.message}`, ts: Date.now() });
+    }
+  });
+}
+
+/**
+ * Connect to Riot's actual XMPP server and set up bidirectional forwarding
+ */
+function connectToRiotServer(client, serverHost, serverPort, initialData) {
+  emit({ type: 'info', message: `🔗 Connecting to Riot server: ${serverHost}:${serverPort}`, ts: Date.now() });
+  
+  // Connect to real Riot XMPP server
+  serverSocket = tls.connect({
+    host: serverHost,
+    port: serverPort,
+    rejectUnauthorized: false
+  }, () => {
+    emit({ type: 'info', message: `✅ Connected to Riot XMPP server`, ts: Date.now() });
+    
+    // Send buffered initial data to server
+    if (initialData.length > 0) {
+      serverSocket.write(initialData);
+    }
+  });
+  
+  // Forward client -> server (OUTGOING from Valorant)
+  client.on('data', (data) => {
+    if (serverSocket && !serverSocket.destroyed) {
+      serverSocket.write(data);
+      
+      // INTERCEPT OUTGOING MESSAGES (YOUR messages)
+      const dataStr = data.toString();
+      if (dataStr.includes('<message') && dataStr.includes('<body>')) {
+        handleOutgoingMessage(dataStr);
+      }
+    }
+  });
+  
+  // Forward server -> client (INCOMING to Valorant)
+  serverSocket.on('data', (data) => {
+    if (client && !client.destroyed) {
+      client.write(data);
+      
+      // Process incoming messages as before
+      const dataStr = data.toString();
+      emit({
+        type: 'incoming',
+        time: Date.now(),
+        data: dataStr
+      });
+      
+      // Parse incoming messages
+      if (dataStr.includes('<message') && dataStr.includes('<body>')) {
+        handleIncomingMessage(dataStr);
+      }
+      
+      // Detect self ID
+      if (dataStr.includes('<iq') && dataStr.includes('_xmpp_bind1')) {
+        const jidMatch = dataStr.match(/<jid>([^<]+)<\/jid>/);
+        if (jidMatch && jidMatch[1].includes('@')) {
+          const selfId = jidMatch[1].split('@')[0];
+          currentPuuid = selfId;
+          emit({ type: 'info', message: `Self ID detected: ${selfId}`, ts: Date.now() });
+        }
+      }
+      
+      // Auto-join rooms
+      if (dataStr.includes('<presence') && currentPuuid) {
+        const roomJid = extractRoomJid(dataStr);
+        if (roomJid) {
+          joinMUCRoom(roomJid, currentPuuid.substring(0, 8));
+        }
+      }
+    }
+  });
+  
+  serverSocket.on('error', (err) => {
+    emit({ type: 'error', error: `Server socket error: ${err.message}`, ts: Date.now() });
+    client.end();
+  });
+  
+  serverSocket.on('close', () => {
+    emit({ type: 'info', message: '🔌 Riot server connection closed', ts: Date.now() });
+    client.end();
+  });
+}
+
+/**
+ * Handle outgoing message from Valorant (YOUR message)
+ */
+function handleOutgoingMessage(xml) {
+  try {
+    const toMatch = xml.match(/to=['"]([^'"]+)['"]/);
+    const typeMatch = xml.match(/type=['"]([^'"]+)['"]/);
+    const bodyMatch = xml.match(/<body>([\s\S]*?)<\/body>/);
+    
+    if (!toMatch || !bodyMatch) return;
+    
+    const to = toMatch[1];
+    const msgType = typeMatch ? typeMatch[1] : 'unknown';
+    const body = bodyMatch[1];
+    
+    // Determine message category
+    let roomType = 'WHISPER';
+    if (to.includes('@ares-parties')) roomType = 'PARTY';
+    else if (to.includes('@ares-pregame')) roomType = 'PREGAME';
+    else if (to.includes('all@ares-coregame')) roomType = 'ALL';
+    else if (to.includes('@ares-coregame')) roomType = 'TEAM';
+    
+    emit({
+      type: 'info',
+      message: `📤 [${roomType}] YOU: ${body.substring(0, 50)}${body.length > 50 ? '...' : ''}`,
+      ts: Date.now()
+    });
+    
+    // Create synthetic incoming message for TTS
+    // Make it look like it came from you
+    const syntheticFrom = currentPuuid ? 
+      (msgType === 'groupchat' ? `${to}/${currentPuuid}` : `${currentPuuid}@${currentRegion || 'jp1'}.pvp.net`) :
+      to;
+    
+    const syntheticXml = `<message from='${syntheticFrom}' to='${to}' type='${msgType}'><body>${body}</body></message>`;
+    
+    // Send to Java for TTS processing
+    emit({
+      type: 'incoming',
+      time: Date.now(),
+      data: syntheticXml
+    });
+    
+    emit({
+      type: 'outgoing-captured',
+      roomType: roomType,
+      body: body,
+      ts: Date.now()
+    });
+    
+  } catch (err) {
+    emit({ type: 'error', error: `Failed to handle outgoing message: ${err.message}`, ts: Date.now() });
+  }
+}
+
+/**
+ * Handle incoming message to Valorant
+ */
+function handleIncomingMessage(xml) {
+  try {
+    const fromMatch = xml.match(/from=['"]([^'"]+)['"]/);
+    const typeMatch = xml.match(/type=['"]([^'"]+)['"]/);
+    const bodyMatch = xml.match(/<body>([\s\S]*?)<\/body>/);
+    
+    if (!fromMatch || !bodyMatch) return;
+    
+    const from = fromMatch[1];
+    const msgType = typeMatch ? typeMatch[1] : 'unknown';
+    const body = bodyMatch[1];
+    
+    // Determine message category
+    let roomType = 'WHISPER';
+    if (from.includes('@ares-parties')) roomType = 'PARTY';
+    else if (from.includes('@ares-pregame')) roomType = 'PREGAME';
+    else if (from.includes('all@ares-coregame')) roomType = 'ALL';
+    else if (from.includes('@ares-coregame')) roomType = 'TEAM';
+    
+    const fromShort = from.split('/')[1] || from.split('@')[0].substring(0, 8);
+    
+    emit({
+      type: 'info',
+      message: `💬 [${roomType}][${msgType}] ${fromShort}: ${body.substring(0, 50)}${body.length > 50 ? '...' : ''}`,
+      ts: Date.now()
+    });
+    
+    emit({
+      type: 'message-detected',
+      roomType: roomType,
+      messageType: msgType,
+      from: from,
+      isMuc: from.includes('@ares-'),
+      ts: Date.now()
+    });
+    
+  } catch (err) {
+    // Silent - non-critical
+  }
 }
 
 /**
@@ -447,7 +774,13 @@ async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
   try {
     // Use full puuid as nickname for uniqueness, or fallback
     const nick = nickname || (currentPuuid ? currentPuuid.substring(0, 8) : 'valvoice');
-    const presenceStanza = `<presence to="${roomJid}/${nick}"><x xmlns="http://jabber.org/protocol/muc"><history maxstanzas="0"/></x></presence>`;
+
+    // CRITICAL FIX: Request last 50 messages instead of 0 (enables message history)
+    const presenceStanza = `<presence to="${roomJid}/${nick}">` +
+      `<x xmlns="http://jabber.org/protocol/muc">` +
+      `<history maxstanzas="50" seconds="300"/>` + // Last 50 messages OR last 5 minutes
+      `</x>` +
+      `</presence>`;
 
     await asyncSocketWrite(xmppSocket, presenceStanza);
     joinedRooms.add(roomJid);
@@ -455,18 +788,25 @@ async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
     // Track current room for sending messages
     currentRoomJid = roomJid;
 
+    // Determine room type for better logging
+    const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
+                     roomJid.includes('@ares-pregame') ? 'PREGAME' :
+                     roomJid.includes('all@ares-coregame') ? 'ALL' :
+                     roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
+
     // Emit room-joined event so Java can track the current room
     emit({ type: 'room-joined', room: roomJid, ts: Date.now() });
-    emit({ type: 'info', message: `✅ Joined: ${roomJid.split('@')[0].substring(0, 8)}...`, ts: Date.now() });
+    emit({ type: 'info', message: `✅ Joined ${roomType}: ${roomJid.split('@')[0].substring(0, 12)}...`, ts: Date.now() });
     return true;
   } catch (err) {
     // Retry up to 3 times with exponential backoff
     if (retryCount < 3) {
       const delay = 1000 * Math.pow(2, retryCount);
+      emit({ type: 'debug', message: `Retry join (${retryCount + 1}/3) after ${delay}ms`, ts: Date.now() });
       await new Promise(r => setTimeout(r, delay));
       return joinMUCRoom(roomJid, nickname, retryCount + 1);
     }
-    emit({ type: 'error', error: `Failed to join room: ${err.message}`, ts: Date.now() });
+    emit({ type: 'error', error: `Failed to join room after retries: ${err.message}`, ts: Date.now() });
     return false;
   }
 }
@@ -554,6 +894,76 @@ async function extractGameStateFromPresence(dataStr) {
     }
   } catch (e) {
     // Silently ignore parse errors
+  }
+}
+
+/**
+ * Immediately join current party/game rooms after successful XMPP connection
+ */
+async function joinCurrentActiveRooms() {
+  if (!currentPuuid || !xmppSocket || xmppSocket.destroyed) return;
+
+  try {
+    const lockfilePath = path.join(
+      process.env.LOCALAPPDATA || process.env.APPDATA,
+      'Riot Games/Riot Client/Config/lockfile'
+    );
+
+    if (!fs.existsSync(lockfilePath)) return;
+
+    const lockfileData = fs.readFileSync(lockfilePath, 'utf8');
+    const [, , port, password, protocol] = lockfileData.split(':');
+    const basicAuth = Buffer.from(`riot:${password}`).toString('base64');
+    const baseUrl = `${protocol}://127.0.0.1:${port}`;
+
+    // Get presences to find active sessions
+    const presencesRes = await httpsRequest(`${baseUrl}/chat/v4/presences`, {
+      headers: { 'Authorization': `Basic ${basicAuth}` },
+      rejectUnauthorized: false,
+      timeout: 5000
+    });
+
+    if (presencesRes.statusCode !== 200 || !presencesRes.data?.presences) return;
+
+    const selfPresence = presencesRes.data.presences.find(p => p.puuid === currentPuuid);
+    if (!selfPresence?.private) return;
+
+    const privateJson = Buffer.from(selfPresence.private, 'base64').toString('utf-8');
+    const privateData = JSON.parse(privateJson);
+
+    const region = currentRegion || 'ap';
+    const loop = privateData.sessionLoopState || privateData.loopState || '';
+    const partyId = privateData.partyId || privateData.partyID;
+    const pregameId = privateData.pregameId || privateData.preGameId;
+    const coreGameId = privateData.matchId || privateData.coreGameId;
+
+    // Join appropriate rooms based on current state
+    if (loop === 'INGAME' && coreGameId) {
+      currentGameId = `game:${coreGameId}`;
+      emit({ type: 'info', message: `🎮 Already in game, joining rooms immediately`, ts: Date.now() });
+
+      const teamRoomJid = `${coreGameId}@ares-coregame.${region}.pvp.net`;
+      const allRoomJid = `${coreGameId}all@ares-coregame.${region}.pvp.net`;
+
+      await joinMUCRoom(teamRoomJid, currentPuuid.substring(0, 8));
+      await joinMUCRoom(allRoomJid, currentPuuid.substring(0, 8));
+    }
+    else if (loop === 'PREGAME' && pregameId) {
+      currentGameId = `pregame:${pregameId}`;
+      emit({ type: 'info', message: `⏳ Already in pregame, joining room immediately`, ts: Date.now() });
+
+      const pregameRoomJid = `${pregameId}@ares-pregame.${region}.pvp.net`;
+      await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
+    }
+    else if (partyId) {
+      currentGameId = `party:${partyId}`;
+      emit({ type: 'info', message: `🎉 Already in party, joining room immediately`, ts: Date.now() });
+
+      const partyRoomJid = `${partyId}@ares-parties.${region}.pvp.net`;
+      await joinMUCRoom(partyRoomJid, currentPuuid.substring(0, 8));
+    }
+  } catch (err) {
+    emit({ type: 'debug', message: `Could not auto-join active rooms: ${err.message}`, ts: Date.now() });
   }
 }
 
@@ -690,6 +1100,9 @@ async function connectXMPP() {
     await asyncSocketWrite(xmppSocket, '<iq type="get" id="recent_convos_2"><query xmlns="jabber:iq:riotgames:archive:list"/></iq>');
     await asyncSocketWrite(xmppSocket, '<presence/>');
 
+    // JOIN ACTIVE ROOMS IMMEDIATELY after connection
+    await joinCurrentActiveRooms();
+
     // Clear joined rooms on reconnect
     joinedRooms.clear();
 
@@ -746,26 +1159,47 @@ function setupMessageHandlers() {
     // Enhanced message detection for ALL messages (MUC, party, whispers)
     if (dataStr.includes('<message')) {
       const fromMatch = dataStr.match(/from=['"]([^'\"]+)['"]/);
+      const typeMatch = dataStr.match(/type=['"]([^'\"]+)['"]/);
       // FIXED: Improved regex to handle multi-line content and HTML entities
       const bodyMatch = dataStr.match(/<body>([\s\S]*?)<\/body>/);
 
-      const from = fromMatch ? fromMatch[1] : 'unknown';
-
-      // Determine message category
-      const isMucMessage = from.includes('@ares-parties') ||
-                          from.includes('@ares-pregame') ||
-                          from.includes('@ares-coregame');
-
-      if (bodyMatch) {
+      if (fromMatch && bodyMatch) {
+        const from = fromMatch[1];
+        const msgType = typeMatch ? typeMatch[1] : 'unknown';
         const body = bodyMatch[1];
+
+        // Determine message category
+        const isMucMessage = from.includes('@ares-parties') ||
+                            from.includes('@ares-pregame') ||
+                            from.includes('@ares-coregame');
+
+        // Extract room type for logging
+        let roomType = 'WHISPER';
+        if (from.includes('@ares-parties')) roomType = 'PARTY';
+        else if (from.includes('@ares-pregame')) roomType = 'PREGAME';
+        else if (from.includes('all@ares-coregame')) roomType = 'ALL';
+        else if (from.includes('@ares-coregame')) roomType = 'TEAM';
+
+        // Log with details
         if (body && body.trim().length > 0) {
           const bodyPreview = body.length > 50 ? body.substring(0, 47) + '...' : body;
-          if (isMucMessage) {
-            emit({ type: 'info', message: `💬 MUC: ${bodyPreview}`, ts: Date.now() });
-          } else {
-            const shortFrom = from.split('@')[0].substring(0, 8);
-            emit({ type: 'info', message: `💬 ${shortFrom}: ${bodyPreview}`, ts: Date.now() });
-          }
+          const fromShort = from.split('/')[1] || from.split('@')[0].substring(0, 8);
+
+          emit({
+            type: 'info',
+            message: `💬 [${roomType}][type=${msgType}] ${fromShort}: ${bodyPreview}`,
+            ts: Date.now()
+          });
+
+          // Additional structured event for debugging
+          emit({
+            type: 'message-detected',
+            roomType: roomType,
+            messageType: msgType,
+            from: from,
+            isMuc: isMucMessage,
+            ts: Date.now()
+          });
         }
       }
     }
@@ -1025,9 +1459,9 @@ async function startGameRoomMonitor(accessToken, authData) {
     }
   };
 
-  // Check immediately, then every 5 seconds
+  // Check immediately, then every 2 seconds (faster detection)
   checkGameState();
-  gameRoomMonitorTimer = setInterval(checkGameState, 5000);
+  gameRoomMonitorTimer = setInterval(checkGameState, 2000);
 }
 
 /**
@@ -1052,11 +1486,22 @@ function shutdown(reason) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (gameRoomMonitorTimer) clearInterval(gameRoomMonitorTimer);
 
+  // Close MITM proxy connections
+  if (clientSocket && !clientSocket.destroyed) {
+    clientSocket.destroy();
+  }
+  if (serverSocket && !serverSocket.destroyed) {
+    serverSocket.destroy();
+  }
+  if (proxyServer) {
+    proxyServer.close();
+  }
+
+  // Close direct connection
   if (xmppSocket && !xmppSocket.destroyed) {
     xmppSocket.destroy();
   }
@@ -1079,4 +1524,22 @@ process.on('unhandledRejection', (reason, promise) => {
   emit({ type: 'error', error: `Unhandled rejection: ${reason}`, ts: Date.now() });
 });
 
-connectXMPP();
+// ============ ENTRY POINT ============
+// Check environment variable or command line arg for mode selection
+const USE_MITM_PROXY = process.env.VALVOICE_MITM === 'true' || process.argv.includes('--mitm');
+
+if (USE_MITM_PROXY) {
+  emit({ type: 'info', message: '🔧 Starting in MITM Proxy mode', ts: Date.now() });
+  emit({ type: 'info', message: '⚠️  IMPORTANT: Add these lines to C:\\Windows\\System32\\drivers\\etc\\hosts:', ts: Date.now() });
+  emit({ type: 'info', message: '127.0.0.1 jp1.chat.si.riotgames.com', ts: Date.now() });
+  emit({ type: 'info', message: '127.0.0.1 ap1.chat.si.riotgames.com', ts: Date.now() });
+  emit({ type: 'info', message: '127.0.0.1 na2.chat.si.riotgames.com', ts: Date.now() });
+  emit({ type: 'info', message: '127.0.0.1 eu.chat.si.riotgames.com', ts: Date.now() });
+  emit({ type: 'info', message: '127.0.0.1 kr.chat.si.riotgames.com', ts: Date.now() });
+  emit({ type: 'info', message: '(Add all regions you play in)', ts: Date.now() });
+  startMITMProxy();
+} else {
+  emit({ type: 'info', message: '🔧 Starting in Direct Connection mode (no outgoing message capture)', ts: Date.now() });
+  connectXMPP();
+}
+
