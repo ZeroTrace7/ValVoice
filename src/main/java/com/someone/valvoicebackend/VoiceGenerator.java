@@ -60,6 +60,8 @@ public class VoiceGenerator {
 
     /**
      * Speak text with PTT automation.
+     * PTT key is pressed before TTS starts and released after TTS completes.
+     * Since speakInbuiltVoice() is blocking, PTT is held exactly during audio playback.
      */
     public void speakVoice(String text, String voice, short rate) {
         if (text == null || text.isEmpty() || !synthesizer.isReady()) return;
@@ -72,20 +74,19 @@ public class VoiceGenerator {
             try {
                 if (pttEnabled) {
                     robot.keyPress(keyEvent);
-                    Thread.sleep(150); // Let Valorant detect key press
+                    logger.debug("PTT key pressed: {}", KeyEvent.getKeyText(keyEvent));
                 }
 
+                // This call blocks until speech completes - PTT stays held during playback
                 synthesizer.speakInbuiltVoice(voice, text, rate);
 
-                if (pttEnabled) {
-                    Thread.sleep(200); // Ensure audio transmits before release
-                    robot.keyRelease(keyEvent);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
             } catch (Exception e) {
                 logger.error("TTS error: {}", e.getMessage());
             } finally {
+                if (pttEnabled) {
+                    robot.keyRelease(keyEvent);
+                    logger.debug("PTT key released: {}", KeyEvent.getKeyText(keyEvent));
+                }
                 isSpeaking = false;
             }
         });
