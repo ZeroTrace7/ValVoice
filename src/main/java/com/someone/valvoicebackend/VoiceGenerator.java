@@ -1,5 +1,11 @@
 package com.someone.valvoicebackend;
 
+// DESIGN NOTE:
+// ValVoice intentionally uses a single global Push-To-Talk key.
+// Party vs Team voice routing is delegated to the Valorant client
+// based on current context (lobby vs in-game), matching
+// valorantnarrator's proven working behavior.
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
