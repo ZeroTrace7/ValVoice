@@ -38,6 +38,7 @@ public class VoiceGenerator {
     private String currentVoice = "Microsoft Zira Desktop";
     private short currentVoiceRate = 50;
     private volatile boolean isSpeaking = false;
+    private int prerollDelayMs = 200;
 
     private VoiceGenerator(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
         this.synthesizer = synthesizer;
@@ -80,18 +81,25 @@ public class VoiceGenerator {
             try {
                 if (pttEnabled) {
                     robot.keyPress(keyEvent);
-                    logger.debug("PTT key pressed: {}", KeyEvent.getKeyText(keyEvent));
+                    logger.debug("PTT pressed");
+
+                    // Pre-roll delay: wait for Valorant to activate voice transmission
+                    logger.debug("Preroll sleep {} ms", prerollDelayMs);
+                    Thread.sleep(prerollDelayMs);
+                    logger.debug("Preroll sleep completed");
                 }
 
+                logger.debug("Starting audio playback");
                 // This call blocks until speech completes - PTT stays held during playback
                 synthesizer.speakInbuiltVoice(voice, text, rate);
+                logger.debug("Audio playback finished");
 
             } catch (Exception e) {
                 logger.error("TTS error: {}", e.getMessage());
             } finally {
                 if (pttEnabled) {
                     robot.keyRelease(keyEvent);
-                    logger.debug("PTT key released: {}", KeyEvent.getKeyText(keyEvent));
+                    logger.debug("PTT released");
                 }
                 isSpeaking = false;
             }
