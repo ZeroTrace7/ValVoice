@@ -41,7 +41,7 @@ let currentPuuid = null; // Store puuid for room joining
 let currentRegion = null; // Store region for room JID construction
 let currentRoomJid = null; // Current active room for sending messages
 
-emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.0.0-mitm-proxy' });
+emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.1.0-muc-fix' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
 const DEFAULT_UA = 'ValVoice-XMPP/2.3 (Windows; Node.js)';
@@ -764,10 +764,12 @@ function asyncSocketRead(socket) {
  */
 async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
   if (!xmppSocket || xmppSocket.destroyed) {
+    emit({ type: 'warn', message: `Cannot join room ${roomJid}: socket not available`, ts: Date.now() });
     return false;
   }
 
   if (joinedRooms.has(roomJid)) {
+    emit({ type: 'debug', message: `Already in room ${roomJid}, skipping join`, ts: Date.now() });
     return true;
   }
 
@@ -775,12 +777,21 @@ async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
     // Use full puuid as nickname for uniqueness, or fallback
     const nick = nickname || (currentPuuid ? currentPuuid.substring(0, 8) : 'valvoice');
 
-    // CRITICAL FIX: Request last 50 messages instead of 0 (enables message history)
+    // MUC presence stanza with history request
     const presenceStanza = `<presence to="${roomJid}/${nick}">` +
       `<x xmlns="http://jabber.org/protocol/muc">` +
-      `<history maxstanzas="50" seconds="300"/>` + // Last 50 messages OR last 5 minutes
+      `<history maxstanzas="50" seconds="300"/>` +
       `</x>` +
       `</presence>`;
+
+    // Determine room type for logging
+    const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
+                     roomJid.includes('@ares-pregame') ? 'PREGAME' :
+                     roomJid.includes('all@ares-coregame') ? 'ALL' :
+                     roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
+
+    emit({ type: 'info', message: `🚪 Joining MUC room [${roomType}]: ${roomJid}`, ts: Date.now() });
+    emit({ type: 'debug', message: `MUC presence stanza: ${presenceStanza}`, ts: Date.now() });
 
     await asyncSocketWrite(xmppSocket, presenceStanza);
     joinedRooms.add(roomJid);
@@ -788,15 +799,9 @@ async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
     // Track current room for sending messages
     currentRoomJid = roomJid;
 
-    // Determine room type for better logging
-    const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
-                     roomJid.includes('@ares-pregame') ? 'PREGAME' :
-                     roomJid.includes('all@ares-coregame') ? 'ALL' :
-                     roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
-
     // Emit room-joined event so Java can track the current room
     emit({ type: 'room-joined', room: roomJid, ts: Date.now() });
-    emit({ type: 'info', message: `✅ Joined ${roomType}: ${roomJid.split('@')[0].substring(0, 12)}...`, ts: Date.now() });
+    emit({ type: 'info', message: `✅ Joined ${roomType}: ${roomJid} (now tracking ${joinedRooms.size} rooms)`, ts: Date.now() });
     return true;
   } catch (err) {
     // Retry up to 3 times with exponential backoff
@@ -1100,16 +1105,18 @@ async function connectXMPP() {
     await asyncSocketWrite(xmppSocket, '<iq type="get" id="recent_convos_2"><query xmlns="jabber:iq:riotgames:archive:list"/></iq>');
     await asyncSocketWrite(xmppSocket, '<presence/>');
 
-    // JOIN ACTIVE ROOMS IMMEDIATELY after connection
-    await joinCurrentActiveRooms();
-
-    // Clear joined rooms on reconnect
+    // Clear joined rooms tracking BEFORE joining new rooms (on reconnect)
     joinedRooms.clear();
 
+    // CRITICAL FIX: Setup message handlers FIRST so we can receive room join responses
+    // and any groupchat messages that arrive immediately after joining
     setupMessageHandlers();
     startKeepalive();
 
-    // Start game room monitor
+    // NOW join active rooms - the data handler is ready to receive messages
+    await joinCurrentActiveRooms();
+
+    // Start game room monitor to detect game state changes
     startGameRoomMonitor(accessToken, authData);
 
   } catch (error) {
@@ -1125,12 +1132,22 @@ async function connectXMPP() {
 /**
  * Setup handlers for incoming XMPP messages
  */
+let messageHandlersSetup = false;
 function setupMessageHandlers() {
   if (!xmppSocket) return;
+
+  // Prevent duplicate handler registration
+  if (messageHandlersSetup) {
+    emit({ type: 'debug', message: 'Message handlers already setup, skipping', ts: Date.now() });
+    return;
+  }
+  messageHandlersSetup = true;
+  emit({ type: 'debug', message: 'Setting up XMPP message handlers', ts: Date.now() });
 
   xmppSocket.setTimeout(300000); // 5 min idle timeout
   xmppSocket.on('timeout', () => {
     emit({ type: 'info', message: 'XMPP idle timeout; closing and reconnecting', ts: Date.now() });
+    messageHandlersSetup = false; // Reset on timeout
     try { xmppSocket.destroy(); } catch (_) {}
   });
 
@@ -1143,11 +1160,22 @@ function setupMessageHandlers() {
       data: dataStr
     });
 
-    // Auto-join MUC rooms when we see presence from them
+    // Log MUC-related presence stanzas for debugging room joins
     if (dataStr.includes('<presence')) {
       const roomJid = extractRoomJid(dataStr);
-      if (roomJid && currentPuuid) {
-        joinMUCRoom(roomJid, currentPuuid.substring(0, 8));
+
+      // Check if this is a MUC room presence (join confirmation or occupant update)
+      if (roomJid) {
+        // Check for MUC namespace which confirms it's a room presence
+        if (dataStr.includes('http://jabber.org/protocol/muc')) {
+          emit({ type: 'info', message: `📥 MUC presence from: ${roomJid}`, ts: Date.now() });
+        }
+
+        // Auto-join if we see presence from a room we're not in
+        if (currentPuuid && !joinedRooms.has(roomJid)) {
+          emit({ type: 'debug', message: `Auto-joining room from presence: ${roomJid}`, ts: Date.now() });
+          joinMUCRoom(roomJid, currentPuuid.substring(0, 8));
+        }
       }
 
       // Check if this presence contains game state info (for auto-room-join)
@@ -1179,6 +1207,15 @@ function setupMessageHandlers() {
         else if (from.includes('@ares-pregame')) roomType = 'PREGAME';
         else if (from.includes('all@ares-coregame')) roomType = 'ALL';
         else if (from.includes('@ares-coregame')) roomType = 'TEAM';
+
+        // CRITICAL: Log groupchat messages prominently
+        if (msgType === 'groupchat') {
+          emit({
+            type: 'info',
+            message: `🎉 GROUPCHAT RECEIVED [${roomType}] from=${from}`,
+            ts: Date.now()
+          });
+        }
 
         // Log with details
         if (body && body.trim().length > 0) {
@@ -1219,6 +1256,9 @@ function setupMessageHandlers() {
 
     // Clear joined rooms on disconnect
     joinedRooms.clear();
+
+    // Reset handler flag so handlers can be re-registered on reconnect
+    messageHandlersSetup = false;
 
     if (!isShuttingDown) {
       reconnectTimer = setTimeout(() => connectXMPP(), 5000);

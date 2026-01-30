@@ -88,16 +88,23 @@ public class InbuiltVoiceSynthesizer {
         try {
             long pid = powershellProcess.pid();
 
-            // Route PowerShell to VB-CABLE Input
-            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetAppDefault \"CABLE Input\" all " + pid);
+            // Route PowerShell PID to VB-CABLE Input (valorantnarrator-compatible syntax)
+            ProcessBuilder pb = new ProcessBuilder(
+                soundVolumeViewPath,
+                "/SetAppDefault",
+                "PID=" + pid,
+                "1",
+                "CABLE Input"
+            );
+            pb.start().waitFor();
+            logger.info("✓ PowerShell PID {} routed to VB-CABLE Input", pid);
 
             // Configure VB-CABLE listen-through
-            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetPlaybackThroughDevice \"CABLE Output\" \"Default Playback Device\"");
-            Runtime.getRuntime().exec(soundVolumeViewPath + " /SetListenToThisDevice \"CABLE Output\" 1");
-            Runtime.getRuntime().exec(soundVolumeViewPath + " /unmute \"CABLE Output\"");
+            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/SetPlaybackThroughDevice", "CABLE Output", "Default Playback Device"});
+            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/SetListenToThisDevice", "CABLE Output", "1"});
+            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/unmute", "CABLE Output"});
 
-            logger.info("✓ Audio routed to VB-CABLE (PID {})", pid);
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.error("Failed to route audio: {}", e.getMessage());
         }
     }

@@ -27,6 +27,10 @@ public class Message {
     private static final Pattern JID_PATTERN = Pattern.compile("jid=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
     private static final Pattern FROM_PATTERN = Pattern.compile("from=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
 
+    // Carbon copy detection patterns (for extracting inner message 'to' attribute)
+    private static final Pattern INNER_MESSAGE_PATTERN = Pattern.compile("<forwarded[^>]*>\\s*<message([^>]*)>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern TO_PATTERN = Pattern.compile("to=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
+
     private final String content;     // The (unescaped) message content
     private final String id;          // Full JID (user@server/resource) or fallback '@'
     private final String userId;      // Portion before '@' of the JID
@@ -38,6 +42,12 @@ public class Message {
     /**
      * Parse XMPP message stanza into Message object.
      * MATCHES ValorantNarrator's Message constructor exactly.
+     *
+     * CARBON COPY HANDLING:
+     * When you send a message, Valorant echoes it back as a carbon copy with:
+     *   - Outer message: from = your JID
+     *   - Inner message (inside <forwarded>): to = actual destination (party/team room)
+     * For carbon copies, we use the inner 'to' attribute for classification.
      */
     public Message(String xml) {
         if (xml == null) {
@@ -59,6 +69,28 @@ public class Message {
         // Re-match from for message classification (ValorantNarrator resets and re-matches)
         fromMatcher = FROM_PATTERN.matcher(xml);
         String fromAttr = fromMatcher.find() ? fromMatcher.group(1) : null;
+
+        // Carbon copy handling: Valorant sends carbon copies for messages YOU send.
+        // The outer 'from' is your JID, but the inner <message to="..."> has the actual destination.
+        // If that destination is a MUC room (ares-parties, ares-pregame, ares-coregame),
+        // we override 'from' with 'to' so getMessageType() classifies correctly.
+        if (xml.contains("urn:xmpp:carbons:2")) {
+            Matcher innerMsgMatcher = INNER_MESSAGE_PATTERN.matcher(xml);
+            if (innerMsgMatcher.find()) {
+                String innerMsgAttrs = innerMsgMatcher.group(1);
+                Matcher toMatcher = TO_PATTERN.matcher(innerMsgAttrs);
+                if (toMatcher.find()) {
+                    String innerTo = toMatcher.group(1);
+                    // Only override if 'to' points to a MUC room
+                    if (innerTo.contains("ares-parties") ||
+                        innerTo.contains("ares-pregame") ||
+                        innerTo.contains("ares-coregame")) {
+                        logger.debug("🔄 Carbon copy detected - overriding 'from' with inner 'to': '{}'", innerTo);
+                        fromAttr = innerTo;
+                    }
+                }
+            }
+        }
 
         // Classify message type using from attribute - DOMAIN FIRST, TYPE SECOND (ValorantNarrator way)
         messageType = getMessageType(Objects.requireNonNull(fromAttr, "from attribute is required"), typeAttr);

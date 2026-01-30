@@ -204,7 +204,7 @@ public class Main {
      * 3. Connects directly to Riot XMPP server (NOT as a proxy)
      * 4. Reads presence stanzas for game state
      *
-     * This mirrors the valorantnarratorOPS architecture.
+
      */
     private static void startXmppBridge() {
         if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
@@ -360,7 +360,7 @@ public class Main {
                     logger.debug("[XmppBridge:outgoing] {}", abbreviateXml(data));
                 }
             }
-            case "open-valorant" -> {
+            case "open-v" -> {
                 // Connection opened to Riot XMPP server
                 String host = obj.has("host") ? obj.get("host").getAsString() : "unknown";
                 int port = obj.has("port") ? obj.get("port").getAsInt() : 0;
