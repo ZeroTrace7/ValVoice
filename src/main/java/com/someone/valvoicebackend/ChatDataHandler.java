@@ -170,6 +170,12 @@ public class ChatDataHandler {
         logger.info("│   - User Ignored: {}", chat.isIgnoredPlayerID(userId));
         logger.info("│ Self ID: {}", selfId);
 
+        // Safety check: null message type means we couldn't classify the message
+        if (msgType == null) {
+            logger.warn("└─ ⚠️ FILTERED: Message type is null (could not classify from JID)");
+            return;
+        }
+
         // Skip if disabled or player is ignored
         if (chat.isDisabled()) {
             logger.info("└─ ❌ FILTERED: Chat is disabled");
@@ -217,11 +223,19 @@ public class ChatDataHandler {
 
         // Clean and narrate - handle null content
         String cleanContent = content != null ? content.replace("/", "").replace("\\", "") : "";
-        logger.debug("TTS: type={}, content='{}'", msgType,
+
+        // Safety check: only proceed if content is non-empty
+        if (cleanContent.isEmpty()) {
+            logger.debug("TTS skipped: empty content after cleaning");
+            return;
+        }
+
+        logger.info("🔊 TTS DISPATCH: type={} content='{}'", msgType,
             cleanContent.length() > 40 ? cleanContent.substring(0, 37) + "..." : cleanContent);
 
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
+                // narrateMessage will check if voice system is initialized
                 com.someone.valvoicegui.ValVoiceController.narrateMessage(message);
             } catch (Exception e) {
                 logger.error("Failed to narrate: {}", e.getMessage());

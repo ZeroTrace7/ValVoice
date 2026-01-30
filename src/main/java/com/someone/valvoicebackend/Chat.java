@@ -52,9 +52,6 @@ public class Chat {
     private volatile Instant startedAt = Instant.now();
 
     // ===== Legacy compatibility fields (from older Chat design) =====
-    private volatile int quotaLimit = -1; // -1 => unlimited / unset
-    private volatile boolean quotaExhausted = false;
-    private final java.util.concurrent.atomic.AtomicLong legacySelfMessagesSent = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong legacyMessagesSent = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong legacyCharactersSent = new java.util.concurrent.atomic.AtomicLong();
 
@@ -66,15 +63,10 @@ public class Chat {
     private volatile boolean allState = false;    // ALL (off by default)
     private volatile boolean disabled = false;    // global disable flag
 
-    private volatile String mucId;                // Legacy MUC ID holder
-
     // Player ID / name mappings (legacy API). Using ConcurrentHashMap for thread safety.
     private final java.util.concurrent.ConcurrentHashMap<String,String> playerIds = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String,String> playerNames = new java.util.concurrent.ConcurrentHashMap<>();
 
-
-    // New field for player accounts
-    private final ConcurrentHashMap<String, PlayerAccount> playerAccounts = new ConcurrentHashMap<>();
 
     private Chat() {
         // Initialize counters using string types
@@ -94,16 +86,6 @@ public class Chat {
             enabledChannels, includeOwnMessages, whispersEnabled);
     }
 
-    /**
-     * Legacy constructor for ValNarrator compatibility (quotaLimit parameter).
-     * Note: This doesn't create a new instance due to singleton pattern.
-     * Use getInstance() instead. This constructor only sets the quota limit.
-     */
-    public Chat(int quotaLimit) {
-        this(); // Call private constructor
-        this.quotaLimit = quotaLimit;
-        logger.debug("Chat instance created with quota limit: {}", quotaLimit);
-    }
 
     public static Chat getInstance() { return INSTANCE; }
 
@@ -298,14 +280,6 @@ public class Chat {
 
     // ===== Legacy compatibility API =====
 
-    public int getQuotaLimit() { return quotaLimit; }
-    public void setQuotaLimit(int limit) { this.quotaLimit = limit; }
-    public void markQuotaExhausted() { this.quotaExhausted = true; }
-    public boolean isQuotaExhausted() { return quotaExhausted; }
-
-    public void incrementSelfMessagesSent() { legacySelfMessagesSent.incrementAndGet(); }
-    public long getSelfMessagesSent() { return legacySelfMessagesSent.get(); }
-
     public long getMessagesSent() { return legacyMessagesSent.get(); }
     public long getCharactersSent() { return legacyCharactersSent.get(); }
 
@@ -337,9 +311,6 @@ public class Chat {
     }
 
 
-    public String getMucID() { return mucId; }
-    public void setMucID(String mucId) { this.mucId = mucId; }
-
     public boolean toggleState() { disabled = !disabled; return disabled; }
     public boolean isDisabled() { return disabled; }
 
@@ -361,7 +332,6 @@ public class Chat {
     public void setAllDisabled() { disableChannel(TYPE_ALL); }
 
     public java.util.Hashtable<String,String> getPlayerIDTable() { return new java.util.Hashtable<>(playerIds); }
-    public java.util.Hashtable<String,String> getPlayerNameTable() { return new java.util.Hashtable<>(playerNames); }
 
     public void putPlayerId(String name, String id) { if (name!=null && id!=null) playerIds.put(name, id); }
     public void putPlayerName(String id, String name) { if (id!=null && name!=null) playerNames.put(id, name); }
@@ -389,35 +359,5 @@ public class Chat {
         partyState = enabledChannels.contains(TYPE_PARTY);
         teamState = enabledChannels.contains(TYPE_TEAM);
         allState = enabledChannels.contains(TYPE_ALL);
-    }
-
-
-    /**
-     * Registers or updates a player account in the chat system
-     * @param account The player account to register/update
-     */
-    public synchronized void registerPlayerAccount(PlayerAccount account) {
-        if (account != null && account.Subject() != null) {
-            playerAccounts.put(account.Subject(), account);
-        }
-    }
-
-    /**
-     * Gets a player account by their subject ID
-     * @param subjectId The subject ID to look up
-     * @return The player account if found, null otherwise
-     */
-    public PlayerAccount getPlayerAccount(String subjectId) {
-        return playerAccounts.get(subjectId);
-    }
-
-    /**
-     * Removes a player account from tracking
-     * @param subjectId The subject ID of the account to remove
-     */
-    public void removePlayerAccount(String subjectId) {
-        if (subjectId != null) {
-            playerAccounts.remove(subjectId);
-        }
     }
 }

@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 /**
- * ValVoice XMPP Bridge - MITM Proxy Mode
- * Intercepts XMPP traffic between Valorant and Riot's servers
- * This allows capturing YOUR OWN messages for TTS (party/team/whisper)
+ * ValVoice XMPP Bridge - Direct Connection Mode (Default)
  *
- * Architecture:
- * Valorant Client <---> MITM Proxy (this script) <---> Riot XMPP Server
+ * ARCHITECTURE: Standalone Parallel XMPP Client
+ *
+ * This script connects DIRECTLY to Riot's XMPP server as a second client
+ * (parallel to the Valorant game client). It does NOT intercept traffic.
+ *
+ * Message Reception:
+ *   - PARTY/TEAM/ALL: Received via MUC room membership (we join the same rooms as Valorant)
+ *   - WHISPER: Received directly from Riot's server to our XMPP session
+ *   - OWN MESSAGES: Received via XMPP Carbons (XEP-0280) for party/team, or direct for whispers
+ *
+ * Optional MITM Proxy Mode:
+ *   Use --mitm flag or VALVOICE_MITM=true to intercept Valorant's traffic.
+ *   This requires modifying the hosts file and is NOT the default mode.
  */
 
 const tls = require('tls');

@@ -1,6 +1,5 @@
 package com.someone.valvoicegui;
 
-import static com.someone.valvoicegui.MessageType.*;
 import com.someone.valvoicebackend.*;
 import com.jfoenix.controls.JFXToggleButton;
 import javafx.application.Platform;
@@ -815,8 +814,18 @@ public class ValVoiceController {
      */
     public static void narrateMessage(Message msg) {
         ValVoiceController c = latestInstance;
-        if (c == null || msg == null) return;
-        if (msg.getContent() == null) return;
+        if (c == null) {
+            logger.warn("⚠️ narrateMessage called but ValVoiceController not initialized");
+            return;
+        }
+        if (msg == null) {
+            logger.warn("⚠️ narrateMessage called with null message");
+            return;
+        }
+        if (msg.getContent() == null) {
+            logger.debug("narrateMessage: message has null content, skipping");
+            return;
+        }
 
         try {
             // Use VoiceGenerator for coordinated TTS with Push-to-Talk automation
@@ -856,6 +865,7 @@ public class ValVoiceController {
                     if (!availableVoices.isEmpty()) {
                         selectedVoice = availableVoices.get(0);
                     } else {
+                        logger.warn("⚠ No voices available in fallback TTS - cannot narrate message!");
                         return;
                     }
                 }

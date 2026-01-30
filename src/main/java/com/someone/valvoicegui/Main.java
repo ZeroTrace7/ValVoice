@@ -118,17 +118,6 @@ public class Main {
     }
 
     /**
-     * Send a command to join an XMPP MUC room
-     * @param roomJid the room JID to join
-     */
-    public static void joinXmppRoom(String roomJid) {
-        sendCommandToXmpp(String.format(
-            "{\"type\":\"join\",\"room\":\"%s\"}",
-            escapeJson(roomJid)
-        ));
-    }
-
-    /**
      * Send a raw command to the XMPP bridge process
      * @param jsonCommand JSON command string
      */
@@ -159,36 +148,6 @@ public class Main {
                   .replace("\t", "\\t");
     }
 
-    /**
-     * Get the current room JID (if any)
-     * @return current room JID or null if not in a room
-     */
-    public static String getCurrentRoomJid() {
-        return currentRoomJid;
-    }
-
-    /**
-     * Get the set of active MUC rooms
-     * @return set of active room JIDs
-     */
-    public static java.util.Set<String> getActiveRooms() {
-        return activeRooms;
-    }
-
-    /**
-     * Send a message to the current room (if in one)
-     * @param body message body
-     * @return true if message was sent, false if not in a room
-     */
-    public static boolean sendMessageToCurrentRoom(String body) {
-        String room = currentRoomJid;
-        if (room == null || body == null || body.isBlank()) {
-            logger.warn("Cannot send message: not in a room or empty body");
-            return false;
-        }
-        sendMessageToXmpp(room, body, "groupchat");
-        return true;
-    }
 
     private static void startXmppNodeProcess() {
         // Use direct XMPP bridge approach (Node.js or .exe)
@@ -419,21 +378,42 @@ public class Main {
             }
             case "room-joined" -> {
                 String room = obj.has("room") ? obj.get("room").getAsString() : null;
+                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
                 if (room != null) {
                     currentRoomJid = room;
                     activeRooms.add(room);
-                    logger.info("[XmppBridge] Joined room: {}", room);
+                    logger.info("[XmppBridge] Joined room [{}]: {}", roomType, room);
                 }
             }
             case "room-left" -> {
                 String room = obj.has("room") ? obj.get("room").getAsString() : null;
+                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
                 if (room != null) {
                     activeRooms.remove(room);
                     if (room.equals(currentRoomJid)) {
                         currentRoomJid = null;
                     }
-                    logger.info("[XmppBridge] Left room: {}", room);
+                    logger.info("[XmppBridge] Left room [{}]: {}", roomType, room);
                 }
+            }
+            case "groupchat-received" -> {
+                // Explicit logging for groupchat stanzas received by the bridge
+                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
+                String sender = obj.has("sender") ? obj.get("sender").getAsString() : "unknown";
+                String body = obj.has("body") ? obj.get("body").getAsString() : "";
+                logger.info("════════════════════════════════════════");
+                logger.info("📥 GROUPCHAT RECEIVED BY JAVA");
+                logger.info("   Room Type: {}", roomType);
+                logger.info("   Sender: {}", sender.length() > 12 ? sender.substring(0, 12) + "..." : sender);
+                logger.info("   Body: \"{}\"", body.length() > 50 ? body.substring(0, 47) + "..." : body);
+                logger.info("════════════════════════════════════════");
+            }
+            case "message-detected" -> {
+                // Structured message detection event from bridge
+                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
+                String messageType = obj.has("messageType") ? obj.get("messageType").getAsString() : "unknown";
+                boolean isMuc = obj.has("isMuc") && obj.get("isMuc").getAsBoolean();
+                logger.debug("[XmppBridge:message-detected] type={} roomType={} isMuc={}", messageType, roomType, isMuc);
             }
             default -> logger.debug("[XmppBridge:?] {}", obj);
         }

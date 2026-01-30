@@ -76,27 +76,4 @@ public class ChatUtilityHandler {
         }
         return Chat.getInstance().getDisplayName(playerID).orElse(playerID);
     }
-
-    /**
-     * Formats a message for TTS based on its type and sender.
-     */
-    public static String formatMessageForTTS(Message message) {
-        if (message == null || message.getContent() == null) {
-            return "";
-        }
-
-        String content = expandShortForms(message.getContent());
-        String playerName = getPlayerName(message.getUserId());
-        String messageType = message.getMessageType();
-
-        if (Chat.TYPE_WHISPER.equals(messageType)) {
-            return String.format("Whisper from %s: %s", playerName, content);
-        } else if (Chat.TYPE_PARTY.equals(messageType)) {
-            return String.format("%s says: %s", playerName, content);
-        } else if (Chat.TYPE_TEAM.equals(messageType)) {
-            return String.format("%s says: %s", playerName, content);
-        } else {
-            return String.format("%s: %s", playerName, content);
-        }
-    }
 }

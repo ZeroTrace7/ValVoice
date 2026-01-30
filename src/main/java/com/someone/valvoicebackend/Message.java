@@ -93,7 +93,13 @@ public class Message {
         }
 
         // Classify message type using from attribute - DOMAIN FIRST, TYPE SECOND (ValorantNarrator way)
-        messageType = getMessageType(Objects.requireNonNull(fromAttr, "from attribute is required"), typeAttr);
+        // Safety: if fromAttr is null, we cannot classify the message
+        if (fromAttr == null) {
+            logger.warn("⚠️ Message has no 'from' attribute - cannot classify");
+            messageType = null;
+        } else {
+            messageType = getMessageType(fromAttr, typeAttr);
+        }
 
         // Extract and unescape body content
         content = bodyMatcher.find() ? HtmlEscape.unescapeHtml(bodyMatcher.group(1)) : null;
