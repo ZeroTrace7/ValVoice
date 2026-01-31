@@ -51,7 +51,7 @@ public class Main {
         "<message\\s[^>]*>.*?</message>",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
-    private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-xmpp.exe";
+    private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-mitm.exe";
 
     // Current XMPP room JID for sending messages
     private static volatile String currentRoomJid = null;
@@ -103,7 +103,7 @@ public class Main {
     }
 
     /**
-     * Send a chat message to XMPP via the bridge process
+     * Send a chat message to XMPP via the MITM proxy process
      * @param toJid destination JID (room or user)
      * @param body message body
      * @param msgType message type (groupchat for MUC, chat for whisper)
@@ -150,28 +150,33 @@ public class Main {
 
 
     private static void startMitmProxy() {
-        // Start the MITM proxy that intercepts XMPP traffic
-        // This approach proxies the Riot Client's connection to the XMPP server
-        startXmppBridge();
+        // Entry point for starting the MITM proxy
+        launchMitmProxy();
     }
 
     /**
-     * Start the XMPP bridge for connecting to Riot XMPP server.
-     * This approach:
-     * 1. Reads lockfile to get local API credentials
-     * 2. Queries /chat/v1/session for XMPP credentials
-     * 3. Connects directly to Riot XMPP server (NOT as a proxy)
-     * 4. Reads presence stanzas for game state
+     * Launch the MITM proxy for intercepting Riot XMPP traffic.
      *
-
+     * Flow:
+     * 1. Start ConfigMITM HTTP server
+     * 2. Start XmppMITM TLS proxy
+     * 3. Launch Riot Client with modified config
+     * 4. Read decrypted XMPP stanzas from stdout (JSON)
+     * 5. Parse messages → Trigger TTS
+     *
+     * Architecture:
+     * Riot Client → ConfigMITM → XmppMITM → Riot Server
+     *
+     * Data Flow:
+     * XMPP → MITM logs → Java Parser → TTS
      */
-    private static void startXmppBridge() {
+    private static void launchMitmProxy() {
         if (mitmProcess != null && mitmProcess.isAlive()) {
-            logger.warn("XMPP bridge process already running");
+            logger.warn("MITM proxy process already running");
             return;
         }
 
-        logger.info("Starting XMPP bridge (direct client approach)...");
+        logger.info("Starting MITM proxy (transparent interception approach)...");
         ValVoiceController.updateXmppStatus("Starting...", false);
 
         // Try standalone .exe first (preferred for production)
@@ -181,7 +186,7 @@ public class Main {
 
         if (exeCandidate == null) {
             logger.warn("{} not found; attempting to auto-build...", XMPP_EXE_NAME_PRIMARY);
-            Path built = tryBuildBridgeExecutable(workingDir);
+            Path built = tryBuildMitmExecutable(workingDir);
             if (built != null && Files.isRegularFile(built)) {
                 exeCandidate = built;
             }
@@ -196,15 +201,15 @@ public class Main {
                 mitmProcess = pb.start();
                 System.setProperty("valvoice.bridgeMode", "external-exe");
                 ValVoiceController.updateBridgeModeLabel("external-exe");
-                logger.info("Started XMPP bridge (mode: external-exe)");
+                logger.info("Started MITM proxy (mode: external-exe)");
             } catch (IOException e) {
-                logger.error("Failed to start XMPP bridge .exe: {}", e.getMessage());
+                logger.error("Failed to start MITM proxy .exe: {}", e.getMessage());
                 ValVoiceController.updateXmppStatus("Start failed", false);
                 return;
             }
         } else {
             // Fallback to Node.js + index.js
-            logger.info("XMPP .exe not found, trying Node.js fallback...");
+            logger.info("MITM .exe not found, trying Node.js fallback...");
 
             // Find Node.js executable
             String nodeCommand = findNodeExecutable();
@@ -215,19 +220,19 @@ public class Main {
                 return;
             }
 
-            // Find bridge directory
+            // Find mitm directory
             Path bridgeDir;
             try {
-                bridgeDir = getBridgeDirectory();
+                bridgeDir = getMitmDirectory();
             } catch (IOException e) {
-                logger.error("XMPP bridge directory not found: {}", e.getMessage());
+                logger.error("MITM directory not found: {}", e.getMessage());
                 System.setProperty("valvoice.bridgeMode", "unavailable");
-                ValVoiceController.updateXmppStatus("Bridge missing", false);
+                ValVoiceController.updateXmppStatus("MITM missing", false);
                 return;
             }
 
             // Start Node.js process
-            ProcessBuilder pb = new ProcessBuilder(nodeCommand, "index.js");
+            ProcessBuilder pb = new ProcessBuilder(nodeCommand, "dist/main.js");
             pb.directory(bridgeDir.toFile());
             pb.redirectErrorStream(true);
 
@@ -235,15 +240,15 @@ public class Main {
                 mitmProcess = pb.start();
                 System.setProperty("valvoice.bridgeMode", "node-script");
                 ValVoiceController.updateBridgeModeLabel("node-script");
-                logger.info("Started XMPP bridge (mode: node-script) from: {}", bridgeDir);
+                logger.info("Started MITM proxy (mode: node-script) from: {}", bridgeDir);
             } catch (IOException e) {
-                logger.error("Failed to start Node.js XMPP bridge: {}", e.getMessage());
+                logger.error("Failed to start Node.js MITM proxy: {}", e.getMessage());
                 ValVoiceController.updateXmppStatus("Start failed", false);
                 return;
             }
         }
 
-        // Read output from the XMPP bridge process
+        // Read output from the MITM proxy process
         mitmIoPool.submit(() -> {
             try (BufferedReader br = new BufferedReader(new InputStreamReader(mitmProcess.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
@@ -253,26 +258,26 @@ public class Main {
                     try {
                         parsed = JsonParser.parseString(line);
                         if (!parsed.isJsonObject()) {
-                            logger.debug("[XmppBridge raw] {}", line);
+                            logger.debug("[MITM raw] {}", line);
                             continue;
                         }
                         JsonObject obj = parsed.getAsJsonObject();
                         String type = obj.has("type") && !obj.get("type").isJsonNull() ? obj.get("type").getAsString() : "";
-                        handleBridgeEvent(type, obj);
+                        handleMitmEvent(type, obj);
                     } catch (Exception ex) {
                         // Non-JSON bridge output
                         String lower = line.toLowerCase();
                         if (lower.contains("presence")) {
-                            logger.debug("[XmppBridge presence] {}", line);
+                            logger.debug("[MITM presence] {}", line);
                         } else {
-                            logger.info("[XmppBridge log] {}", line);
+                            logger.info("[MITM log] {}", line);
                         }
                     }
                 }
             } catch (IOException e) {
-                logger.warn("XMPP bridge stdout reader terminating", e);
+                logger.warn("MITM proxy stdout reader terminating", e);
             } finally {
-                logger.info("XMPP bridge output closed");
+                logger.info("MITM proxy output closed");
             }
         });
 
@@ -280,7 +285,7 @@ public class Main {
         mitmIoPool.submit(() -> {
             try {
                 int code = mitmProcess.waitFor();
-                logger.warn("XMPP bridge process exited with code {}", code);
+                logger.warn("MITM proxy process exited with code {}", code);
                 ValVoiceController.updateXmppStatus("Exited(" + code + ")", false);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -290,7 +295,7 @@ public class Main {
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (mitmProcess != null && mitmProcess.isAlive()) {
-                logger.info("Destroying XMPP bridge process");
+                logger.info("Destroying MITM proxy process");
                 mitmProcess.destroy();
                 try { mitmProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }
@@ -307,155 +312,90 @@ public class Main {
     }
 
     /**
-     * Handle events from the XMPP bridge process
+     * Handle events from the MITM proxy process
      */
-    private static void handleBridgeEvent(String type, JsonObject obj) {
+    private static void handleMitmEvent(String type, JsonObject obj) {
         switch (type) {
-            case "incoming" -> handleIncomingStanza(obj);
-            case "outgoing" -> {
-                // XMPP stanza sent to server (for debugging)
+            case "incoming" -> {
+                // Raw XML received from Riot server
                 if (obj.has("data") && !obj.get("data").isJsonNull()) {
                     String data = obj.get("data").getAsString();
-                    logger.debug("[XmppBridge:outgoing] {}", abbreviateXml(data));
+                    logger.info("[MITM:incoming] {}", data);
                 }
             }
-            case "open-v" -> {
-                // Connection opened to Riot XMPP server
+            case "outgoing" -> {
+                // Raw XML sent to Riot server
+                if (obj.has("data") && !obj.get("data").isJsonNull()) {
+                    String data = obj.get("data").getAsString();
+                    logger.info("[MITM:outgoing] {}", data);
+                }
+            }
+            case "open-valorant" -> {
+                // Valorant client connected to MITM
+                int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
                 String host = obj.has("host") ? obj.get("host").getAsString() : "unknown";
                 int port = obj.has("port") ? obj.get("port").getAsInt() : 0;
-                logger.info("[XmppBridge] Connecting to {}:{}", host, port);
-                ValVoiceController.updateXmppStatus("Connecting...", false);
+                logger.info("[MITM:open-valorant] socketID={} host={} port={}", socketID, host, port);
             }
             case "open-riot" -> {
-                // Riot server acknowledged connection
-                logger.info("[XmppBridge] Connection established");
-                ValVoiceController.updateXmppStatus("Connected", true);
+                // MITM connected to Riot server
+                int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
+                logger.info("[MITM:open-riot] socketID={}", socketID);
+            }
+            case "close-riot" -> {
+                // Riot server closed connection
+                int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
+                logger.info("[MITM:close-riot] socketID={}", socketID);
+            }
+            case "close-valorant" -> {
+                // Valorant client closed connection
+                int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
+                logger.info("[MITM:close-valorant] socketID={}", socketID);
             }
             case "error" -> {
-                String err = "(unknown)";
-                if (obj.has("error") && !obj.get("error").isJsonNull()) {
-                    err = obj.get("error").getAsString();
-                } else if (obj.has("reason") && !obj.get("reason").isJsonNull()) {
-                    err = obj.get("reason").getAsString();
-                }
-                if (obj.has("code") && !obj.get("code").isJsonNull()) {
-                    err = "(" + obj.get("code").getAsInt() + ") " + err;
-                }
-                logger.warn("XMPP error event: {}", err);
-                ValVoiceController.updateXmppStatus("Error", false);
+                // Error event
+                int code = obj.has("code") ? obj.get("code").getAsInt() : 0;
+                String reason = obj.has("reason") && !obj.get("reason").isJsonNull() ? obj.get("reason").getAsString() : "unknown";
+                logger.warn("[MITM:error] code={} reason={}", code, reason);
             }
-            case "debug", "info" -> {
-                String msg = obj.has("message") && !obj.get("message").isJsonNull() ? obj.get("message").getAsString() : "";
-                logger.debug("[XmppBridge:{}] {}", type, msg);
-                // Map key phases to UI status
-                if (msg.contains("Connected to Riot XMPP server")) {
-                    ValVoiceController.updateXmppStatus("Connected", true);
-                } else if (msg.contains("Connected to XMPP server")) {
-                    ValVoiceController.updateXmppStatus("TLS OK", true);
-                } else if (msg.contains("Getting authentication credentials")) {
-                    ValVoiceController.updateXmppStatus("Authenticating...", false);
-                } else if (msg.contains("Fetching PAS token") || msg.toLowerCase().contains("pas token")) {
-                    ValVoiceController.updateXmppStatus("Auth: PAS token", false);
-                } else if (msg.contains("Fetching entitlements")) {
-                    ValVoiceController.updateXmppStatus("Auth: entitlements", false);
-                } else if (msg.contains("Connecting to XMPP server")) {
-                    ValVoiceController.updateXmppStatus("Connecting...", false);
-                } else if (msg.contains("XMPP connection closed")) {
-                    ValVoiceController.updateXmppStatus("Closed", false);
-                } else if (msg.contains("Reconnecting")) {
-                    ValVoiceController.updateXmppStatus("Reconnecting...", false);
-                }
+            default -> {
+                // Unknown event type
+                logger.debug("[MITM:unknown] {}", obj);
             }
-            case "startup" -> {
-                logger.debug("[XmppBridge:startup] {}", obj);
-                String mode = System.getProperty("valvoice.bridgeMode", "external-exe");
-                ValVoiceController.updateBridgeModeLabel(mode);
-                ValVoiceController.updateXmppStatus("Starting...", false);
-            }
-            case "shutdown" -> {
-                logger.debug("[XmppBridge:shutdown] {}", obj);
-                ValVoiceController.updateXmppStatus("Stopped", false);
-            }
-            case "message-handlers-ready" -> {
-                logger.info("[XmppBridge] ✅ Message handlers registered and ready");
-            }
-            case "socket-listener-active" -> {
-                logger.info("[XmppBridge] ✅ Socket listener active - ready to receive stanzas");
-            }
-            case "room-joined" -> {
-                String room = obj.has("room") ? obj.get("room").getAsString() : null;
-                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
-                if (room != null) {
-                    currentRoomJid = room;
-                    activeRooms.add(room);
-                    logger.info("[XmppBridge] Joined room [{}]: {}", roomType, room);
-                }
-            }
-            case "room-left" -> {
-                String room = obj.has("room") ? obj.get("room").getAsString() : null;
-                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
-                if (room != null) {
-                    activeRooms.remove(room);
-                    if (room.equals(currentRoomJid)) {
-                        currentRoomJid = null;
-                    }
-                    logger.info("[XmppBridge] Left room [{}]: {}", roomType, room);
-                }
-            }
-            case "groupchat-received" -> {
-                // Explicit logging for groupchat stanzas received by the bridge
-                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
-                String sender = obj.has("sender") ? obj.get("sender").getAsString() : "unknown";
-                String body = obj.has("body") ? obj.get("body").getAsString() : "";
-                logger.info("════════════════════════════════════════");
-                logger.info("📥 GROUPCHAT RECEIVED BY JAVA");
-                logger.info("   Room Type: {}", roomType);
-                logger.info("   Sender: {}", sender.length() > 12 ? sender.substring(0, 12) + "..." : sender);
-                logger.info("   Body: \"{}\"", body.length() > 50 ? body.substring(0, 47) + "..." : body);
-                logger.info("════════════════════════════════════════");
-            }
-            case "message-detected" -> {
-                // Structured message detection event from bridge
-                String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";
-                String messageType = obj.has("messageType") ? obj.get("messageType").getAsString() : "unknown";
-                boolean isMuc = obj.has("isMuc") && obj.get("isMuc").getAsBoolean();
-                logger.debug("[XmppBridge:message-detected] type={} roomType={} isMuc={}", messageType, roomType, isMuc);
-            }
-            default -> logger.debug("[XmppBridge:?] {}", obj);
         }
     }
 
-    // Attempt to build valvoice-xmpp.exe using the included xmpp-bridge project.
+    // Attempt to build valvoice-mitm.exe using the included mitm project.
     // Returns path to built exe if successful, else null.
-    private static Path tryBuildBridgeExecutable(Path workingDir) {
+    private static Path tryBuildMitmExecutable(Path workingDir) {
         try {
-            Path bridgeDir = workingDir.resolve("xmpp-bridge");
-            Path pkgJson = bridgeDir.resolve("package.json");
+            Path mitmDir = workingDir.resolve("mitm");
+            Path pkgJson = mitmDir.resolve("package.json");
             if (!Files.isRegularFile(pkgJson)) {
-                logger.info("xmpp-bridge folder not found ({}); skipping auto-build.", bridgeDir.toAbsolutePath());
+                logger.info("mitm folder not found ({}); skipping auto-build.", mitmDir.toAbsolutePath());
                 return null;
             }
             if (!isCommandAvailable("node") || !isCommandAvailable("npm")) {
-                logger.info("Node.js or npm not available; cannot auto-build valvoice-xmpp.exe.");
+                logger.info("Node.js or npm not available; cannot auto-build valvoice-mitm.exe.");
                 return null;
             }
-            logger.info("Auto-building valvoice-xmpp.exe (clean cache) ...");
+            logger.info("Auto-building valvoice-mitm.exe (clean cache) ...");
             // Best effort: clear pkg cache before build
             runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %LOCALAPPDATA%\\pkg rmdir /s /q %LOCALAPPDATA%\\pkg").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
             runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %USERPROFILE%\\.pkg-cache rmdir /s /q %USERPROFILE%\\.pkg-cache").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
             // npm install
-            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm ci").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
+            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm ci").directory(mitmDir.toFile()), 10, TimeUnit.MINUTES);
             if (npmInstall != 0) {
                 logger.warn("npm ci failed with exit code {}", npmInstall);
                 return null;
             }
-            // npm run build:exe
-            int npmBuild = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm run build:exe").directory(bridgeDir.toFile()), 10, TimeUnit.MINUTES);
+            // npm run build:all (compiles TypeScript and packages exe)
+            int npmBuild = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm run build:all").directory(mitmDir.toFile()), 10, TimeUnit.MINUTES);
             if (npmBuild != 0) {
-                logger.warn("npm run build:exe failed with exit code {}", npmBuild);
+                logger.warn("npm run build:all failed with exit code {}", npmBuild);
                 return null;
             }
-            Path exe = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
+            Path exe = workingDir.resolve("target").resolve("valvoice-xmpp.exe");
             if (Files.isRegularFile(exe)) {
                 logger.info("Successfully built {}", exe.toAbsolutePath());
                 return exe;
@@ -555,29 +495,29 @@ public class Main {
     }
 
     /**
-     * Locate the xmpp-bridge directory.
+     * Locate the mitm directory.
      * Checks multiple possible locations relative to the application.
-     * @return Path to xmpp-bridge directory
-     * @throws IOException if bridge directory cannot be found
+     * @return Path to mitm directory
+     * @throws IOException if mitm directory cannot be found
      */
-    private static Path getBridgeDirectory() throws IOException {
+    private static Path getMitmDirectory() throws IOException {
         // Try multiple possible locations
         List<Path> candidatePaths = new ArrayList<>();
 
         // 1. Current working directory
-        candidatePaths.add(Paths.get(System.getProperty("user.dir"), "xmpp-bridge"));
+        candidatePaths.add(Paths.get(System.getProperty("user.dir"), "mitm"));
 
         // 2. JAR location (for packaged app)
         try {
             Path jarPath = Paths.get(Main.class.getProtectionDomain()
                 .getCodeSource().getLocation().toURI());
             if (jarPath.toString().endsWith(".jar")) {
-                // If running from JAR, bridge should be next to it
+                // If running from JAR, mitm should be next to it
                 Path appDir = jarPath.getParent();
-                candidatePaths.add(appDir.resolve("xmpp-bridge"));
+                candidatePaths.add(appDir.resolve("mitm"));
                 // Also try one level up (for jpackage structure)
                 if (appDir.getParent() != null) {
-                    candidatePaths.add(appDir.getParent().resolve("xmpp-bridge"));
+                    candidatePaths.add(appDir.getParent().resolve("mitm"));
                 }
             }
         } catch (Exception e) {
@@ -587,16 +527,16 @@ public class Main {
         // 3. Check each candidate
         for (Path candidate : candidatePaths) {
             if (Files.isDirectory(candidate)) {
-                Path indexJs = candidate.resolve("index.js");
-                if (Files.isRegularFile(indexJs)) {
-                    logger.info("Found xmpp-bridge at: {}", candidate.toAbsolutePath());
+                Path mainJs = candidate.resolve("dist/main.js");
+                if (Files.isRegularFile(mainJs)) {
+                    logger.info("Found mitm at: {}", candidate.toAbsolutePath());
                     return candidate;
                 }
             }
         }
 
         // Not found
-        throw new IOException("xmpp-bridge directory not found. Checked: " + candidatePaths);
+        throw new IOException("mitm directory not found. Checked: " + candidatePaths);
     }
 
     private static void handleIncomingStanza(JsonObject obj) {

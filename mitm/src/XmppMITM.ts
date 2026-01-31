@@ -17,9 +17,10 @@ export class XmppMITM {
     async start() {
         return new Promise<void>(async (resolve) => {
             let cliHooked = false;
+            const certsDir = path.join(__dirname, '..', 'certs')
             tls.createServer({
-                key: await fs.promises.readFile(path.join(__dirname, 'certs/server.key')),
-                cert: await fs.promises.readFile(path.join(__dirname, 'certs/server.cert')),
+                key: await fs.promises.readFile(path.join(certsDir, 'server.key')),
+                cert: await fs.promises.readFile(path.join(certsDir, 'server.cert')),
                 rejectUnauthorized: false,
                 requestCert: false
             }, socket => {
@@ -94,6 +95,15 @@ export class XmppMITM {
                     }) + '\n')
                 })
 
+                riotTLS.on('error', (err) => {
+                    console.log(JSON.stringify({
+                        type: 'error',
+                        time: Date.now(),
+                        code: 500,
+                        reason: `Riot socket error: ${err.message}`
+                    }) + '\n')
+                })
+
                 socket.on('data', data => {
                     console.log(JSON.stringify({
                         type: 'outgoing',
@@ -112,6 +122,15 @@ export class XmppMITM {
                         type: 'close-valorant',
                         time: Date.now(),
                         socketID: currentSocketID
+                    }) + '\n')
+                })
+
+                socket.on('error', (err) => {
+                    console.log(JSON.stringify({
+                        type: 'error',
+                        time: Date.now(),
+                        code: 500,
+                        reason: `Valorant socket error: ${err.message}`
                     }) + '\n')
                 })
             }).listen(this._port, () => {
