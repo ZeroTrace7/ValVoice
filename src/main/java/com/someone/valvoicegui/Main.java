@@ -376,6 +376,12 @@ public class Main {
                 logger.debug("[XmppBridge:shutdown] {}", obj);
                 ValVoiceController.updateXmppStatus("Stopped", false);
             }
+            case "message-handlers-ready" -> {
+                logger.info("[XmppBridge] ✅ Message handlers registered and ready");
+            }
+            case "socket-listener-active" -> {
+                logger.info("[XmppBridge] ✅ Socket listener active - ready to receive stanzas");
+            }
             case "room-joined" -> {
                 String room = obj.has("room") ? obj.get("room").getAsString() : null;
                 String roomType = obj.has("roomType") ? obj.get("roomType").getAsString() : "UNKNOWN";

@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 /**
- * ValVoice XMPP Bridge - MITM Proxy Mode
- * Intercepts XMPP traffic between Valorant and Riot's servers
- * This allows capturing YOUR OWN messages for TTS (party/team/whisper)
+ * ValVoice XMPP Bridge - Direct Connection Mode (Default)
  *
- * Architecture:
- * Valorant Client <---> MITM Proxy (this script) <---> Riot XMPP Server
+ * ARCHITECTURE: Standalone Parallel XMPP Client
+ *
+ * This script connects DIRECTLY to Riot's XMPP server as a second client
+ * (parallel to the Valorant game client). It does NOT intercept traffic.
+ *
+ * Message Reception:
+ *   - PARTY/TEAM/ALL: Received via MUC room membership (we join the same rooms as Valorant)
+ *   - WHISPER: Received directly from Riot's server to our XMPP session
+ *   - OWN MESSAGES: Received via XMPP Carbons (XEP-0280) for party/team, or direct for whispers
+ *
+ * Optional MITM Proxy Mode:
+ *   Use --mitm flag or VALVOICE_MITM=true to intercept Valorant's traffic.
+ *   This requires modifying the hosts file and is NOT the default mode.
  */
 
 const tls = require('tls');
@@ -40,8 +49,10 @@ const joinedRooms = new Set();
 let currentPuuid = null; // Store puuid for room joining
 let currentRegion = null; // Store region for room JID construction
 let currentRoomJid = null; // Current active room for sending messages
+let currentGameId = null; // Current game/party/pregame state key (e.g., "game:uuid", "party:uuid")
+let lastExtractedGameState = null; // Last state key from presence extraction
 
-emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.1.0-muc-fix' });
+emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.6.0-rebuilt-2026-01-31' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
 const DEFAULT_UA = 'ValVoice-XMPP/2.3 (Windows; Node.js)';
@@ -85,7 +96,7 @@ function handleCommand(cmd) {
       break;
     case 'leave':
       if (cmd.room) {
-        leaveMUCRoom(cmd.room);
+        leaveMUCRoomIfJoined(cmd.room);
       }
       break;
     default:
@@ -155,25 +166,6 @@ async function sendXmppMessage(to, body, msgType = 'groupchat') {
   } catch (err) {
     emit({ type: 'error', error: `Send failed: ${err.message}`, ts: Date.now() });
     return false;
-  }
-}
-
-/**
- * Leave a MUC room
- */
-async function leaveMUCRoom(roomJid) {
-  if (!xmppSocket || xmppSocket.destroyed) return;
-
-  if (!joinedRooms.has(roomJid)) return;
-
-  try {
-    const nick = currentPuuid ? currentPuuid.substring(0, 8) : 'valvoice';
-    const presenceStanza = `<presence to="${roomJid}/${nick}" type="unavailable"/>`;
-    await asyncSocketWrite(xmppSocket, presenceStanza);
-    joinedRooms.delete(roomJid);
-    emit({ type: 'info', message: `👋 Left room: ${roomJid.split('@')[0].substring(0, 8)}...`, ts: Date.now() });
-  } catch (err) {
-    emit({ type: 'error', error: `Leave room failed: ${err.message}`, ts: Date.now() });
   }
 }
 
@@ -760,16 +752,90 @@ function asyncSocketRead(socket) {
 }
 
 /**
- * NEW: Join a MUC room (party, pregame, in-game) with retry logic
+ * Enable XMPP Message Carbons (XEP-0280)
+ * Carbons allow receiving copies of messages sent TO and FROM other resources.
+ * This is CRITICAL for receiving party/team messages that may be sent to/from
+ * the game client's XMPP resource.
+ *
+ * Must be called AFTER handlers are registered but BEFORE sending presence.
  */
-async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
+async function enableCarbons() {
   if (!xmppSocket || xmppSocket.destroyed) {
-    emit({ type: 'warn', message: `Cannot join room ${roomJid}: socket not available`, ts: Date.now() });
+    emit({ type: 'warn', message: 'Cannot enable carbons: socket not available', ts: Date.now() });
     return false;
   }
 
+  try {
+    // XEP-0280: Enable carbons
+    const carbonEnableStanza = '<iq id="enable_carbons_1" type="set"><enable xmlns="urn:xmpp:carbons:2"/></iq>';
+
+    emit({ type: 'debug', message: 'Sending carbons enable request...', ts: Date.now() });
+    await asyncSocketWrite(xmppSocket, carbonEnableStanza);
+
+    // Wait for response (with timeout)
+    const response = await Promise.race([
+      asyncSocketRead(xmppSocket),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Carbons enable timeout')), 5000))
+    ]);
+
+    // Check if carbons were enabled successfully
+    if (response.includes('enable_carbons_1') && response.includes('type="result"')) {
+      emit({ type: 'info', message: '✅ Carbons enabled', ts: Date.now() });
+      return true;
+    } else if (response.includes('enable_carbons_1') && response.includes('type="error"')) {
+      // Carbons may not be supported or already enabled - not fatal
+      emit({ type: 'warn', message: '⚠️ Carbons enable returned error (may already be enabled)', ts: Date.now() });
+      return true; // Continue anyway
+    } else {
+      // Got a different response - emit it for processing and continue
+      emit({ type: 'incoming', time: Date.now(), data: response });
+      emit({ type: 'info', message: '✅ Carbons enabled (response deferred)', ts: Date.now() });
+      return true;
+    }
+  } catch (err) {
+    emit({ type: 'warn', message: `Carbons enable failed: ${err.message} (continuing anyway)`, ts: Date.now() });
+    return false; // Non-fatal - continue with connection
+  }
+}
+
+/**
+ * Join a MUC room (party, pregame, in-game) with retry logic
+ *
+ * Room JID formats:
+ *   Party:   <partyId>@ares-parties.<region>.pvp.net
+ *   Pregame: <matchId>@ares-pregame.<region>.pvp.net
+ *   Team:    <matchId>@ares-coregame.<region>.pvp.net
+ *   All:     <matchId>all@ares-coregame.<region>.pvp.net
+ */
+async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
+  // Determine room type for logging
+  const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
+                   roomJid.includes('@ares-pregame') ? 'PREGAME' :
+                   roomJid.includes('all@ares-coregame') ? 'ALL' :
+                   roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
+
+  const roomIdShort = roomJid.split('@')[0].substring(0, 12) + '...';
+
+  // Log room join attempt
+  emit({ type: 'info', message: `🚪 [${roomType}] Room join attempt: ${roomIdShort}`, ts: Date.now() });
+  emit({ type: 'debug', message: `   Full JID: ${roomJid}`, ts: Date.now() });
+  emit({ type: 'debug', message: `   Current joinedRooms (${joinedRooms.size}): [${Array.from(joinedRooms).map(r => r.split('@')[0].substring(0, 8) + '...').join(', ')}]`, ts: Date.now() });
+
+  if (!xmppSocket || xmppSocket.destroyed) {
+    emit({ type: 'warn', message: `❌ [${roomType}] Cannot join: socket not available`, ts: Date.now() });
+    return false;
+  }
+
+  // CRITICAL: Ensure message handlers are registered before joining
+  // This prevents the race condition where groupchat messages arrive before listener is active
+  if (!messageHandlersSetup) {
+    emit({ type: 'warn', message: `❌ [${roomType}] Cannot join: message handlers not yet registered`, ts: Date.now() });
+    return false;
+  }
+
+  // Check for duplicate join - but NEVER block the first join for this room
   if (joinedRooms.has(roomJid)) {
-    emit({ type: 'debug', message: `Already in room ${roomJid}, skipping join`, ts: Date.now() });
+    emit({ type: 'debug', message: `⏭️ [${roomType}] Already in room, skipping duplicate join`, ts: Date.now() });
     return true;
   }
 
@@ -784,40 +850,43 @@ async function joinMUCRoom(roomJid, nickname, retryCount = 0) {
       `</x>` +
       `</presence>`;
 
-    // Determine room type for logging
-    const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
-                     roomJid.includes('@ares-pregame') ? 'PREGAME' :
-                     roomJid.includes('all@ares-coregame') ? 'ALL' :
-                     roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
-
-    emit({ type: 'info', message: `🚪 Joining MUC room [${roomType}]: ${roomJid}`, ts: Date.now() });
-    emit({ type: 'debug', message: `MUC presence stanza: ${presenceStanza}`, ts: Date.now() });
+    emit({ type: 'debug', message: `   Sending MUC presence for ${roomType}`, ts: Date.now() });
 
     await asyncSocketWrite(xmppSocket, presenceStanza);
+
+    // Add to joined rooms immediately after sending presence
     joinedRooms.add(roomJid);
 
     // Track current room for sending messages
     currentRoomJid = roomJid;
 
     // Emit room-joined event so Java can track the current room
-    emit({ type: 'room-joined', room: roomJid, ts: Date.now() });
-    emit({ type: 'info', message: `✅ Joined ${roomType}: ${roomJid} (now tracking ${joinedRooms.size} rooms)`, ts: Date.now() });
+    emit({ type: 'room-joined', room: roomJid, roomType: roomType, ts: Date.now() });
+
+    // Log join success with current state
+    emit({ type: 'info', message: `✅ [${roomType}] Join success: ${roomIdShort}`, ts: Date.now() });
+    emit({ type: 'info', message: `📋 joinedRooms state (${joinedRooms.size}): [${Array.from(joinedRooms).map(r => {
+      const id = r.split('@')[0].substring(0, 8);
+      const type = r.includes('@ares-parties') ? 'P' : r.includes('@ares-pregame') ? 'PRE' : r.includes('all@ares-coregame') ? 'ALL' : r.includes('@ares-coregame') ? 'T' : '?';
+      return `${type}:${id}...`;
+    }).join(', ')}]`, ts: Date.now() });
+
     return true;
   } catch (err) {
     // Retry up to 3 times with exponential backoff
     if (retryCount < 3) {
       const delay = 1000 * Math.pow(2, retryCount);
-      emit({ type: 'debug', message: `Retry join (${retryCount + 1}/3) after ${delay}ms`, ts: Date.now() });
+      emit({ type: 'debug', message: `🔄 [${roomType}] Retry join (${retryCount + 1}/3) after ${delay}ms`, ts: Date.now() });
       await new Promise(r => setTimeout(r, delay));
       return joinMUCRoom(roomJid, nickname, retryCount + 1);
     }
-    emit({ type: 'error', error: `Failed to join room after retries: ${err.message}`, ts: Date.now() });
+    emit({ type: 'error', error: `❌ [${roomType}] Failed to join room after retries: ${err.message}`, ts: Date.now() });
     return false;
   }
 }
 
 /**
- * NEW: Extract room JID from presence/message stanza
+ * Extract room JID from presence/message stanza
  */
 function extractRoomJid(dataStr) {
   const fromMatch = dataStr.match(/from=['"]([^'"]+)['"]/);
@@ -837,10 +906,65 @@ function extractRoomJid(dataStr) {
 }
 
 /**
- * NEW: Extract game state from XMPP presence stanza and auto-join game rooms
+ * Construct a party room JID
+ * Format: <partyId>@ares-parties.<region>.pvp.net
+ * @param {string} partyId - The party UUID
+ * @param {string} region - The region code (e.g., 'jp1', 'ap', 'na1')
+ * @returns {string} The full room JID
+ */
+function constructPartyRoomJid(partyId, region) {
+  const r = region || currentRegion || 'ap';
+  const jid = `${partyId}@ares-parties.${r}.pvp.net`;
+  emit({ type: 'debug', message: `Constructed PARTY JID: ${jid}`, ts: Date.now() });
+  return jid;
+}
+
+/**
+ * Construct a pregame room JID
+ * Format: <matchId>@ares-pregame.<region>.pvp.net
+ * @param {string} matchId - The pregame match UUID
+ * @param {string} region - The region code
+ * @returns {string} The full room JID
+ */
+function constructPregameRoomJid(matchId, region) {
+  const r = region || currentRegion || 'ap';
+  const jid = `${matchId}@ares-pregame.${r}.pvp.net`;
+  emit({ type: 'debug', message: `Constructed PREGAME JID: ${jid}`, ts: Date.now() });
+  return jid;
+}
+
+/**
+ * Construct a coregame (in-game) team room JID
+ * Format: <matchId>@ares-coregame.<region>.pvp.net
+ * @param {string} matchId - The match UUID
+ * @param {string} region - The region code
+ * @returns {string} The full room JID
+ */
+function constructTeamRoomJid(matchId, region) {
+  const r = region || currentRegion || 'ap';
+  const jid = `${matchId}@ares-coregame.${r}.pvp.net`;
+  emit({ type: 'debug', message: `Constructed TEAM JID: ${jid}`, ts: Date.now() });
+  return jid;
+}
+
+/**
+ * Construct a coregame (in-game) all-chat room JID
+ * Format: <matchId>all@ares-coregame.<region>.pvp.net
+ * @param {string} matchId - The match UUID
+ * @param {string} region - The region code
+ * @returns {string} The full room JID
+ */
+function constructAllChatRoomJid(matchId, region) {
+  const r = region || currentRegion || 'ap';
+  const jid = `${matchId}all@ares-coregame.${r}.pvp.net`;
+  emit({ type: 'debug', message: `Constructed ALL JID: ${jid}`, ts: Date.now() });
+  return jid;
+}
+
+/**
+ * Extract game state from XMPP presence stanza and auto-join game rooms
  * The presence stanza contains base64-encoded JSON with game state info
  */
-let lastExtractedGameState = null;
 async function extractGameStateFromPresence(dataStr) {
   try {
     // Look for valorant game state in presence - it's in the <valorant> or <p> element as base64 JSON
@@ -876,12 +1000,12 @@ async function extractGameStateFromPresence(dataStr) {
         const region = currentRegion || 'ap';
 
         // Join TEAM chat room
-        const gameRoomJid = `${id}@ares-coregame.${region}.pvp.net`;
-        emit({ type: 'info', message: `🎮 IN-GAME! Joining rooms`, ts: Date.now() });
+        const gameRoomJid = constructTeamRoomJid(id, region);
+        emit({ type: 'info', message: `🎮 IN-GAME detected from presence! Joining rooms`, ts: Date.now() });
         await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
 
         // Also join ALL chat room
-        const allChatRoomJid = `${id}all@ares-coregame.${region}.pvp.net`;
+        const allChatRoomJid = constructAllChatRoomJid(id, region);
         await joinMUCRoom(allChatRoomJid, currentPuuid.substring(0, 8));
       }
     } else if (loopState === 'PREGAME' && (pregameMatchId || partyId)) {
@@ -892,8 +1016,8 @@ async function extractGameStateFromPresence(dataStr) {
         currentGameId = roomKey;
         const region = currentRegion || 'ap';
 
-        const pregameRoomJid = `${id}@ares-pregame.${region}.pvp.net`;
-        emit({ type: 'info', message: `⏳ PREGAME! Joining room`, ts: Date.now() });
+        const pregameRoomJid = constructPregameRoomJid(id, region);
+        emit({ type: 'info', message: `⏳ PREGAME detected from presence! Joining room`, ts: Date.now() });
         await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
       }
     }
@@ -904,9 +1028,21 @@ async function extractGameStateFromPresence(dataStr) {
 
 /**
  * Immediately join current party/game rooms after successful XMPP connection
+ * PREREQUISITE: setupMessageHandlers() must be called first
  */
 async function joinCurrentActiveRooms() {
-  if (!currentPuuid || !xmppSocket || xmppSocket.destroyed) return;
+  if (!currentPuuid || !xmppSocket || xmppSocket.destroyed) {
+    emit({ type: 'debug', message: 'joinCurrentActiveRooms: skipped (no puuid or socket)', ts: Date.now() });
+    return;
+  }
+
+  // Safety check: never join before handlers are active
+  if (!messageHandlersSetup) {
+    emit({ type: 'error', error: 'CRITICAL: joinCurrentActiveRooms called before message handlers registered!', ts: Date.now() });
+    return;
+  }
+
+  emit({ type: 'info', message: '🔍 Checking for active party/game rooms to join...', ts: Date.now() });
 
   try {
     const lockfilePath = path.join(
@@ -942,33 +1078,41 @@ async function joinCurrentActiveRooms() {
     const pregameId = privateData.pregameId || privateData.preGameId;
     const coreGameId = privateData.matchId || privateData.coreGameId;
 
+    emit({ type: 'debug', message: `Game state: loop=${loop}, region=${region}, partyId=${partyId || 'none'}, pregameId=${pregameId || 'none'}, coreGameId=${coreGameId || 'none'}`, ts: Date.now() });
+    emit({ type: 'debug', message: `Current joinedRooms before join: ${joinedRooms.size} rooms`, ts: Date.now() });
+
     // Join appropriate rooms based on current state
     if (loop === 'INGAME' && coreGameId) {
       currentGameId = `game:${coreGameId}`;
-      emit({ type: 'info', message: `🎮 Already in game, joining rooms immediately`, ts: Date.now() });
+      emit({ type: 'info', message: `🎮 IN-GAME detected! Joining team and all chat rooms`, ts: Date.now() });
 
-      const teamRoomJid = `${coreGameId}@ares-coregame.${region}.pvp.net`;
-      const allRoomJid = `${coreGameId}all@ares-coregame.${region}.pvp.net`;
+      const teamRoomJid = constructTeamRoomJid(coreGameId, region);
+      const allRoomJid = constructAllChatRoomJid(coreGameId, region);
 
       await joinMUCRoom(teamRoomJid, currentPuuid.substring(0, 8));
       await joinMUCRoom(allRoomJid, currentPuuid.substring(0, 8));
     }
     else if (loop === 'PREGAME' && pregameId) {
       currentGameId = `pregame:${pregameId}`;
-      emit({ type: 'info', message: `⏳ Already in pregame, joining room immediately`, ts: Date.now() });
+      emit({ type: 'info', message: `⏳ PREGAME detected! Joining pregame room`, ts: Date.now() });
 
-      const pregameRoomJid = `${pregameId}@ares-pregame.${region}.pvp.net`;
+      const pregameRoomJid = constructPregameRoomJid(pregameId, region);
+
       await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
     }
     else if (partyId) {
       currentGameId = `party:${partyId}`;
-      emit({ type: 'info', message: `🎉 Already in party, joining room immediately`, ts: Date.now() });
+      emit({ type: 'info', message: `🎉 PARTY detected! Joining party room`, ts: Date.now() });
 
-      const partyRoomJid = `${partyId}@ares-parties.${region}.pvp.net`;
+      const partyRoomJid = constructPartyRoomJid(partyId, region);
+
       await joinMUCRoom(partyRoomJid, currentPuuid.substring(0, 8));
     }
+    else {
+      emit({ type: 'info', message: `ℹ️ No active party/game detected (loop=${loop})`, ts: Date.now() });
+    }
   } catch (err) {
-    emit({ type: 'debug', message: `Could not auto-join active rooms: ${err.message}`, ts: Date.now() });
+    emit({ type: 'warn', message: `Could not auto-join active rooms: ${err.message}`, ts: Date.now() });
   }
 }
 
@@ -1101,23 +1245,42 @@ async function connectXMPP() {
     emit({ type: 'open-riot', ts: Date.now() });
     emit({ type: 'info', message: 'Connected to Riot XMPP server', ts: Date.now() });
 
+    // ========== CRITICAL: ValorantNarrator-style initialization order ==========
+    // STEP 1: Reset handler flag for fresh registration (but preserve joinedRooms for reconnect)
+    //         joinedRooms is ONLY cleared on socket close (true disconnect)
+    messageHandlersSetup = false;
+    if (joinedRooms.size > 0) {
+      emit({ type: 'info', message: `📋 Preserving ${joinedRooms.size} previously joined rooms: [${Array.from(joinedRooms).map(r => r.split('@')[0].substring(0, 8) + '...').join(', ')}]`, ts: Date.now() });
+    } else {
+      emit({ type: 'debug', message: '📋 No previously joined rooms (fresh connection)', ts: Date.now() });
+    }
+
+    // STEP 2: Register ALL message/stanza handlers FIRST (before ANY stanzas are sent)
+    //         This ensures we NEVER miss any incoming messages including groupchat
+    setupMessageHandlers();
+    emit({ type: 'info', message: '✅ Message handlers registered', ts: Date.now() });
+
+    // STEP 3: Enable XMPP Carbons BEFORE any presence is sent
+    //         Carbons ensure we receive copies of messages sent from other clients (and our own)
+    //         This is critical for party/team message reception
+    await enableCarbons();
+
+    // STEP 4: Start keepalive (handlers are active, safe to do this now)
+    startKeepalive();
+
+    // STEP 5: NOW it's safe to send presence and roster queries
+    //         All responses will be captured by handlers registered in Step 2
+    emit({ type: 'info', message: '✅ Safe to join rooms - sending initial presence', ts: Date.now() });
     await asyncSocketWrite(xmppSocket, '<iq type="get" id="roster_1"><query xmlns="jabber:iq:riotgames:roster" last_state="true"/></iq>');
     await asyncSocketWrite(xmppSocket, '<iq type="get" id="recent_convos_2"><query xmlns="jabber:iq:riotgames:archive:list"/></iq>');
     await asyncSocketWrite(xmppSocket, '<presence/>');
 
-    // Clear joined rooms tracking BEFORE joining new rooms (on reconnect)
-    joinedRooms.clear();
-
-    // CRITICAL FIX: Setup message handlers FIRST so we can receive room join responses
-    // and any groupchat messages that arrive immediately after joining
-    setupMessageHandlers();
-    startKeepalive();
-
-    // NOW join active rooms - the data handler is ready to receive messages
+    // STEP 6: Join active rooms - handlers are ready, carbons enabled, all responses will be captured
     await joinCurrentActiveRooms();
 
-    // Start game room monitor to detect game state changes
+    // STEP 7: Start game room monitor to detect game state changes dynamically
     startGameRoomMonitor(accessToken, authData);
+    // ========== End ValorantNarrator-style initialization ==========
 
   } catch (error) {
     emit({ type: 'error', error: `Connection failed: ${error.message}`, ts: Date.now() });
@@ -1142,7 +1305,8 @@ function setupMessageHandlers() {
     return;
   }
   messageHandlersSetup = true;
-  emit({ type: 'debug', message: 'Setting up XMPP message handlers', ts: Date.now() });
+  emit({ type: 'info', message: '✅ Message handler registered - ready to receive MUC messages', ts: Date.now() });
+  emit({ type: 'message-handlers-ready', ts: Date.now() });
 
   xmppSocket.setTimeout(300000); // 5 min idle timeout
   xmppSocket.on('timeout', () => {
@@ -1150,6 +1314,9 @@ function setupMessageHandlers() {
     messageHandlersSetup = false; // Reset on timeout
     try { xmppSocket.destroy(); } catch (_) {}
   });
+
+  // Emit socket-listener-active to confirm the data handler is set up
+  emit({ type: 'socket-listener-active', ts: Date.now() });
 
   xmppSocket.on('data', (data) => {
     const dataStr = data.toString();
@@ -1191,12 +1358,13 @@ function setupMessageHandlers() {
       // FIXED: Improved regex to handle multi-line content and HTML entities
       const bodyMatch = dataStr.match(/<body>([\s\S]*?)<\/body>/);
 
-      if (fromMatch && bodyMatch) {
+      // Safety: ensure we have valid matches before processing
+      if (fromMatch && fromMatch[1]) {
         const from = fromMatch[1];
-        const msgType = typeMatch ? typeMatch[1] : 'unknown';
-        const body = bodyMatch[1];
+        const msgType = typeMatch && typeMatch[1] ? typeMatch[1] : 'unknown';
+        const body = bodyMatch && bodyMatch[1] ? bodyMatch[1] : '';
 
-        // Determine message category
+        // Determine message category based on domain
         const isMucMessage = from.includes('@ares-parties') ||
                             from.includes('@ares-pregame') ||
                             from.includes('@ares-coregame');
@@ -1208,16 +1376,62 @@ function setupMessageHandlers() {
         else if (from.includes('all@ares-coregame')) roomType = 'ALL';
         else if (from.includes('@ares-coregame')) roomType = 'TEAM';
 
-        // CRITICAL: Log groupchat messages prominently
+        // ════════════════════════════════════════════════════════════════
+        // CRITICAL: Log EVERY <message type="groupchat"> stanza received
+        // ════════════════════════════════════════════════════════════════
         if (msgType === 'groupchat') {
+          const senderNick = from.split('/')[1] || 'unknown';
+          const roomId = from.split('@')[0] || 'unknown';
+
           emit({
             type: 'info',
-            message: `🎉 GROUPCHAT RECEIVED [${roomType}] from=${from}`,
+            message: `════════════════════════════════════════`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `🎉 GROUPCHAT STANZA RECEIVED`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `   Room Type: ${roomType}`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `   Room ID: ${roomId.substring(0, 12)}...`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `   Sender: ${senderNick.substring(0, 12)}...`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `   Body: "${body.substring(0, 50)}${body.length > 50 ? '...' : ''}"`,
+            ts: Date.now()
+          });
+          emit({
+            type: 'info',
+            message: `════════════════════════════════════════`,
+            ts: Date.now()
+          });
+
+          // Emit structured groupchat event for Java to process
+          emit({
+            type: 'groupchat-received',
+            roomType: roomType,
+            roomId: roomId,
+            sender: senderNick,
+            from: from,
+            body: body,
             ts: Date.now()
           });
         }
 
-        // Log with details
+        // Log with details for all message types with body
         if (body && body.trim().length > 0) {
           const bodyPreview = body.length > 50 ? body.substring(0, 47) + '...' : body;
           const fromShort = from.split('/')[1] || from.split('@')[0].substring(0, 8);
@@ -1235,6 +1449,7 @@ function setupMessageHandlers() {
             messageType: msgType,
             from: from,
             isMuc: isMucMessage,
+            hasBody: true,
             ts: Date.now()
           });
         }
@@ -1267,241 +1482,440 @@ function setupMessageHandlers() {
 }
 
 /**
- * Monitor Valorant game state and join rooms proactively
+ * ============================================================================
+ * GAME STATE MONITORING (ValorantNarrator-style)
+ * ============================================================================
+ *
+ * Polls Riot local APIs to detect game state changes:
+ *   - partyId: Current party UUID
+ *   - pregameId: Agent select match UUID
+ *   - coreGameId: In-game match UUID
+ *
+ * POLLING INTERVAL: 2000ms (2 seconds)
+ *
+ * State transitions trigger:
+ *   - Joining new MUC rooms
+ *   - Leaving obsolete rooms (logged)
+ *   - Rejoin if rooms were missed
+ *
+ * Data sources (in priority order):
+ *   1. Valorant GLZ API (most reliable) - /core-game/v1/player, /pregame/v1/player
+ *   2. Riot Client presence API (fallback) - /chat/v4/presences
+ * ============================================================================
  */
-let gameRoomMonitorTimer = null;
-let currentGameId = null;
 
+// Polling interval in milliseconds
+const GAME_STATE_POLL_INTERVAL = 2000;
+
+// Game state tracking
+let gameRoomMonitorTimer = null;
+let lastGameState = {
+  loopState: null,
+  partyId: null,
+  pregameId: null,
+  coreGameId: null,
+  timestamp: null
+};
+
+// Track rooms we've joined for each state type
+let currentStateRooms = new Set();
+
+/**
+ * Get game state snapshot from available APIs
+ * Returns: { loopState, partyId, pregameId, coreGameId, source }
+ */
+async function getGameStateSnapshot(riotPort, riotPassword, riotProtocol, region) {
+  const snapshot = {
+    loopState: 'MENUS',
+    partyId: null,
+    pregameId: null,
+    coreGameId: null,
+    source: 'none',
+    region: region || currentRegion || 'ap'
+  };
+
+  const riotBasicAuth = Buffer.from(`riot:${riotPassword}`).toString('base64');
+  const riotBaseUrl = `${riotProtocol}://127.0.0.1:${riotPort}`;
+
+  // === SOURCE 1: Valorant GLZ API (most reliable for game state) ===
+  const valLockfilePath = findValorantLockfile();
+
+  if (valLockfilePath) {
+    try {
+      const valLockfileData = fs.readFileSync(valLockfilePath, 'utf8');
+      const [, , valPort, valPassword] = valLockfileData.split(':');
+      const valBasicAuth = Buffer.from(`riot:${valPassword}`).toString('base64');
+      const valBaseUrl = `https://127.0.0.1:${valPort}`;
+
+      // Try core-game endpoint first (highest priority)
+      try {
+        const coreGameRes = await httpsRequest(`${valBaseUrl}/core-game/v1/player/${currentPuuid}`, {
+          headers: { 'Authorization': `Basic ${valBasicAuth}` },
+          rejectUnauthorized: false,
+          timeout: 2000
+        });
+        if (coreGameRes.statusCode === 200 && coreGameRes.data?.MatchID) {
+          snapshot.coreGameId = coreGameRes.data.MatchID;
+          snapshot.loopState = 'INGAME';
+          snapshot.source = 'GLZ-coregame';
+        }
+      } catch (_) {}
+
+      // Try pregame endpoint if not in core game
+      if (!snapshot.coreGameId) {
+        try {
+          const pregameRes = await httpsRequest(`${valBaseUrl}/pregame/v1/player/${currentPuuid}`, {
+            headers: { 'Authorization': `Basic ${valBasicAuth}` },
+            rejectUnauthorized: false,
+            timeout: 2000
+          });
+          if (pregameRes.statusCode === 200 && pregameRes.data?.MatchID) {
+            snapshot.pregameId = pregameRes.data.MatchID;
+            snapshot.loopState = 'PREGAME';
+            snapshot.source = 'GLZ-pregame';
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  // === SOURCE 2: Riot Client Presence API (fallback, also gets partyId) ===
+  try {
+    const presencesRes = await httpsRequest(`${riotBaseUrl}/chat/v4/presences`, {
+      headers: { 'Authorization': `Basic ${riotBasicAuth}` },
+      rejectUnauthorized: false,
+      timeout: 3000
+    });
+
+    if (presencesRes.statusCode === 200 && presencesRes.data?.presences) {
+      const selfPresence = presencesRes.data.presences.find(p => p.puuid === currentPuuid);
+
+      if (selfPresence?.private) {
+        const privateJson = Buffer.from(selfPresence.private, 'base64').toString('utf-8');
+        const privateData = JSON.parse(privateJson);
+
+        // Always extract partyId from presence (GLZ doesn't provide it)
+        snapshot.partyId = privateData.partyId || privateData.partyID || null;
+
+        // If GLZ didn't give us state, use presence data
+        if (snapshot.source === 'none') {
+          const loop = privateData.sessionLoopState ||
+                       privateData.partyOwnerSessionLoopState ||
+                       privateData.loopState ||
+                       'MENUS';
+
+          snapshot.loopState = loop;
+
+          if (loop === 'INGAME') {
+            snapshot.coreGameId = privateData.matchId ||
+                                  privateData.coreGameId ||
+                                  privateData.gameId ||
+                                  privateData.matchmakingMatchId || null;
+            snapshot.source = 'presence-ingame';
+          } else if (loop === 'PREGAME') {
+            snapshot.pregameId = privateData.pregameId ||
+                                 privateData.preGameId ||
+                                 privateData.matchmakingPreGameId || null;
+            snapshot.source = 'presence-pregame';
+          } else {
+            snapshot.source = 'presence-menus';
+          }
+        } else {
+          // Merge presence partyId with GLZ data
+          snapshot.source += '+presence';
+        }
+      }
+    }
+  } catch (_) {}
+
+  return snapshot;
+}
+
+/**
+ * Find Valorant lockfile path
+ */
+function findValorantLockfile() {
+  const possiblePaths = [
+    'C:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    'D:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    'E:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    'F:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    'C:/Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    'D:/Games/VALORANT/live/ShooterGame/Binaries/Win64',
+    path.join(process.env.ProgramFiles || 'C:/Program Files', 'Riot Games/VALORANT/live/ShooterGame/Binaries/Win64'),
+    path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Riot Games/VALORANT/live/ShooterGame/Binaries/Win64'),
+    'C:/Riot Games/VALORANT/ShooterGame/Binaries/Win64',
+    'D:/Riot Games/VALORANT/ShooterGame/Binaries/Win64',
+  ];
+
+  for (const dir of possiblePaths) {
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        const lockFile = files.find(f => f.toLowerCase() === 'lockfile');
+        if (lockFile) {
+          return path.join(dir, lockFile);
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/**
+ * Detect state transition and return transition info
+ */
+function detectStateTransition(oldState, newState) {
+  const transition = {
+    changed: false,
+    type: null,
+    from: null,
+    to: null,
+    roomsToJoin: [],
+    roomsToLeave: []
+  };
+
+  // Check for loop state change
+  if (oldState.loopState !== newState.loopState) {
+    transition.changed = true;
+    transition.type = 'loopState';
+    transition.from = oldState.loopState;
+    transition.to = newState.loopState;
+  }
+
+  // Check for party change
+  if (oldState.partyId !== newState.partyId) {
+    transition.changed = true;
+    if (!transition.type) {
+      transition.type = 'party';
+      transition.from = oldState.partyId?.substring(0, 8) || 'none';
+      transition.to = newState.partyId?.substring(0, 8) || 'none';
+    }
+
+    // Old party room should be left
+    if (oldState.partyId) {
+      transition.roomsToLeave.push(constructPartyRoomJid(oldState.partyId, newState.region));
+    }
+    // New party room should be joined
+    if (newState.partyId && newState.loopState !== 'INGAME' && newState.loopState !== 'PREGAME') {
+      transition.roomsToJoin.push({ jid: constructPartyRoomJid(newState.partyId, newState.region), type: 'PARTY' });
+    }
+  }
+
+  // Check for pregame change
+  if (oldState.pregameId !== newState.pregameId) {
+    transition.changed = true;
+    if (!transition.type) {
+      transition.type = 'pregame';
+      transition.from = oldState.pregameId?.substring(0, 8) || 'none';
+      transition.to = newState.pregameId?.substring(0, 8) || 'none';
+    }
+
+    // Old pregame room should be left
+    if (oldState.pregameId) {
+      transition.roomsToLeave.push(constructPregameRoomJid(oldState.pregameId, newState.region));
+    }
+    // New pregame room should be joined
+    if (newState.pregameId && newState.loopState === 'PREGAME') {
+      transition.roomsToJoin.push({ jid: constructPregameRoomJid(newState.pregameId, newState.region), type: 'PREGAME' });
+    }
+  }
+
+  // Check for coregame change
+  if (oldState.coreGameId !== newState.coreGameId) {
+    transition.changed = true;
+    if (!transition.type) {
+      transition.type = 'coregame';
+      transition.from = oldState.coreGameId?.substring(0, 8) || 'none';
+      transition.to = newState.coreGameId?.substring(0, 8) || 'none';
+    }
+
+    // Old coregame rooms should be left
+    if (oldState.coreGameId) {
+      transition.roomsToLeave.push(constructTeamRoomJid(oldState.coreGameId, newState.region));
+      transition.roomsToLeave.push(constructAllChatRoomJid(oldState.coreGameId, newState.region));
+    }
+    // New coregame rooms should be joined
+    if (newState.coreGameId && newState.loopState === 'INGAME') {
+      transition.roomsToJoin.push({ jid: constructTeamRoomJid(newState.coreGameId, newState.region), type: 'TEAM' });
+      transition.roomsToJoin.push({ jid: constructAllChatRoomJid(newState.coreGameId, newState.region), type: 'ALL' });
+    }
+  }
+
+  return transition;
+}
+
+/**
+ * Leave a MUC room (send unavailable presence)
+ */
+async function leaveMUCRoomIfJoined(roomJid) {
+  if (!joinedRooms.has(roomJid)) {
+    return; // Not in this room
+  }
+
+  if (!xmppSocket || xmppSocket.destroyed) {
+    return;
+  }
+
+  try {
+    const nick = currentPuuid ? currentPuuid.substring(0, 8) : 'valvoice';
+    const presenceStanza = `<presence to="${roomJid}/${nick}" type="unavailable"/>`;
+    await asyncSocketWrite(xmppSocket, presenceStanza);
+    joinedRooms.delete(roomJid);
+    currentStateRooms.delete(roomJid);
+
+    const roomType = roomJid.includes('@ares-parties') ? 'PARTY' :
+                     roomJid.includes('@ares-pregame') ? 'PREGAME' :
+                     roomJid.includes('all@ares-coregame') ? 'ALL' :
+                     roomJid.includes('@ares-coregame') ? 'TEAM' : 'UNKNOWN';
+
+    emit({ type: 'info', message: `👋 [${roomType}] Left room: ${roomJid.split('@')[0].substring(0, 12)}...`, ts: Date.now() });
+    emit({ type: 'room-left', room: roomJid, roomType: roomType, ts: Date.now() });
+  } catch (err) {
+    emit({ type: 'debug', message: `Failed to leave room ${roomJid}: ${err.message}`, ts: Date.now() });
+  }
+}
+
+/**
+ * Check if we need to rejoin any rooms (missed due to disconnect etc)
+ */
+async function rejoinMissedRooms(currentState) {
+  const expectedRooms = [];
+  const region = currentState.region;
+
+  // Determine which rooms we SHOULD be in based on current state
+  if (currentState.loopState === 'INGAME' && currentState.coreGameId) {
+    expectedRooms.push(constructTeamRoomJid(currentState.coreGameId, region));
+    expectedRooms.push(constructAllChatRoomJid(currentState.coreGameId, region));
+  } else if (currentState.loopState === 'PREGAME' && currentState.pregameId) {
+    expectedRooms.push(constructPregameRoomJid(currentState.pregameId, region));
+  } else if (currentState.partyId) {
+    expectedRooms.push(constructPartyRoomJid(currentState.partyId, region));
+  }
+
+  // Check for missing rooms and rejoin
+  for (const roomJid of expectedRooms) {
+    if (!joinedRooms.has(roomJid)) {
+      emit({ type: 'info', message: `🔄 Rejoining missed room: ${roomJid.split('@')[0].substring(0, 12)}...`, ts: Date.now() });
+      await joinMUCRoom(roomJid, currentPuuid?.substring(0, 8) || 'valvoice');
+    }
+  }
+}
+
+/**
+ * Log game state snapshot
+ */
+function logGameStateSnapshot(state, isTransition = false) {
+  const stateEmoji = state.loopState === 'INGAME' ? '🎮' :
+                     state.loopState === 'PREGAME' ? '⏳' :
+                     state.partyId ? '🎉' : '🏠';
+
+  const partyShort = state.partyId ? state.partyId.substring(0, 8) + '...' : 'none';
+  const pregameShort = state.pregameId ? state.pregameId.substring(0, 8) + '...' : 'none';
+  const coreGameShort = state.coreGameId ? state.coreGameId.substring(0, 8) + '...' : 'none';
+
+  if (isTransition) {
+    emit({
+      type: 'info',
+      message: `${stateEmoji} Game State Transition: loop=${state.loopState} party=${partyShort} pregame=${pregameShort} game=${coreGameShort} [${state.source}]`,
+      ts: Date.now()
+    });
+  } else {
+    emit({
+      type: 'debug',
+      message: `${stateEmoji} State: loop=${state.loopState} party=${partyShort} pregame=${pregameShort} game=${coreGameShort} [${state.source}]`,
+      ts: Date.now()
+    });
+  }
+}
+
+/**
+ * Main game state monitor - polls APIs and handles state changes
+ * POLLING INTERVAL: 2000ms (2 seconds)
+ */
 async function startGameRoomMonitor(accessToken, authData) {
   if (gameRoomMonitorTimer) {
     clearInterval(gameRoomMonitorTimer);
+    gameRoomMonitorTimer = null;
   }
 
+  emit({ type: 'info', message: `🔍 Starting game state monitor (poll interval: ${GAME_STATE_POLL_INTERVAL}ms)`, ts: Date.now() });
+
   const checkGameState = async () => {
-    if (!xmppSocket || xmppSocket.destroyed || !currentPuuid) return;
+    if (!xmppSocket || xmppSocket.destroyed || !currentPuuid) {
+      return;
+    }
 
     try {
-      // Get Riot Client lockfile to access local Riot API
+      // Get Riot Client lockfile
       const lockfilePath = path.join(
         process.env.LOCALAPPDATA || process.env.APPDATA,
         'Riot Games/Riot Client/Config/lockfile'
       );
 
-      if (!fs.existsSync(lockfilePath)) return;
+      if (!fs.existsSync(lockfilePath)) {
+        return;
+      }
 
       const lockfileData = fs.readFileSync(lockfilePath, 'utf8');
-      const [name, pid, port, password, protocol] = lockfileData.split(':');
-      const basicAuth = Buffer.from(`riot:${password}`).toString('base64');
-      const baseUrl = `${protocol}://127.0.0.1:${port}`;
+      const [, , port, password, protocol] = lockfileData.split(':');
+      const region = currentRegion || authData?.region || 'ap';
 
-      // Use globally stored region, fallback to authData.region, then default
-      const region = currentRegion || authData.region || 'ap';
+      // Get current game state snapshot
+      const currentState = await getGameStateSnapshot(port, password, protocol, region);
+      currentState.timestamp = Date.now();
 
-      // IMPORTANT: Try to find Valorant lockfile for GLZ API (game state detection)
-      // The lockfile is in ShooterGame/Binaries/Win64 inside the VALORANT installation
-      let valLockfilePath = null;
-      const possibleValPaths = [
-        // Common VALORANT installation paths - many variations
-        'C:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'D:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'E:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'F:/Riot Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'C:/Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'D:/Games/VALORANT/live/ShooterGame/Binaries/Win64',
-        'C:/VALORANT/live/ShooterGame/Binaries/Win64',
-        'D:/VALORANT/live/ShooterGame/Binaries/Win64',
-        // Program Files variations
-        path.join(process.env.ProgramFiles || 'C:/Program Files', 'Riot Games/VALORANT/live/ShooterGame/Binaries/Win64'),
-        path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Riot Games/VALORANT/live/ShooterGame/Binaries/Win64'),
-        // Without "live" folder (some installs)
-        'C:/Riot Games/VALORANT/ShooterGame/Binaries/Win64',
-        'D:/Riot Games/VALORANT/ShooterGame/Binaries/Win64',
-        // User's custom paths - add more as needed
-        path.join(process.env.LOCALAPPDATA || '', '../Riot Games/VALORANT/live/ShooterGame/Binaries/Win64')
-      ];
+      // Detect state transition
+      const transition = detectStateTransition(lastGameState, currentState);
 
-      // Scan for Valorant lockfile
-      let foundValDir = false;
-      for (const dir of possibleValPaths) {
-        try {
-          if (fs.existsSync(dir)) {
-            foundValDir = true;
-            const files = fs.readdirSync(dir);
-            const lockFile = files.find(f => f.toLowerCase() === 'lockfile');
-            if (lockFile) {
-              valLockfilePath = path.join(dir, lockFile);
-              break;
-            }
-          }
-        } catch (_) {}
-      }
-
-      // Try to get game state from Valorant's internal API if lockfile found
-      let glzMatchId = null;
-      let glzPregameId = null;
-
-      if (valLockfilePath && fs.existsSync(valLockfilePath)) {
-        try {
-          const valLockfileData = fs.readFileSync(valLockfilePath, 'utf8');
-          const [, , valPort, valPassword] = valLockfileData.split(':');
-          const valBasicAuth = Buffer.from(`riot:${valPassword}`).toString('base64');
-          const valBaseUrl = `https://127.0.0.1:${valPort}`;
-
-          // Try core-game match endpoint
-          try {
-            const coreGameRes = await httpsRequest(`${valBaseUrl}/core-game/v1/player/${currentPuuid}`, {
-              headers: { 'Authorization': `Basic ${valBasicAuth}` },
-              rejectUnauthorized: false,
-              timeout: 2000
-            });
-            if (coreGameRes.statusCode === 200 && coreGameRes.data && coreGameRes.data.MatchID) {
-              glzMatchId = coreGameRes.data.MatchID;
-            }
-          } catch (_) {}
-
-          // Try pregame match endpoint
-          if (!glzMatchId) {
-            try {
-              const pregameRes = await httpsRequest(`${valBaseUrl}/pregame/v1/player/${currentPuuid}`, {
-                headers: { 'Authorization': `Basic ${valBasicAuth}` },
-                rejectUnauthorized: false,
-                timeout: 2000
-              });
-              if (pregameRes.statusCode === 200 && pregameRes.data && pregameRes.data.MatchID) {
-                glzPregameId = pregameRes.data.MatchID;
-              }
-            } catch (_) {}
-          }
-        } catch (valErr) {
-          // Silent - lockfile read error
-        }
-      }
-
-      // If GLZ API gave us match info, use that directly (most reliable)
-      if (glzMatchId) {
-        const roomKey = `game:${glzMatchId}`;
-        if (roomKey !== currentGameId) {
-          currentGameId = roomKey;
-
-          // Join TEAM chat room (main game room)
-          const gameRoomJid = `${glzMatchId}@ares-coregame.${region}.pvp.net`;
-          emit({ type: 'info', message: `🎮 IN-GAME! Joining rooms`, ts: Date.now() });
-          await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
-
-          // Also join ALL chat room
-          const allChatRoomJid = `${glzMatchId}all@ares-coregame.${region}.pvp.net`;
-          await joinMUCRoom(allChatRoomJid, currentPuuid.substring(0, 8));
-        }
-        return; // Done - we have reliable game state from GLZ
-      }
-
-      if (glzPregameId) {
-        const roomKey = `pregame:${glzPregameId}`;
-        if (roomKey !== currentGameId) {
-          currentGameId = roomKey;
-          const pregameRoomJid = `${glzPregameId}@ares-pregame.${region}.pvp.net`;
-          emit({ type: 'info', message: `⏳ PREGAME! Joining room`, ts: Date.now() });
-          await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
-        }
-        return; // Done - we have reliable game state from GLZ
-      }
-
-      // FALLBACK: Check product-session for any valorant session info
-      try {
-        await httpsRequest(`${baseUrl}/product-session/v1/external-sessions`, {
-          headers: { 'Authorization': `Basic ${basicAuth}` },
-          rejectUnauthorized: false,
-          timeout: 3000
+      if (transition.changed) {
+        // Log the transition
+        emit({
+          type: 'info',
+          message: `🔄 State transition detected: ${transition.type} (${transition.from} → ${transition.to})`,
+          ts: Date.now()
         });
-        // Silent - just check for valorant session
-      } catch (e) {
-        // Silent
-      }
+        logGameStateSnapshot(currentState, true);
 
-      // Check current game session via presences (fallback if GLZ didn't work)
-      let sessionResponse;
-      try {
-        sessionResponse = await httpsRequest(`${baseUrl}/chat/v4/presences`, {
-          headers: { 'Authorization': `Basic ${basicAuth}` },
-          rejectUnauthorized: false,
-          timeout: 5000
-        });
-      } catch (presErr) {
-        // Silent
-      }
-
-      if (sessionResponse && sessionResponse.statusCode === 200 && sessionResponse.data && sessionResponse.data.presences) {
-        const selfPresence = sessionResponse.data.presences.find(p => p.puuid === currentPuuid);
-
-        if (selfPresence && selfPresence.private) {
-          const privateJson = Buffer.from(selfPresence.private, 'base64').toString('utf-8');
-          let privateData = {};
-          try { privateData = JSON.parse(privateJson); } catch (_) {}
-
-          const loop = privateData.sessionLoopState || privateData.partyOwnerSessionLoopState || privateData.loopState || privateData.state || privateData.provisioningFlow;
-          const partyId = privateData.partyId || privateData.partyID || null;
-          const pregameId = privateData.pregameId || privateData.preGameId || privateData.matchmakingPreGameId || null;
-          const coreGameId = privateData.matchId || privateData.coreGameId || privateData.gameId || privateData.matchmakingMatchId || null;
-
-
-          // Priority 1: INGAME -> coregame MUC using coreGameId if available; fallback to partyId
-          if (loop === 'INGAME') {
-            const id = coreGameId || partyId;
-            if (id) {
-              const roomKey = `game:${id}`;
-              if (roomKey !== currentGameId) {
-                currentGameId = roomKey;
-
-                // Join TEAM chat room (main game room)
-                const gameRoomJid = `${id}@ares-coregame.${region}.pvp.net`;
-                emit({ type: 'info', message: `🎮 IN-GAME! Joining rooms`, ts: Date.now() });
-                await joinMUCRoom(gameRoomJid, currentPuuid.substring(0, 8));
-
-                // Also join ALL chat room (appends 'all' to the id)
-                const allChatRoomJid = `${id}all@ares-coregame.${region}.pvp.net`;
-                await joinMUCRoom(allChatRoomJid, currentPuuid.substring(0, 8));
-              }
-            }
-          }
-          // Priority 2: PREGAME -> pregame MUC using pregameId if available; fallback to partyId
-          else if (loop === 'PREGAME') {
-            const id = pregameId || partyId;
-            if (id) {
-              const roomKey = `pregame:${id}`;
-              if (roomKey !== currentGameId) {
-                currentGameId = roomKey;
-                const pregameRoomJid = `${id}@ares-pregame.${region}.pvp.net`;
-                emit({ type: 'info', message: `⏳ PREGAME! Joining room`, ts: Date.now() });
-                await joinMUCRoom(pregameRoomJid, currentPuuid.substring(0, 8));
-              }
-            }
-          }
-          // Priority 3: In a party (lobby/menus) -> parties MUC using partyId
-          else if (partyId && loop !== 'INGAME' && loop !== 'PREGAME') {
-            const roomKey = `party:${partyId}`;
-            if (roomKey !== currentGameId) {
-              currentGameId = roomKey;
-              const partyRoomJid = `${partyId}@ares-parties.${region}.pvp.net`;
-              emit({ type: 'info', message: `🎉 PARTY! Joining room`, ts: Date.now() });
-              await joinMUCRoom(partyRoomJid, currentPuuid.substring(0, 8));
-            }
-          } else {
-            // Not in game/party anymore
-            if (!partyId && currentGameId) {
-              emit({ type: 'info', message: '👋 Left game/party', ts: Date.now() });
-              currentGameId = null;
-            }
-          }
+        // Leave old rooms
+        for (const roomJid of transition.roomsToLeave) {
+          await leaveMUCRoomIfJoined(roomJid);
         }
+
+        // Join new rooms
+        for (const room of transition.roomsToJoin) {
+          emit({ type: 'info', message: `🚪 Joining [${room.type}] due to transition`, ts: Date.now() });
+          await joinMUCRoom(room.jid, currentPuuid?.substring(0, 8) || 'valvoice');
+          currentStateRooms.add(room.jid);
+        }
+
+        // Update last state
+        lastGameState = { ...currentState };
+
+        // Log rooms joined due to transition
+        if (transition.roomsToJoin.length > 0) {
+          emit({
+            type: 'info',
+            message: `📋 Rooms joined due to transition: ${transition.roomsToJoin.map(r => r.type).join(', ')}`,
+            ts: Date.now()
+          });
+        }
+      } else {
+        // No transition, but check for missed rooms (rejoin logic)
+        await rejoinMissedRooms(currentState);
       }
+
     } catch (err) {
-      // Silently ignore errors - this is a background monitor
+      // Log errors but don't spam
+      emit({ type: 'debug', message: `Game state check error: ${err.message}`, ts: Date.now() });
     }
   };
 
-  // Check immediately, then every 2 seconds (faster detection)
-  checkGameState();
-  gameRoomMonitorTimer = setInterval(checkGameState, 2000);
+  // Run immediately, then poll at interval
+  await checkGameState();
+  gameRoomMonitorTimer = setInterval(checkGameState, GAME_STATE_POLL_INTERVAL);
+
+  emit({ type: 'info', message: `✅ Game state monitor started`, ts: Date.now() });
 }
 
 /**

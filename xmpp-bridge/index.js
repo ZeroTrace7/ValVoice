@@ -52,7 +52,7 @@ let currentRoomJid = null; // Current active room for sending messages
 let currentGameId = null; // Current game/party/pregame state key (e.g., "game:uuid", "party:uuid")
 let lastExtractedGameState = null; // Last state key from presence extraction
 
-emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.5.0-e2e-verified' });
+emit({ type: 'startup', pid: process.pid, ts: Date.now(), version: '3.6.0-rebuilt-2026-01-31' });
 
 // Default UA used for Riot endpoints that sometimes reject empty UA
 const DEFAULT_UA = 'ValVoice-XMPP/2.3 (Windows; Node.js)';
@@ -1306,6 +1306,7 @@ function setupMessageHandlers() {
   }
   messageHandlersSetup = true;
   emit({ type: 'info', message: '✅ Message handler registered - ready to receive MUC messages', ts: Date.now() });
+  emit({ type: 'message-handlers-ready', ts: Date.now() });
 
   xmppSocket.setTimeout(300000); // 5 min idle timeout
   xmppSocket.on('timeout', () => {
@@ -1313,6 +1314,9 @@ function setupMessageHandlers() {
     messageHandlersSetup = false; // Reset on timeout
     try { xmppSocket.destroy(); } catch (_) {}
   });
+
+  // Emit socket-listener-active to confirm the data handler is set up
+  emit({ type: 'socket-listener-active', ts: Date.now() });
 
   xmppSocket.on('data', (data) => {
     const dataStr = data.toString();

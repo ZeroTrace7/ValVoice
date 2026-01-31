@@ -105,6 +105,10 @@ logs/
 # Exclude the bundled PowerShell folder (large, users can download separately if needed)
 PowerShell/
 
+# ==================== MITM Folder ====================
+# Exclude the complete mitm folder
+mitm/
+
 # ==================== Executable Files ====================
 # Exclude .exe files - users should build from source or download from releases
 *.exe

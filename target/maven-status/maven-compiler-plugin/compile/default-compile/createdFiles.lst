@@ -21,5 +21,4 @@ com\someone\valvoicebackend\LockFileHandler.class
 com\someone\valvoicebackend\HtmlEscape.class
 com\someone\valvoicegui\MessageType.class
 com\someone\valvoicebackend\APIHandler.class
-com\someone\valvoicebackend\MessageType.class
 com\someone\valvoicegui\ValVoiceApplication.class
