@@ -35,10 +35,10 @@ public class Main {
     public static double currentVersion;
     private static Properties properties;
 
-    // Node.js XMPP process management (external exe stdout reader)
-    private static Process xmppNodeProcess;
-    private static final ExecutorService xmppIoPool = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "xmpp-mitm-io");
+    // MITM proxy process management (external exe stdout reader)
+    private static Process mitmProcess;
+    private static final ExecutorService mitmIoPool = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "mitm-io");
         t.setDaemon(true);
         return t;
     });
@@ -122,12 +122,12 @@ public class Main {
      * @param jsonCommand JSON command string
      */
     private static void sendCommandToXmpp(String jsonCommand) {
-        if (xmppNodeProcess == null || !xmppNodeProcess.isAlive()) {
+        if (mitmProcess == null || !mitmProcess.isAlive()) {
             logger.warn("Cannot send command: XMPP bridge not running");
             return;
         }
         try {
-            OutputStream os = xmppNodeProcess.getOutputStream();
+            OutputStream os = mitmProcess.getOutputStream();
             os.write((jsonCommand + "\n").getBytes(StandardCharsets.UTF_8));
             os.flush();
             logger.debug("Sent command to XMPP bridge: {}", jsonCommand);
@@ -149,9 +149,9 @@ public class Main {
     }
 
 
-    private static void startXmppNodeProcess() {
-        // Use direct XMPP bridge approach (Node.js or .exe)
-        // This connects directly to Riot's XMPP server using credentials from local API
+    private static void startMitmProxy() {
+        // Start the MITM proxy that intercepts XMPP traffic
+        // This approach proxies the Riot Client's connection to the XMPP server
         startXmppBridge();
     }
 
@@ -166,7 +166,7 @@ public class Main {
 
      */
     private static void startXmppBridge() {
-        if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
+        if (mitmProcess != null && mitmProcess.isAlive()) {
             logger.warn("XMPP bridge process already running");
             return;
         }
@@ -193,7 +193,7 @@ public class Main {
             pb.redirectErrorStream(true);
             pb.directory(workingDir.toFile());
             try {
-                xmppNodeProcess = pb.start();
+                mitmProcess = pb.start();
                 System.setProperty("valvoice.bridgeMode", "external-exe");
                 ValVoiceController.updateBridgeModeLabel("external-exe");
                 logger.info("Started XMPP bridge (mode: external-exe)");
@@ -232,7 +232,7 @@ public class Main {
             pb.redirectErrorStream(true);
 
             try {
-                xmppNodeProcess = pb.start();
+                mitmProcess = pb.start();
                 System.setProperty("valvoice.bridgeMode", "node-script");
                 ValVoiceController.updateBridgeModeLabel("node-script");
                 logger.info("Started XMPP bridge (mode: node-script) from: {}", bridgeDir);
@@ -244,8 +244,8 @@ public class Main {
         }
 
         // Read output from the XMPP bridge process
-        xmppIoPool.submit(() -> {
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(xmppNodeProcess.getInputStream(), StandardCharsets.UTF_8))) {
+        mitmIoPool.submit(() -> {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(mitmProcess.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                     if (line.isBlank()) continue;
@@ -277,9 +277,9 @@ public class Main {
         });
 
         // Monitor process exit
-        xmppIoPool.submit(() -> {
+        mitmIoPool.submit(() -> {
             try {
-                int code = xmppNodeProcess.waitFor();
+                int code = mitmProcess.waitFor();
                 logger.warn("XMPP bridge process exited with code {}", code);
                 ValVoiceController.updateXmppStatus("Exited(" + code + ")", false);
             } catch (InterruptedException e) {
@@ -289,21 +289,21 @@ public class Main {
 
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (xmppNodeProcess != null && xmppNodeProcess.isAlive()) {
+            if (mitmProcess != null && mitmProcess.isAlive()) {
                 logger.info("Destroying XMPP bridge process");
-                xmppNodeProcess.destroy();
-                try { xmppNodeProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                mitmProcess.destroy();
+                try { mitmProcess.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }
-            xmppIoPool.shutdown();
+            mitmIoPool.shutdown();
             try {
-                if (!xmppIoPool.awaitTermination(5, TimeUnit.SECONDS)) {
-                    xmppIoPool.shutdownNow();
+                if (!mitmIoPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    mitmIoPool.shutdownNow();
                 }
             } catch (InterruptedException e) {
-                xmppIoPool.shutdownNow();
+                mitmIoPool.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-        }, "xmpp-bridge-shutdown"));
+        }, "mitm-shutdown"));
     }
 
     /**
@@ -783,7 +783,7 @@ public class Main {
         }
 
         lockInstance();
-        startXmppNodeProcess();
+        startMitmProxy();
 
         logger.info("Launching JavaFX Application");
         Application.launch(ValVoiceApplication.class, args);
