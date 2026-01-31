@@ -320,7 +320,8 @@ public class Main {
                 // Raw XML received from Riot server
                 if (obj.has("data") && !obj.get("data").isJsonNull()) {
                     String data = obj.get("data").getAsString();
-                    logger.info("[MITM:incoming] {}", data);
+                    logger.debug("[MITM:incoming] {}", data);
+                    processIncomingXml(data);
                 }
             }
             case "outgoing" -> {
@@ -363,6 +364,81 @@ public class Main {
                 logger.debug("[MITM:unknown] {}", obj);
             }
         }
+    }
+
+    // Patterns for parsing XMPP message stanzas
+    private static final Pattern MESSAGE_FROM_PATTERN = Pattern.compile("from=['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MESSAGE_TYPE_PATTERN = Pattern.compile("type=['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MESSAGE_BODY_PATTERN = Pattern.compile("<body>([^<]*)</body>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /**
+     * Process incoming XML from MITM and extract chat messages.
+     * Ignores presence, iq, and non-chat stanzas.
+     */
+    private static void processIncomingXml(String xml) {
+        if (xml == null || xml.isBlank()) return;
+
+        // Ignore presence and iq stanzas
+        if (xml.contains("<presence") || xml.contains("<iq")) {
+            return;
+        }
+
+        // Only process message stanzas
+        if (!xml.contains("<message")) {
+            return;
+        }
+
+        // Find all message stanzas in the XML
+        Matcher messageMatcher = MESSAGE_STANZA_PATTERN.matcher(xml);
+        while (messageMatcher.find()) {
+            String messageXml = messageMatcher.group();
+            extractAndLogChat(messageXml);
+        }
+    }
+
+    /**
+     * Extract chat info from a single message stanza and log it.
+     */
+    private static void extractAndLogChat(String messageXml) {
+        // Extract body
+        Matcher bodyMatcher = MESSAGE_BODY_PATTERN.matcher(messageXml);
+        if (!bodyMatcher.find()) {
+            return; // No body, ignore
+        }
+        String body = bodyMatcher.group(1);
+        if (body == null || body.isBlank()) {
+            return; // Empty body, ignore
+        }
+
+        // Extract from attribute
+        Matcher fromMatcher = MESSAGE_FROM_PATTERN.matcher(messageXml);
+        String from = fromMatcher.find() ? fromMatcher.group(1) : "unknown";
+
+        // Extract type attribute
+        Matcher typeMatcher = MESSAGE_TYPE_PATTERN.matcher(messageXml);
+        String msgType = typeMatcher.find() ? typeMatcher.group(1) : "";
+
+        // Determine chat type based on from JID
+        String chatType;
+        if (from.contains("@ares-parties")) {
+            chatType = "PARTY";
+        } else if (from.contains("@ares-coregame")) {
+            chatType = "TEAM";
+        } else if ("chat".equalsIgnoreCase(msgType)) {
+            chatType = "WHISPER";
+        } else {
+            return; // IGNORE - not a recognized chat type
+        }
+
+        // Extract sender name (resource part after /)
+        String sender = from;
+        int slashIndex = from.lastIndexOf('/');
+        if (slashIndex >= 0 && slashIndex < from.length() - 1) {
+            sender = from.substring(slashIndex + 1);
+        }
+
+        // Log the chat message
+        logger.info("[CHAT] type={} from={} body=\"{}\"", chatType, sender, body);
     }
 
     // Attempt to build valvoice-mitm.exe using the included mitm project.

@@ -62,8 +62,6 @@ export class ConfigMITM {
                     data['chat.port'] = this._xmppPort
                     data['chat.host'] = this._host
                     data['chat.allow_bad_cert.enabled'] = true
-                    console.log('Config intercepted')
-                    console.log(`Affinity mappings built: ${this.affinityMappings.length}`)
                 }
                 res.write(JSON.stringify(data))
             } else {
