@@ -16,7 +16,6 @@ export class XmppMITM {
     }
     async start() {
         return new Promise<void>(async (resolve) => {
-            let cliHooked = false;
             const certsDir = path.join(__dirname, 'certs')
             tls.createServer({
                 key: await fs.promises.readFile(path.join(certsDir, 'server.key')),
@@ -58,7 +57,6 @@ export class XmppMITM {
                         riotTLS.write(preConnectBuffer)
                         preConnectBuffer = Buffer.alloc(0)
                     }
-                    handleStdinData(riotTLS);
                     console.log(JSON.stringify({
                         type: 'open-riot',
                         time: Date.now(),
@@ -66,17 +64,6 @@ export class XmppMITM {
                     }) + '\n')
                 })
 
-                const handleStdinData = (riotTLS: tls.TLSSocket) => {
-                    if (!cliHooked) {
-                        process.stdin.setEncoding('utf8');
-                        process.stdin.on('data', (data) => {
-                            if (!riotTLS.connecting) {
-                                riotTLS.write(data); // Write data to riotTLS if it's connected
-                            }
-                        });
-                        cliHooked = true;
-                    }
-                };
 
                 riotTLS.on('data', data => {
                     console.log(JSON.stringify({

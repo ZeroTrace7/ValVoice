@@ -97,9 +97,9 @@ public class ValVoiceController {
 
     private static final boolean SIMULATE_CHAT = false; // set true for local TTS demo without Valorant
     /**
-     * External XMPP Handler Executable (single supported name)
+     * External MITM Proxy Executable (single supported name)
      */
-    private static final String XMPP_BRIDGE_EXE_PRIMARY = "valvoice-xmpp.exe";
+    private static final String XMPP_BRIDGE_EXE_PRIMARY = "valvoice-mitm.exe";
     /**
      * Audio Routing Tool (used for TTS routing and listen-through setup)
      */
@@ -160,7 +160,7 @@ public class ValVoiceController {
 
         // Helpful tooltips
         applyTooltip(statusXmpp, "XMPP bridge availability (Node script / exe)");
-        applyTooltip(statusBridgeMode, "Bridge mode: external-exe, node-script, or embedded-script");
+        applyTooltip(statusBridgeMode, "Bridge mode: external-exe (MITM proxy)");
         applyTooltip(statusVbCable, "VB-Audio Virtual Cable device detection");
         applyTooltip(statusAudioRoute, "Audio routing: ValVoice -> VB-CABLE -> Valorant");
         applyTooltip(statusSelfId, "Your Valorant self player ID");
@@ -220,11 +220,10 @@ public class ValVoiceController {
         Platform.runLater(() -> {
             if (statusBridgeMode != null) statusBridgeMode.setText(mode);
             if (statusXmpp != null) {
-                switch (mode) {
-                    case "external-exe" -> updateStatusLabel(statusXmpp, "External exe", true);
-                    case "node-script" -> updateStatusLabel(statusXmpp, "Node script", true);
-                    case "embedded-script" -> updateStatusLabel(statusXmpp, "Embedded script", true);
-                    default -> updateStatusLabel(statusXmpp, "Init...", false);
+                if ("external-exe".equals(mode)) {
+                    updateStatusLabel(statusXmpp, "MITM Active", true);
+                } else {
+                    updateStatusLabel(statusXmpp, "Init...", false);
                 }
             }
         });
@@ -247,8 +246,8 @@ public class ValVoiceController {
         Platform.runLater(() -> {
             if (c.statusBridgeMode != null) c.statusBridgeMode.setText(modeText);
             if (c.statusXmpp != null) {
-                boolean ok = "external-exe".equalsIgnoreCase(modeText) || "node-script".equalsIgnoreCase(modeText) || "embedded-script".equalsIgnoreCase(modeText);
-                c.updateStatusLabel(c.statusXmpp, ok ? ("Connected: " + modeText) : "Init...", ok);
+                boolean ok = "external-exe".equalsIgnoreCase(modeText);
+                c.updateStatusLabel(c.statusXmpp, ok ? "MITM Active" : "Init...", ok);
             }
         });
     }
@@ -975,12 +974,21 @@ public class ValVoiceController {
         Path workingDir = Paths.get(System.getProperty("user.dir"));
         Path xmppPrimary = workingDir.resolve(XMPP_BRIDGE_EXE_PRIMARY);
         Path xmppExe = Files.isRegularFile(xmppPrimary) ? xmppPrimary : null;
+
+        // Also check mitm/ subdirectory
+        if (xmppExe == null) {
+            Path xmppInMitm = workingDir.resolve("mitm").resolve(XMPP_BRIDGE_EXE_PRIMARY);
+            if (Files.isRegularFile(xmppInMitm)) {
+                xmppExe = xmppInMitm;
+            }
+        }
+
         boolean xmppExePresent = xmppExe != null;
         if (!xmppExePresent) {
-            logger.warn("XMPP bridge executable '{}' not found in working directory (using fallback embedded script).", XMPP_BRIDGE_EXE_PRIMARY);
-            updateStatusLabel(statusXmpp, "Missing exe (stub)", false);
+            logger.error("MITM executable '{}' not found! Application cannot function without it.", XMPP_BRIDGE_EXE_PRIMARY);
+            updateStatusLabel(statusXmpp, "MITM exe missing", false);
         } else {
-            logger.info("Detected external XMPP bridge executable: {}", xmppExe.toAbsolutePath());
+            logger.info("Detected MITM executable: {}", xmppExe.toAbsolutePath());
             updateStatusLabel(statusXmpp, "Detected", true);
         }
 

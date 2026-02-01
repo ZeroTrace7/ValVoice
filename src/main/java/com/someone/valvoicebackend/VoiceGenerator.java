@@ -15,7 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.google.gson.*;
 
@@ -33,12 +34,19 @@ public class VoiceGenerator {
 
     private final Robot robot;
     private final InbuiltVoiceSynthesizer synthesizer;
+    // Single-threaded executor ensures strict FIFO ordering - no overlapping speech
+    private final ExecutorService ttsExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "tts-speaker");
+        t.setDaemon(true);
+        return t;
+    });
     private int keyEvent = DEFAULT_KEY;
     private boolean pttEnabled = true;
     private String currentVoice = "Microsoft Zira Desktop";
     private short currentVoiceRate = 50;
     private volatile boolean isSpeaking = false;
     private int prerollDelayMs = 200;
+    private int postrollDelayMs = 100;
 
     private VoiceGenerator(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
         this.synthesizer = synthesizer;
@@ -76,7 +84,8 @@ public class VoiceGenerator {
         logger.debug("Narrating: '{}' (voice={})",
             text.length() > 50 ? text.substring(0, 47) + "..." : text, voice);
 
-        CompletableFuture.runAsync(() -> {
+        // Submit to single-threaded executor for strict FIFO ordering
+        ttsExecutor.submit(() -> {
             isSpeaking = true;
             try {
                 if (pttEnabled) {
@@ -93,6 +102,12 @@ public class VoiceGenerator {
                 // This call blocks until speech completes - PTT stays held during playback
                 synthesizer.speakInbuiltVoice(voice, text, rate);
                 logger.debug("Audio playback finished");
+
+                // Post-roll delay: ensure audio transmission completes before releasing PTT
+                if (pttEnabled) {
+                    Thread.sleep(postrollDelayMs);
+                    logger.debug("Postroll delay {} ms completed", postrollDelayMs);
+                }
 
             } catch (Exception e) {
                 logger.error("TTS error: {}", e.getMessage());
