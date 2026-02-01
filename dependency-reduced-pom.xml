@@ -12,14 +12,16 @@
         <directory>src/main/resources</directory>
       </resource>
       <resource>
-        <targetPath>xmpp-bridge</targetPath>
-        <directory>${project.basedir}/xmpp-bridge</directory>
+        <targetPath>mitm</targetPath>
+        <directory>${project.basedir}/mitm</directory>
         <includes>
-          <include>**/*</include>
+          <include>dist/**</include>
+          <include>certs/**</include>
+          <include>package.json</include>
         </includes>
         <excludes>
           <exclude>node_modules/**</exclude>
-          <exclude>.pkg-cache/**</exclude>
+          <exclude>src/**</exclude>
           <exclude>*.log</exclude>
         </excludes>
       </resource>
@@ -44,7 +46,7 @@
             <configuration>
               <transformers>
                 <transformer>
-                  <mainClass>com.someone.valvoice.valvoicegui.Main</mainClass>
+                  <mainClass>com.someone.valvoicegui.Main</mainClass>
                 </transformer>
               </transformers>
               <filters>
@@ -66,7 +68,7 @@
         <artifactId>javafx-maven-plugin</artifactId>
         <version>0.0.8</version>
         <configuration>
-          <mainClass>com.someone.valvoice/com.someone.valvoice.valvoicegui.Main</mainClass>
+          <mainClass>com.someone.valvoicegui/com.someone.valvoicegui.Main</mainClass>
         </configuration>
       </plugin>
       <plugin>

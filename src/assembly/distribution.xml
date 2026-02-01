@@ -18,27 +18,21 @@
             </includes>
         </fileSet>
 
-        <!-- Include xmpp-bridge directory -->
-        <fileSet>
-            <directory>${project.basedir}/xmpp-bridge</directory>
-            <outputDirectory>/xmpp-bridge</outputDirectory>
-            <includes>
-                <include>**/*</include>
-            </includes>
-            <excludes>
-                <exclude>node_modules/**</exclude>
-                <exclude>.pkg-cache/**</exclude>
-                <exclude>*.log</exclude>
-            </excludes>
-        </fileSet>
-
-        <!-- Include SoundVolumeView.exe if present -->
+        <!-- Include SoundVolumeView.exe and valvoice-mitm.exe -->
         <fileSet>
             <directory>${project.basedir}</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>SoundVolumeView.exe</include>
-                <include>valvoice-xmpp.exe</include>
+            </includes>
+        </fileSet>
+
+        <!-- Include valvoice-mitm.exe from mitm folder -->
+        <fileSet>
+            <directory>${project.basedir}/mitm</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>valvoice-mitm.exe</include>
             </includes>
         </fileSet>
 
@@ -48,7 +42,6 @@
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>README.md</include>
-                <include>TEAM_CHAT_FIX_SUMMARY.md</include>
             </includes>
         </fileSet>
     </fileSets>

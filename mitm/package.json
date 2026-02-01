@@ -1,13 +1,13 @@
 {
-  "name": "valvoice-xmpp",
+  "name": "valvoice-mitm",
   "version": "1.0.0",
   "description": "MITM proxy for ValVoice to intercept Valorant XMPP chat traffic",
   "main": "dist/main.js",
   "bin": "dist/main.js",
   "scripts": {
-    "build": "tsc",
-    "package": "pkg dist/main.js --targets node18-win-x64 --output ../target/valvoice-xmpp.exe --compress GZip",
-    "build:all": "npm run build && npm run package"
+    "build": "tsc && xcopy certs dist\\certs /E /I /Y",
+    "build:exe": "pkg dist/main.js --targets node18-win-x64 --output valvoice-mitm.exe --compress GZip",
+    "build:all": "npm run build && npm run build:exe"
   },
   "keywords": ["valorant", "xmpp", "mitm", "valvoice"],
   "author": "",
@@ -21,7 +21,7 @@
     "pkg": "^5.8.1"
   },
   "pkg": {
-    "assets": "certs/*",
+    "assets": ["dist/certs/**/*"],
     "scripts": "dist/main.js",
     "targets": [
       "node18-win-x64"

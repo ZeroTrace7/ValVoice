@@ -17,7 +17,7 @@ export class XmppMITM {
     async start() {
         return new Promise<void>(async (resolve) => {
             let cliHooked = false;
-            const certsDir = path.join(__dirname, '..', 'certs')
+            const certsDir = path.join(__dirname, 'certs')
             tls.createServer({
                 key: await fs.promises.readFile(path.join(certsDir, 'server.key')),
                 cert: await fs.promises.readFile(path.join(certsDir, 'server.cert')),

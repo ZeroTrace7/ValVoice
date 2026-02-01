@@ -43,6 +43,7 @@ public class Main {
         return t;
     });
 
+
     private static final Pattern IQ_ID_PATTERN = Pattern.compile("<iq[^>]*id=([\"'])_xmpp_bind1\\1", Pattern.CASE_INSENSITIVE);
     private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern IQ_START_PATTERN = Pattern.compile("<iq[\\s>]", Pattern.CASE_INSENSITIVE);
@@ -102,52 +103,6 @@ public class Main {
         return true;
     }
 
-    /**
-     * Send a chat message to XMPP via the MITM proxy process
-     * @param toJid destination JID (room or user)
-     * @param body message body
-     * @param msgType message type (groupchat for MUC, chat for whisper)
-     */
-    public static void sendMessageToXmpp(String toJid, String body, String msgType) {
-        sendCommandToXmpp(String.format(
-            "{\"type\":\"send\",\"to\":\"%s\",\"body\":\"%s\",\"msgType\":\"%s\"}",
-            escapeJson(toJid),
-            escapeJson(body),
-            escapeJson(msgType)
-        ));
-    }
-
-    /**
-     * Send a raw command to the XMPP bridge process
-     * @param jsonCommand JSON command string
-     */
-    private static void sendCommandToXmpp(String jsonCommand) {
-        if (mitmProcess == null || !mitmProcess.isAlive()) {
-            logger.warn("Cannot send command: XMPP bridge not running");
-            return;
-        }
-        try {
-            OutputStream os = mitmProcess.getOutputStream();
-            os.write((jsonCommand + "\n").getBytes(StandardCharsets.UTF_8));
-            os.flush();
-            logger.debug("Sent command to XMPP bridge: {}", jsonCommand);
-        } catch (IOException e) {
-            logger.error("Failed to send command to XMPP bridge", e);
-        }
-    }
-
-    /**
-     * Escape special characters for JSON string
-     */
-    private static String escapeJson(String str) {
-        if (str == null) return "";
-        return str.replace("\\", "\\\\")
-                  .replace("\"", "\\\"")
-                  .replace("\n", "\\n")
-                  .replace("\r", "\\r")
-                  .replace("\t", "\\t");
-    }
-
 
     private static void startMitmProxy() {
         // Entry point for starting the MITM proxy
@@ -179,73 +134,39 @@ public class Main {
         logger.info("Starting MITM proxy (transparent interception approach)...");
         ValVoiceController.updateXmppStatus("Starting...", false);
 
-        // Try standalone .exe first (preferred for production)
+        // Find valvoice-mitm.exe
         Path workingDir = Paths.get(System.getProperty("user.dir"));
         Path exePrimary = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
         Path exeCandidate = Files.isRegularFile(exePrimary) ? exePrimary : null;
 
+        // Also check mitm/ subdirectory
         if (exeCandidate == null) {
-            logger.warn("{} not found; attempting to auto-build...", XMPP_EXE_NAME_PRIMARY);
-            Path built = tryBuildMitmExecutable(workingDir);
-            if (built != null && Files.isRegularFile(built)) {
-                exeCandidate = built;
+            Path exeInMitm = workingDir.resolve("mitm").resolve(XMPP_EXE_NAME_PRIMARY);
+            if (Files.isRegularFile(exeInMitm)) {
+                exeCandidate = exeInMitm;
             }
         }
 
-        // If .exe exists, use it
-        if (exeCandidate != null && Files.isReadable(exeCandidate)) {
-            ProcessBuilder pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
-            pb.redirectErrorStream(true);
-            pb.directory(workingDir.toFile());
-            try {
-                mitmProcess = pb.start();
-                System.setProperty("valvoice.bridgeMode", "external-exe");
-                ValVoiceController.updateBridgeModeLabel("external-exe");
-                logger.info("Started MITM proxy (mode: external-exe)");
-            } catch (IOException e) {
-                logger.error("Failed to start MITM proxy .exe: {}", e.getMessage());
-                ValVoiceController.updateXmppStatus("Start failed", false);
-                return;
-            }
-        } else {
-            // Fallback to Node.js + index.js
-            logger.info("MITM .exe not found, trying Node.js fallback...");
+        if (exeCandidate == null || !Files.isReadable(exeCandidate)) {
+            logger.error("{} not found! Please ensure valvoice-mitm.exe is present.", XMPP_EXE_NAME_PRIMARY);
+            ValVoiceController.updateXmppStatus("MITM exe missing", false);
+            return;
+        }
 
-            // Find Node.js executable
-            String nodeCommand = findNodeExecutable();
-            if (nodeCommand == null) {
-                logger.error("Node.js not found! Please install Node.js from https://nodejs.org/ or build valvoice-xmpp.exe");
-                System.setProperty("valvoice.bridgeMode", "unavailable");
-                ValVoiceController.updateXmppStatus("Node.js missing", false);
-                return;
-            }
-
-            // Find mitm directory
-            Path bridgeDir;
-            try {
-                bridgeDir = getMitmDirectory();
-            } catch (IOException e) {
-                logger.error("MITM directory not found: {}", e.getMessage());
-                System.setProperty("valvoice.bridgeMode", "unavailable");
-                ValVoiceController.updateXmppStatus("MITM missing", false);
-                return;
-            }
-
-            // Start Node.js process
-            ProcessBuilder pb = new ProcessBuilder(nodeCommand, "dist/main.js");
-            pb.directory(bridgeDir.toFile());
-            pb.redirectErrorStream(true);
-
-            try {
-                mitmProcess = pb.start();
-                System.setProperty("valvoice.bridgeMode", "node-script");
-                ValVoiceController.updateBridgeModeLabel("node-script");
-                logger.info("Started MITM proxy (mode: node-script) from: {}", bridgeDir);
-            } catch (IOException e) {
-                logger.error("Failed to start Node.js MITM proxy: {}", e.getMessage());
-                ValVoiceController.updateXmppStatus("Start failed", false);
-                return;
-            }
+        // Launch the exe
+        // Observer-only: Java reads MITM stdout JSON, never writes to stdin
+        ProcessBuilder pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
+        pb.redirectErrorStream(true);
+        pb.directory(workingDir.toFile());
+        try {
+            mitmProcess = pb.start();
+            System.setProperty("valvoice.bridgeMode", "external-exe");
+            ValVoiceController.updateBridgeModeLabel("external-exe");
+            logger.info("Started MITM proxy from: {}", exeCandidate.toAbsolutePath());
+        } catch (IOException e) {
+            logger.error("Failed to start MITM proxy .exe: {}", e.getMessage());
+            ValVoiceController.updateXmppStatus("Start failed", false);
+            return;
         }
 
         // Read output from the MITM proxy process
@@ -281,7 +202,7 @@ public class Main {
             }
         });
 
-        // Monitor process exit
+        // Monitor MITM process exit (passive - just log, no restart)
         mitmIoPool.submit(() -> {
             try {
                 int code = mitmProcess.waitFor();
@@ -292,7 +213,7 @@ public class Main {
             }
         });
 
-        // Register shutdown hook
+        // Register shutdown hook (cleanup MITM on app exit)
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (mitmProcess != null && mitmProcess.isAlive()) {
                 logger.info("Destroying MITM proxy process");
@@ -310,6 +231,7 @@ public class Main {
             }
         }, "mitm-shutdown"));
     }
+
 
     /**
      * Handle events from the MITM proxy process
@@ -398,6 +320,7 @@ public class Main {
 
     /**
      * Extract chat info from a single message stanza and log it.
+     * Triggers TTS for valid chat messages.
      */
     private static void extractAndLogChat(String messageXml) {
         // Extract body
@@ -439,6 +362,35 @@ public class Main {
 
         // Log the chat message
         logger.info("[CHAT] type={} from={} body=\"{}\"", chatType, sender, body);
+
+        // Build spoken text based on chat type
+        String spokenText;
+        switch (chatType) {
+            case "TEAM" -> spokenText = "Teammate says: " + body;
+            case "PARTY" -> spokenText = "Party chat: " + body;
+            case "WHISPER" -> spokenText = sender + " whispers: " + body;
+            default -> { return; }
+        }
+
+        // Trigger TTS
+        speakChatMessage(spokenText);
+    }
+
+    /**
+     * Speak a chat message using the TTS engine.
+     * Uses VoiceGenerator if available.
+     */
+    private static void speakChatMessage(String text) {
+        try {
+            if (VoiceGenerator.isInitialized()) {
+                VoiceGenerator.getInstance().speak(text);
+                logger.debug("[TTS] Speaking: {}", text);
+            } else {
+                logger.warn("[TTS] VoiceGenerator not initialized, cannot speak: {}", text);
+            }
+        } catch (Exception e) {
+            logger.error("[TTS] Failed to speak: {}", e.getMessage());
+        }
     }
 
     // Attempt to build valvoice-mitm.exe using the included mitm project.
@@ -471,7 +423,7 @@ public class Main {
                 logger.warn("npm run build:all failed with exit code {}", npmBuild);
                 return null;
             }
-            Path exe = workingDir.resolve("target").resolve("valvoice-xmpp.exe");
+            Path exe = workingDir.resolve("valvoice-mitm.exe");
             if (Files.isRegularFile(exe)) {
                 logger.info("Successfully built {}", exe.toAbsolutePath());
                 return exe;
@@ -480,7 +432,7 @@ public class Main {
                 return null;
             }
         } catch (Exception e) {
-            logger.warn("Auto-build of valvoice-xmpp.exe failed", e);
+            logger.warn("Auto-build of valvoice-mitm.exe failed", e);
             return null;
         }
     }
