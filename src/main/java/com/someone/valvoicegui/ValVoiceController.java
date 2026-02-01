@@ -75,7 +75,7 @@ public class ValVoiceController {
 
     // Status bar labels (injected from FXML)
     @FXML public Label statusXmpp;         // XMPP bridge executable presence / readiness
-    @FXML public Label statusBridgeMode;   // external-exe vs embedded-script
+    @FXML public Label statusBridgeMode;   // external-exe (MITM proxy)
     @FXML public Label statusVbCable;      // VB-Audio virtual cable detection
     @FXML public Label statusAudioRoute;   // SoundVolumeView availability
     @FXML public Label statusSelfId;       // Current self player id
@@ -135,15 +135,6 @@ public class ValVoiceController {
     public void initialize() {
         logger.info("Initializing ValVoiceController");
 
-        // Register listener for self ID changes (immediate invoke to show current value)
-        ChatDataHandler.getInstance().registerSelfIdListener(id -> {
-            if (id != null) {
-                Platform.runLater(() -> {
-                    setUserIDLabel(id);
-                    updateStatusLabel(statusSelfId, "Self: " + id, true);
-                });
-            }
-        }, true);
 
         // Initialize status labels early (default to info/warning look)
         ensureBaseStatusClass(statusXmpp);
@@ -156,14 +147,14 @@ public class ValVoiceController {
         updateStatusLabelWithType(statusBridgeMode, "-", "info");
         updateStatusLabelWithType(statusVbCable, "Checking...", "warning");
         updateStatusLabelWithType(statusAudioRoute, "Checking...", "warning");
-        updateStatusLabelWithType(statusSelfId, "Self: (pending)", "info");
+        updateStatusLabelWithType(statusSelfId, "Self: (observer mode)", "info");
 
         // Helpful tooltips
-        applyTooltip(statusXmpp, "XMPP bridge availability (Node script / exe)");
+        applyTooltip(statusXmpp, "MITM proxy status (valvoice-mitm.exe)");
         applyTooltip(statusBridgeMode, "Bridge mode: external-exe (MITM proxy)");
         applyTooltip(statusVbCable, "VB-Audio Virtual Cable device detection");
         applyTooltip(statusAudioRoute, "Audio routing: ValVoice -> VB-CABLE -> Valorant");
-        applyTooltip(statusSelfId, "Your Valorant self player ID");
+        applyTooltip(statusSelfId, "Observer mode - player ID not tracked");
 
         // Populate ComboBoxes with data
         populateComboBoxes();
@@ -188,8 +179,6 @@ public class ValVoiceController {
         if (SIMULATE_CHAT) {
             startChatSimulation();
         }
-        // New: attempt to auto-initialize Riot local API and resolve self player ID.
-        initRiotLocalApiAsync();
         // Dependency + bridge checks
         verifyExternalDependencies();
         updateBridgeStatusFromSystemProperties();
@@ -308,44 +297,6 @@ public class ValVoiceController {
         });
     }
 
-    private void initRiotLocalApiAsync() {
-        CompletableFuture.runAsync(() -> {
-            try {
-                updateLoadingStatus("Locating Riot lockfile...");
-                String path = LockFileHandler.findDefaultLockfile();
-                if (path == null) {
-                    logger.warn("Riot lockfile not found in default locations; Valorant integration inactive");
-                    return;
-                }
-                logger.info("Found Riot lockfile: {}", path);
-                updateLoadingStatus("Reading Riot lockfile...");
-                boolean loaded = ChatDataHandler.getInstance().initializeFromLockfile(path);
-                if (!loaded) {
-                    logger.warn("Failed to read Riot lockfile; Valorant integration inactive");
-                    return;
-                }
-
-                // Initialize APIHandler with the same lockfile
-                if (!APIHandler.getInstance().loadLockfile(path)) {
-                    logger.warn("Failed to load lockfile into APIHandler");
-                }
-
-                updateLoadingStatus("Resolving player identity...");
-                // Self ID resolution happens inside initializeFromLockfile; reflect it in UI if set later.
-                String selfId = ChatDataHandler.getInstance().getSelfId();
-                if (selfId != null) {
-                    Platform.runLater(() -> setUserIDLabel(selfId));
-                }
-                // Fetch extended client details (version / region)
-                APIHandler.getInstance().fetchClientDetails().ifPresent(details ->
-                        logger.info("Riot client details: {}", details)
-                );
-                logger.info("Riot local API initialized (self ID: {})", selfId);
-            } catch (Exception e) {
-                logger.debug("Riot local API initialization failed", e);
-            }
-        }, scheduledExecutor);
-    }
 
     private void populateComboBoxes() {
         // Populate sources ComboBox
@@ -578,8 +529,8 @@ public class ValVoiceController {
         handle[0] = scheduledExecutor.scheduleWithFixedDelay(() -> {
             int s = step.incrementAndGet();
             switch (s) {
-                case 1 -> updateLoadingStatus("Loading configuration...");
-                case 2 -> updateLoadingStatus("Connecting to services...");
+                case 1 -> updateLoadingStatus("Starting MITM proxy...");
+                case 2 -> updateLoadingStatus("Waiting for connection...");
                 case 3 -> updateLoadingStatus("Ready!");
                 case 4 -> {
                     isLoading = false;

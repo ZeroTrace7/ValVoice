@@ -37,6 +37,8 @@ public class Main {
 
     // MITM proxy process management (external exe stdout reader)
     private static Process mitmProcess;
+    private static volatile boolean mitmFatalError = false;
+    private static volatile String mitmFatalReason = null;
     private static final ExecutorService mitmIoPool = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "mitm-io");
         t.setDaemon(true);
@@ -44,23 +46,14 @@ public class Main {
     });
 
 
-    private static final Pattern IQ_ID_PATTERN = Pattern.compile("<iq[^>]*id=([\"'])_xmpp_bind1\\1", Pattern.CASE_INSENSITIVE);
-    private static final Pattern JID_TAG_PATTERN = Pattern.compile("<jid>(.*?)</jid>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern IQ_START_PATTERN = Pattern.compile("<iq[\\s>]", Pattern.CASE_INSENSITIVE);
-    // FIXED Issue 5: More robust pattern that handles attributes with special characters and whitespace
+    // Pattern for extracting message stanzas from XMPP XML
     private static final Pattern MESSAGE_STANZA_PATTERN = Pattern.compile(
         "<message\\s[^>]*>.*?</message>",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
     );
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-mitm.exe";
 
-    // Current XMPP room JID for sending messages
-    private static volatile String currentRoomJid = null;
-
-    // Track active MUC rooms to help with message classification
-    private static final java.util.Set<String> activeRooms = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
-
-    // Store lock file resources to prevent leak
+    // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
 
@@ -131,7 +124,7 @@ public class Main {
             return;
         }
 
-        logger.info("Starting MITM proxy (transparent interception approach)...");
+        logger.info("Starting MITM proxy...");
         ValVoiceController.updateXmppStatus("Starting...", false);
 
         // Find valvoice-mitm.exe
@@ -148,9 +141,10 @@ public class Main {
         }
 
         if (exeCandidate == null || !Files.isReadable(exeCandidate)) {
-            logger.error("{} not found! Please ensure valvoice-mitm.exe is present.", XMPP_EXE_NAME_PRIMARY);
+            logger.error("FATAL: {} not found! ValVoice cannot function without the MITM proxy.", XMPP_EXE_NAME_PRIMARY);
+            logger.error("Please ensure valvoice-mitm.exe is present in the application directory or mitm/ subdirectory.");
             ValVoiceController.updateXmppStatus("MITM exe missing", false);
-            return;
+            System.exit(1);
         }
 
         // Launch the exe
@@ -162,11 +156,11 @@ public class Main {
             mitmProcess = pb.start();
             System.setProperty("valvoice.bridgeMode", "external-exe");
             ValVoiceController.updateBridgeModeLabel("external-exe");
-            logger.info("Started MITM proxy from: {}", exeCandidate.toAbsolutePath());
+            logger.info("MITM proxy started successfully from: {}", exeCandidate.toAbsolutePath());
         } catch (IOException e) {
-            logger.error("Failed to start MITM proxy .exe: {}", e.getMessage());
+            logger.error("FATAL: Failed to start MITM proxy: {}", e.getMessage());
             ValVoiceController.updateXmppStatus("Start failed", false);
-            return;
+            System.exit(1);
         }
 
         // Read output from the MITM proxy process
@@ -184,7 +178,20 @@ public class Main {
                         }
                         JsonObject obj = parsed.getAsJsonObject();
                         String type = obj.has("type") && !obj.get("type").isJsonNull() ? obj.get("type").getAsString() : "";
-                        handleMitmEvent(type, obj);
+
+                        // Check for fatal error events during startup
+                        if ("error".equals(type)) {
+                            int code = obj.has("code") ? obj.get("code").getAsInt() : 0;
+                            String reason = obj.has("reason") && !obj.get("reason").isJsonNull() ? obj.get("reason").getAsString() : "Unknown error";
+                            logger.error("[MITM:error] code={} reason={}", code, reason);
+                            // Fatal codes: 409=Riot running, 404=Valorant not found, 500=internal
+                            if (code == 409 || code == 404 || code == 500) {
+                                mitmFatalError = true;
+                                mitmFatalReason = reason;
+                            }
+                        } else {
+                            handleMitmEvent(type, obj);
+                        }
                     } catch (Exception ex) {
                         // Non-JSON bridge output
                         String lower = line.toLowerCase();
@@ -201,6 +208,58 @@ public class Main {
                 logger.info("MITM proxy output closed");
             }
         });
+
+        // === CRITICAL: Wait for MITM startup validation ===
+        // Monitor for early exit or fatal errors during first 3 seconds
+        logger.info("Validating MITM startup (waiting up to 3 seconds)...");
+        long startTime = System.currentTimeMillis();
+        long timeoutMs = 3000;
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            // Check for fatal error from stdout
+            if (mitmFatalError) {
+                logger.error("FATAL: MITM reported error during startup: {}", mitmFatalReason);
+                if (mitmProcess.isAlive()) {
+                    mitmProcess.destroyForcibly();
+                }
+                showFatalErrorAndExit(mitmFatalReason);
+            }
+
+            // Check if process exited early
+            if (!mitmProcess.isAlive()) {
+                int exitCode = mitmProcess.exitValue();
+                logger.error("FATAL: MITM process exited early with code {}", exitCode);
+                String reason = mitmFatalReason != null ? mitmFatalReason : "MITM proxy exited unexpectedly (code " + exitCode + ")";
+                showFatalErrorAndExit(reason);
+            }
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        // Final check after timeout
+        if (mitmFatalError) {
+            logger.error("FATAL: MITM reported error: {}", mitmFatalReason);
+            if (mitmProcess.isAlive()) {
+                mitmProcess.destroyForcibly();
+            }
+            showFatalErrorAndExit(mitmFatalReason);
+        }
+
+        if (!mitmProcess.isAlive()) {
+            int exitCode = mitmProcess.exitValue();
+            logger.error("FATAL: MITM process not alive after startup window (code {})", exitCode);
+            String reason = mitmFatalReason != null ? mitmFatalReason : "MITM proxy failed to start (code " + exitCode + ")";
+            showFatalErrorAndExit(reason);
+        }
+
+        logger.info("MITM proxy validated successfully - process is alive");
+        ValVoiceController.updateXmppStatus("Active", true);
+        ValVoiceController.updateBridgeModeLabel("external-exe");
 
         // Monitor MITM process exit (passive - just log, no restart)
         mitmIoPool.submit(() -> {
@@ -393,179 +452,6 @@ public class Main {
         }
     }
 
-    // Attempt to build valvoice-mitm.exe using the included mitm project.
-    // Returns path to built exe if successful, else null.
-    private static Path tryBuildMitmExecutable(Path workingDir) {
-        try {
-            Path mitmDir = workingDir.resolve("mitm");
-            Path pkgJson = mitmDir.resolve("package.json");
-            if (!Files.isRegularFile(pkgJson)) {
-                logger.info("mitm folder not found ({}); skipping auto-build.", mitmDir.toAbsolutePath());
-                return null;
-            }
-            if (!isCommandAvailable("node") || !isCommandAvailable("npm")) {
-                logger.info("Node.js or npm not available; cannot auto-build valvoice-mitm.exe.");
-                return null;
-            }
-            logger.info("Auto-building valvoice-mitm.exe (clean cache) ...");
-            // Best effort: clear pkg cache before build
-            runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %LOCALAPPDATA%\\pkg rmdir /s /q %LOCALAPPDATA%\\pkg").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
-            runAndWait(new ProcessBuilder("cmd.exe", "/c", "if exist %USERPROFILE%\\.pkg-cache rmdir /s /q %USERPROFILE%\\.pkg-cache").directory(workingDir.toFile()), 30, TimeUnit.SECONDS);
-            // npm install
-            int npmInstall = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm ci").directory(mitmDir.toFile()), 10, TimeUnit.MINUTES);
-            if (npmInstall != 0) {
-                logger.warn("npm ci failed with exit code {}", npmInstall);
-                return null;
-            }
-            // npm run build:all (compiles TypeScript and packages exe)
-            int npmBuild = runAndWait(new ProcessBuilder("cmd.exe", "/c", "npm run build:all").directory(mitmDir.toFile()), 10, TimeUnit.MINUTES);
-            if (npmBuild != 0) {
-                logger.warn("npm run build:all failed with exit code {}", npmBuild);
-                return null;
-            }
-            Path exe = workingDir.resolve("valvoice-mitm.exe");
-            if (Files.isRegularFile(exe)) {
-                logger.info("Successfully built {}", exe.toAbsolutePath());
-                return exe;
-            } else {
-                logger.warn("Auto-build completed but {} not found", exe.toAbsolutePath());
-                return null;
-            }
-        } catch (Exception e) {
-            logger.warn("Auto-build of valvoice-mitm.exe failed", e);
-            return null;
-        }
-    }
-
-    private static boolean isCommandAvailable(String command) {
-        try {
-            Process p = new ProcessBuilder(command, "--version").redirectErrorStream(true).start();
-            boolean ok = p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0;
-            if (!ok) p.destroyForcibly();
-            return ok;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private static int runAndWait(ProcessBuilder pb, long timeout, TimeUnit unit) throws IOException, InterruptedException {
-        pb.redirectErrorStream(true);
-        Process proc = pb.start();
-        ExecutorService logExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "proc-log");
-            t.setDaemon(true);
-            return t;
-        });
-        try {
-            logExecutor.submit(() -> {
-                try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        logger.info("[bridge-build] {}", line);
-                    }
-                } catch (IOException ignored) {}
-            });
-
-            if (!proc.waitFor(timeout, unit)) {
-                proc.destroyForcibly();
-                logger.warn("Process timed out: {}", String.join(" ", pb.command()));
-                return -1;
-            }
-            return proc.exitValue();
-        } finally {
-            logExecutor.shutdown();
-            try {
-                if (!logExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    logExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                logExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    /**
-     * Find Node.js executable on the system.
-     * Tries multiple common installation locations.
-     * @return Path to node executable, or null if not found
-     */
-    private static String findNodeExecutable() {
-        // Try common locations
-        String[] possiblePaths = {
-            "node",                                                        // System PATH
-            "node.exe",                                                    // Windows
-            "C:\\Program Files\\nodejs\\node.exe",                         // Default Windows install
-            System.getenv("PROGRAMFILES") + "\\nodejs\\node.exe",         // Program Files
-            System.getenv("ProgramFiles(x86)") + "\\nodejs\\node.exe",    // Program Files (x86)
-            System.getenv("LOCALAPPDATA") + "\\Programs\\nodejs\\node.exe" // Local install
-        };
-
-        for (String path : possiblePaths) {
-            if (path == null) continue; // Skip if env var is null
-            try {
-                Process process = new ProcessBuilder(path, "--version")
-                    .redirectErrorStream(true)
-                    .start();
-                boolean finished = process.waitFor(3, TimeUnit.SECONDS);
-                if (finished && process.exitValue() == 0) {
-                    logger.info("Found Node.js at: {}", path);
-                    return path;
-                }
-                process.destroyForcibly();
-            } catch (Exception ignored) {
-                // Try next path
-            }
-        }
-
-        logger.warn("Node.js not found in any common location");
-        return null;
-    }
-
-    /**
-     * Locate the mitm directory.
-     * Checks multiple possible locations relative to the application.
-     * @return Path to mitm directory
-     * @throws IOException if mitm directory cannot be found
-     */
-    private static Path getMitmDirectory() throws IOException {
-        // Try multiple possible locations
-        List<Path> candidatePaths = new ArrayList<>();
-
-        // 1. Current working directory
-        candidatePaths.add(Paths.get(System.getProperty("user.dir"), "mitm"));
-
-        // 2. JAR location (for packaged app)
-        try {
-            Path jarPath = Paths.get(Main.class.getProtectionDomain()
-                .getCodeSource().getLocation().toURI());
-            if (jarPath.toString().endsWith(".jar")) {
-                // If running from JAR, mitm should be next to it
-                Path appDir = jarPath.getParent();
-                candidatePaths.add(appDir.resolve("mitm"));
-                // Also try one level up (for jpackage structure)
-                if (appDir.getParent() != null) {
-                    candidatePaths.add(appDir.getParent().resolve("mitm"));
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not determine JAR location", e);
-        }
-
-        // 3. Check each candidate
-        for (Path candidate : candidatePaths) {
-            if (Files.isDirectory(candidate)) {
-                Path mainJs = candidate.resolve("dist/main.js");
-                if (Files.isRegularFile(mainJs)) {
-                    logger.info("Found mitm at: {}", candidate.toAbsolutePath());
-                    return candidate;
-                }
-            }
-        }
-
-        // Not found
-        throw new IOException("mitm directory not found. Checked: " + candidatePaths);
-    }
 
     private static void handleIncomingStanza(JsonObject obj) {
         if (!obj.has("data") || obj.get("data").isJsonNull()) return;
@@ -648,10 +534,6 @@ public class Main {
 
         // Skip non-message stanzas early
         if (!xmlLower.contains("<message") || !xmlLower.contains("<body>")) {
-            // Check for IQ stanzas (self ID detection)
-            if (IQ_START_PATTERN.matcher(xml).find()) {
-                detectSelfIdFromIq(xml);
-            }
             return;
         }
 
@@ -692,25 +574,6 @@ public class Main {
         }
     }
 
-    private static void detectSelfIdFromIq(String xml) {
-        try {
-            Matcher idMatcher = IQ_ID_PATTERN.matcher(xml);
-            if (!idMatcher.find()) return; // not the bind response
-            Matcher jidMatcher = JID_TAG_PATTERN.matcher(xml);
-            if (jidMatcher.find()) {
-                String fullJid = jidMatcher.group(1);
-                if (fullJid != null && fullJid.contains("@")) {
-                    String userPart = fullJid.substring(0, fullJid.indexOf('@'));
-                    if (!userPart.isBlank()) {
-                        ChatDataHandler.getInstance().updateSelfId(userPart);
-                        logger.info("Self ID (bind) detected: {}", userPart);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Failed to parse bind iq for self ID", e);
-        }
-    }
 
 
     /**

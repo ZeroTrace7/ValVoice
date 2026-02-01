@@ -85,7 +85,7 @@
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
             </resource>
-            <!-- Bundle mitm directory for Node.js fallback -->
+            <!-- Bundle mitm directory assets (certs for pkg) -->
             <resource>
                 <directory>${project.basedir}/mitm</directory>
                 <targetPath>mitm</targetPath>
