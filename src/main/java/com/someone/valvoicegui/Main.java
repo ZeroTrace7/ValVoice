@@ -69,6 +69,25 @@ public class Main {
     // Archive IQ detection - these messages are NEVER narrated
     private static final String ARCHIVE_NAMESPACE = "jabber:iq:riotgames:archive";
 
+    // === RECONNECT STABILITY: Duplicate Suppression ===
+    // Prevents the same message from triggering TTS multiple times during reconnects.
+    // Uses a bounded LRU cache to avoid memory leaks.
+    // Key = message content hash (body text), Value = timestamp when first seen
+    private static final int DUPLICATE_CACHE_SIZE = 100;
+    private static final java.util.Map<String, Long> recentMessageHashes =
+        java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(DUPLICATE_CACHE_SIZE, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<String, Long> eldest) {
+                return size() > DUPLICATE_CACHE_SIZE;
+            }
+        });
+
+    // Pattern to extract message ID attribute
+    private static final Pattern MESSAGE_ID_PATTERN = Pattern.compile(
+        "id=['\"]([^'\"]+)['\"]",
+        Pattern.CASE_INSENSITIVE
+    );
+
     // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
@@ -368,17 +387,20 @@ public class Main {
                 logger.info("[MITM:open-riot] socketID={}", socketID);
             }
             case "close-riot" -> {
-                // Riot server closed connection
+                // Riot server closed connection (may be ECONNRESET)
+                // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
                 logger.info("[MITM:close-riot] socketID={}", socketID);
             }
             case "close-valorant" -> {
                 // Valorant client closed connection
+                // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
                 logger.info("[MITM:close-valorant] socketID={}", socketID);
             }
             case "error" -> {
-                // Error event
+                // Error event (may be ECONNRESET)
+                // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
                 int code = obj.has("code") ? obj.get("code").getAsInt() : 0;
                 String reason = obj.has("reason") && !obj.get("reason").isJsonNull() ? obj.get("reason").getAsString() : "unknown";
                 logger.warn("[MITM:error] code={} reason={}", code, reason);
@@ -395,8 +417,8 @@ public class Main {
      * Uses ValorantNarrator-style Message parsing and ChatDataHandler.
      *
      * PHASE 1 FIX: Implements ValorantNarrator's archive/history blocking:
-     * 1. ARCHIVE IQ BLOCK: Messages inside <iq type="result"> or jabber:iq:riotgames:archive are NEVER forwarded
-     * 2. SESSION START GATE: Messages with stamp < sessionStartEpochMillis are dropped (historical)
+     * 1. ARCHIVE IQ BLOCK (PRIMARY): Messages inside <iq type="result"> or jabber:iq:riotgames:archive are NEVER forwarded
+     * 2. TIMESTAMP GUARD (SECONDARY): Messages with stamp < APP_START_TIME are dropped silently
      */
 
     private static void handleIncomingStanza(JsonObject obj) {
@@ -507,11 +529,18 @@ public class Main {
                 messageCount++;
 
                 if (singleMessageXml.toLowerCase().contains("<body>")) {
-                    // === PHASE 1 FIX: SESSION START GATE ===
+                    // === PHASE 1 FIX: TIMESTAMP GUARD ===
                     // Check if message has a stamp attribute (historical message indicator)
-                    // If stamp < sessionStartEpochMillis, this is an old message - DROP IT
+                    // If stamp < APP_START_TIME, this is an old message - DROP IT
                     if (isHistoricalMessage(singleMessageXml)) {
-                        logger.debug("[SESSION GATE] Dropping historical message (stamp < sessionStart)");
+                        logger.debug("[TIMESTAMP GATE] Dropping historical message");
+                        continue; // Skip to next message
+                    }
+
+                    // === RECONNECT STABILITY: Duplicate Suppression ===
+                    // Prevent same message from triggering TTS multiple times during reconnects
+                    if (isDuplicateMessage(singleMessageXml)) {
+                        logger.debug("[DUPLICATE GATE] Dropping duplicate message");
                         continue; // Skip to next message
                     }
 
@@ -528,9 +557,15 @@ public class Main {
 
             // Fallback: try parsing whole XML if pattern didn't match
             if (messageCount == 0) {
-                // === PHASE 1 FIX: SESSION START GATE (also for fallback) ===
+                // === PHASE 1 FIX: TIMESTAMP GUARD (also for fallback) ===
                 if (isHistoricalMessage(xml)) {
-                    logger.debug("[SESSION GATE] Dropping historical message in fallback path");
+                    logger.debug("[TIMESTAMP GATE] Dropping historical message in fallback path");
+                    return;
+                }
+
+                // === RECONNECT STABILITY: Duplicate Suppression (also for fallback) ===
+                if (isDuplicateMessage(xml)) {
+                    logger.debug("[DUPLICATE GATE] Dropping duplicate message in fallback path");
                     return;
                 }
 
@@ -552,18 +587,13 @@ public class Main {
      * PHASE 1 FIX: Check if a message is historical (should not be narrated).
      *
      * Historical messages have a 'stamp' attribute indicating when they were originally sent.
-     * If stamp < sessionStartEpochMillis, the message was sent before this session started
-     * and must be dropped to avoid TTS spam on startup/reconnection.
+     * If stamp < APP_START_TIME, the message was sent before this app started
+     * and must be dropped silently to avoid TTS spam on startup/reconnection.
      *
      * @param xml The message XML to check
      * @return true if message is historical and should be dropped, false if it should be processed
      */
     private static boolean isHistoricalMessage(String xml) {
-        // If session hasn't started yet (shouldn't happen), allow all messages
-        if (sessionStartEpochMillis == 0) {
-            return false;
-        }
-
         // Check for stamp attribute (present on archived/historical messages)
         Matcher stampMatcher = STAMP_PATTERN.matcher(xml);
         if (!stampMatcher.find()) {
@@ -576,19 +606,66 @@ public class Main {
             // Parse stamp: format is typically "YYYY-MM-DD HH:mm:ss" or ISO8601
             long messageEpochMillis = parseStampToEpochMillis(stampValue);
 
-            if (messageEpochMillis < sessionStartEpochMillis) {
-                logger.debug("[SESSION GATE] Historical message detected: stamp={} ({}) < sessionStart={}",
-                    stampValue, messageEpochMillis, sessionStartEpochMillis);
+            if (messageEpochMillis < APP_START_TIME) {
+                // DROP silently - do not log as error
+                logger.debug("[TIMESTAMP GATE] Historical message dropped: stamp={} < appStart={}",
+                    stampValue, APP_START_TIME);
                 return true;
             }
         } catch (Exception e) {
             // If we can't parse the stamp, assume it's historical to be safe
             // (stamped messages are always historical in Riot's protocol)
-            logger.debug("[SESSION GATE] Could not parse stamp '{}', treating as historical", stampValue);
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * RECONNECT STABILITY: Check if a message is a duplicate (already processed).
+     *
+     * During reconnects, Riot may resend messages that were already narrated.
+     * This method uses a bounded LRU cache to track recently processed messages
+     * and suppress duplicates silently.
+     *
+     * @param xml The message XML to check
+     * @return true if this is a duplicate and should be dropped, false if it should be processed
+     */
+    private static boolean isDuplicateMessage(String xml) {
+        // Generate a unique key for this message
+        // Priority 1: Use message ID if present
+        Matcher idMatcher = MESSAGE_ID_PATTERN.matcher(xml);
+        String messageKey;
+
+        if (idMatcher.find()) {
+            // Use message ID as primary key
+            messageKey = "id:" + idMatcher.group(1);
+        } else {
+            // Fallback: Use hash of body content + from attribute
+            Pattern bodyPattern = Pattern.compile("<body>([\\s\\S]*?)</body>", Pattern.CASE_INSENSITIVE);
+            Pattern fromPattern = Pattern.compile("from=['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
+
+            Matcher bodyMatcher = bodyPattern.matcher(xml);
+            Matcher fromMatcher = fromPattern.matcher(xml);
+
+            String body = bodyMatcher.find() ? bodyMatcher.group(1) : "";
+            String from = fromMatcher.find() ? fromMatcher.group(1) : "";
+
+            // Create composite key from from + body hash
+            messageKey = "hash:" + from.hashCode() + ":" + body.hashCode();
+        }
+
+        // Check if we've seen this message before
+        synchronized (recentMessageHashes) {
+            if (recentMessageHashes.containsKey(messageKey)) {
+                // Duplicate detected - already processed
+                return true;
+            }
+
+            // First time seeing this message - record it
+            recentMessageHashes.put(messageKey, System.currentTimeMillis());
+            return false;
+        }
     }
 
     /**
