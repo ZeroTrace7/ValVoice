@@ -53,10 +53,11 @@ public class Main {
     );
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-mitm.exe";
 
-    // === PHASE 1: Session Start Gate (ValorantNarrator behavior) ===
-    // Timestamp when upstream XMPP connection is confirmed (open-riot event)
-    // All messages with stamp < sessionStartEpochMillis are historical and must be dropped
-    private static volatile long sessionStartEpochMillis = 0;
+    // === PHASE 1: App Start Time (ValorantNarrator behavior) ===
+    // Immutable timestamp when the Java application starts.
+    // DO NOT reset on reconnects, socket resets, or MITM events.
+    // All messages with stamp < APP_START_TIME are historical and must be dropped.
+    private static final long APP_START_TIME = System.currentTimeMillis();
 
     // Pattern to extract stamp attribute from archived messages
     // Format: stamp="YYYY-MM-DD HH:mm:ss" or stamp='YYYY-MM-DD HH:mm:ss'
@@ -65,12 +66,8 @@ public class Main {
         Pattern.CASE_INSENSITIVE
     );
 
-    // Archive IQ detection patterns - these messages are NEVER narrated
+    // Archive IQ detection - these messages are NEVER narrated
     private static final String ARCHIVE_NAMESPACE = "jabber:iq:riotgames:archive";
-    private static final Pattern IQ_WRAPPER_PATTERN = Pattern.compile(
-        "<iq[^>]*type=['\"]result['\"][^>]*>",
-        Pattern.CASE_INSENSITIVE
-    );
 
     // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
@@ -365,11 +362,10 @@ public class Main {
                 logger.info("[MITM:open-valorant] socketID={} host={} port={}", socketID, host, port);
             }
             case "open-riot" -> {
-                // MITM connected to Riot server - CAPTURE SESSION START TIME
-                // This is the gate: all messages with stamp < sessionStartEpochMillis are historical
+                // MITM connected to Riot server
+                // Note: APP_START_TIME is immutable - we do NOT reset it on reconnects
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
-                sessionStartEpochMillis = System.currentTimeMillis();
-                logger.info("[MITM:open-riot] socketID={} sessionStartEpochMillis={}", socketID, sessionStartEpochMillis);
+                logger.info("[MITM:open-riot] socketID={}", socketID);
             }
             case "close-riot" -> {
                 // Riot server closed connection
