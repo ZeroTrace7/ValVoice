@@ -79,15 +79,29 @@ export class XmppMITM {
                         time: Date.now(),
                         socketID: currentSocketID
                     }) + '\n')
+                    // Clean up Valorant socket when Riot closes
+                    if (!socket.destroyed) {
+                        socket.destroy()
+                    }
                 })
 
                 riotTLS.on('error', (err) => {
+                    // === MITM STABILITY: ECONNRESET and socket errors are non-fatal ===
+                    // Log the error, close affected socket, but DO NOT crash
                     console.log(JSON.stringify({
                         type: 'error',
                         time: Date.now(),
                         code: 500,
-                        reason: `Riot socket error: ${err.message}`
+                        reason: `Riot socket error: ${err.message}`,
+                        socketID: currentSocketID
                     }) + '\n')
+                    // Clean up both sockets
+                    if (!riotTLS.destroyed) {
+                        riotTLS.destroy()
+                    }
+                    if (!socket.destroyed) {
+                        socket.destroy()
+                    }
                 })
 
                 socket.on('data', data => {
@@ -109,16 +123,39 @@ export class XmppMITM {
                         time: Date.now(),
                         socketID: currentSocketID
                     }) + '\n')
+                    // Clean up Riot socket when Valorant closes
+                    if (!riotTLS.destroyed) {
+                        riotTLS.destroy()
+                    }
                 })
 
                 socket.on('error', (err) => {
+                    // === MITM STABILITY: ECONNRESET and socket errors are non-fatal ===
+                    // Log the error, close affected socket, but DO NOT crash
                     console.log(JSON.stringify({
                         type: 'error',
                         time: Date.now(),
                         code: 500,
-                        reason: `Valorant socket error: ${err.message}`
+                        reason: `Valorant socket error: ${err.message}`,
+                        socketID: currentSocketID
                     }) + '\n')
+                    // Clean up both sockets
+                    if (!socket.destroyed) {
+                        socket.destroy()
+                    }
+                    if (!riotTLS.destroyed) {
+                        riotTLS.destroy()
+                    }
                 })
+            }).on('error', (err) => {
+                // === MITM STABILITY: Server errors are non-fatal after startup ===
+                console.log(JSON.stringify({
+                    type: 'error',
+                    time: Date.now(),
+                    code: 500,
+                    reason: `TLS server error: ${err.message}`
+                }) + '\n')
+                // DO NOT crash - allow MITM to continue accepting connections
             }).listen(this._port, () => {
                 resolve()
             })

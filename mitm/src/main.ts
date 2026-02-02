@@ -3,6 +3,30 @@ import {XmppMITM} from './XmppMITM'
 import {getRiotClientPath, isRiotClientRunning} from './riotClientUtils'
 import {exec} from 'node:child_process'
 
+// === MITM STABILITY: Global error handlers (ValorantNarrator behavior) ===
+// Runtime errors like ECONNRESET, fetch failures must NEVER crash the MITM.
+// Only startup-time failures (409, 404, ENOENT) are fatal.
+
+process.on('uncaughtException', (err) => {
+    console.log(JSON.stringify({
+        type: 'error',
+        time: Date.now(),
+        code: 500,
+        reason: `Uncaught exception: ${err.message}`
+    }) + '\n');
+    // DO NOT call process.exit - allow MITM to continue
+});
+
+process.on('unhandledRejection', (reason: any) => {
+    console.log(JSON.stringify({
+        type: 'error',
+        time: Date.now(),
+        code: 500,
+        reason: `Unhandled rejection: ${reason}`
+    }) + '\n');
+    // DO NOT call process.exit - allow MITM to continue
+});
+
 (async () => {
     const httpPort = 35479
     const xmppPort = 35478
