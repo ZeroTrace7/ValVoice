@@ -291,6 +291,36 @@ public class Main {
         }, "mitm-shutdown"));
     }
 
+    /**
+     * Show a fatal error dialog and exit the application.
+     * Called before GUI is loaded, so uses pre-startup dialog.
+     */
+    private static void showFatalErrorAndExit(String message) {
+        logger.error("FATAL ERROR: {}", message);
+
+        // Determine user-friendly message
+        String displayMessage;
+        if (message != null && message.toLowerCase().contains("riot") && message.toLowerCase().contains("running")) {
+            displayMessage = "Riot Client is already running.\n\nPlease close Riot Client completely and restart ValVoice.";
+        } else if (message != null && (message.toLowerCase().contains("not found") || message.contains("404"))) {
+            displayMessage = "Valorant installation not found.\n\nPlease install Valorant and try again.";
+        } else {
+            displayMessage = "MITM proxy failed to start.\n\n" + (message != null ? message : "Unknown error");
+        }
+
+        ValVoiceApplication.showPreStartupDialog(
+            "ValVoice - Startup Error",
+            displayMessage,
+            MessageType.ERROR_MESSAGE
+        );
+
+        // Cleanup and exit
+        if (mitmProcess != null && mitmProcess.isAlive()) {
+            mitmProcess.destroyForcibly();
+        }
+        System.exit(1);
+    }
+
 
     /**
      * Handle events from the MITM proxy process
