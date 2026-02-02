@@ -53,6 +53,25 @@ public class Main {
     );
     private static final String XMPP_EXE_NAME_PRIMARY = "valvoice-mitm.exe";
 
+    // === PHASE 1: Session Start Gate (ValorantNarrator behavior) ===
+    // Timestamp when upstream XMPP connection is confirmed (open-riot event)
+    // All messages with stamp < sessionStartEpochMillis are historical and must be dropped
+    private static volatile long sessionStartEpochMillis = 0;
+
+    // Pattern to extract stamp attribute from archived messages
+    // Format: stamp="YYYY-MM-DD HH:mm:ss" or stamp='YYYY-MM-DD HH:mm:ss'
+    private static final Pattern STAMP_PATTERN = Pattern.compile(
+        "stamp=['\"]([^'\"]+)['\"]",
+        Pattern.CASE_INSENSITIVE
+    );
+
+    // Archive IQ detection patterns - these messages are NEVER narrated
+    private static final String ARCHIVE_NAMESPACE = "jabber:iq:riotgames:archive";
+    private static final Pattern IQ_WRAPPER_PATTERN = Pattern.compile(
+        "<iq[^>]*type=['\"]result['\"][^>]*>",
+        Pattern.CASE_INSENSITIVE
+    );
+
     // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
@@ -328,12 +347,8 @@ public class Main {
     private static void handleMitmEvent(String type, JsonObject obj) {
         switch (type) {
             case "incoming" -> {
-                // Raw XML received from Riot server
-                if (obj.has("data") && !obj.get("data").isJsonNull()) {
-                    String data = obj.get("data").getAsString();
-                    logger.debug("[MITM:incoming] {}", data);
-                    processIncomingXml(data);
-                }
+                // Raw XML received from Riot server - use ValorantNarrator-style parsing
+                handleIncomingStanza(obj);
             }
             case "outgoing" -> {
                 // Raw XML sent to Riot server
@@ -350,9 +365,11 @@ public class Main {
                 logger.info("[MITM:open-valorant] socketID={} host={} port={}", socketID, host, port);
             }
             case "open-riot" -> {
-                // MITM connected to Riot server
+                // MITM connected to Riot server - CAPTURE SESSION START TIME
+                // This is the gate: all messages with stamp < sessionStartEpochMillis are historical
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
-                logger.info("[MITM:open-riot] socketID={}", socketID);
+                sessionStartEpochMillis = System.currentTimeMillis();
+                logger.info("[MITM:open-riot] socketID={} sessionStartEpochMillis={}", socketID, sessionStartEpochMillis);
             }
             case "close-riot" -> {
                 // Riot server closed connection
@@ -377,111 +394,14 @@ public class Main {
         }
     }
 
-    // Patterns for parsing XMPP message stanzas
-    private static final Pattern MESSAGE_FROM_PATTERN = Pattern.compile("from=['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
-    private static final Pattern MESSAGE_TYPE_PATTERN = Pattern.compile("type=['\"]([^'\"]+)['\"]", Pattern.CASE_INSENSITIVE);
-    private static final Pattern MESSAGE_BODY_PATTERN = Pattern.compile("<body>([^<]*)</body>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-
     /**
-     * Process incoming XML from MITM and extract chat messages.
-     * Ignores presence, iq, and non-chat stanzas.
+     * Handle incoming XMPP stanzas from MITM.
+     * Uses ValorantNarrator-style Message parsing and ChatDataHandler.
+     *
+     * PHASE 1 FIX: Implements ValorantNarrator's archive/history blocking:
+     * 1. ARCHIVE IQ BLOCK: Messages inside <iq type="result"> or jabber:iq:riotgames:archive are NEVER forwarded
+     * 2. SESSION START GATE: Messages with stamp < sessionStartEpochMillis are dropped (historical)
      */
-    private static void processIncomingXml(String xml) {
-        if (xml == null || xml.isBlank()) return;
-
-        // Ignore presence and iq stanzas
-        if (xml.contains("<presence") || xml.contains("<iq")) {
-            return;
-        }
-
-        // Only process message stanzas
-        if (!xml.contains("<message")) {
-            return;
-        }
-
-        // Find all message stanzas in the XML
-        Matcher messageMatcher = MESSAGE_STANZA_PATTERN.matcher(xml);
-        while (messageMatcher.find()) {
-            String messageXml = messageMatcher.group();
-            extractAndLogChat(messageXml);
-        }
-    }
-
-    /**
-     * Extract chat info from a single message stanza and log it.
-     * Triggers TTS for valid chat messages.
-     */
-    private static void extractAndLogChat(String messageXml) {
-        // Extract body
-        Matcher bodyMatcher = MESSAGE_BODY_PATTERN.matcher(messageXml);
-        if (!bodyMatcher.find()) {
-            return; // No body, ignore
-        }
-        String body = bodyMatcher.group(1);
-        if (body == null || body.isBlank()) {
-            return; // Empty body, ignore
-        }
-
-        // Extract from attribute
-        Matcher fromMatcher = MESSAGE_FROM_PATTERN.matcher(messageXml);
-        String from = fromMatcher.find() ? fromMatcher.group(1) : "unknown";
-
-        // Extract type attribute
-        Matcher typeMatcher = MESSAGE_TYPE_PATTERN.matcher(messageXml);
-        String msgType = typeMatcher.find() ? typeMatcher.group(1) : "";
-
-        // Determine chat type based on from JID
-        String chatType;
-        if (from.contains("@ares-parties")) {
-            chatType = "PARTY";
-        } else if (from.contains("@ares-coregame")) {
-            chatType = "TEAM";
-        } else if ("chat".equalsIgnoreCase(msgType)) {
-            chatType = "WHISPER";
-        } else {
-            return; // IGNORE - not a recognized chat type
-        }
-
-        // Extract sender name (resource part after /)
-        String sender = from;
-        int slashIndex = from.lastIndexOf('/');
-        if (slashIndex >= 0 && slashIndex < from.length() - 1) {
-            sender = from.substring(slashIndex + 1);
-        }
-
-        // Log the chat message
-        logger.info("[CHAT] type={} from={} body=\"{}\"", chatType, sender, body);
-
-        // Build spoken text based on chat type
-        String spokenText;
-        switch (chatType) {
-            case "TEAM" -> spokenText = "Teammate says: " + body;
-            case "PARTY" -> spokenText = "Party chat: " + body;
-            case "WHISPER" -> spokenText = sender + " whispers: " + body;
-            default -> { return; }
-        }
-
-        // Trigger TTS
-        speakChatMessage(spokenText);
-    }
-
-    /**
-     * Speak a chat message using the TTS engine.
-     * Uses VoiceGenerator if available.
-     */
-    private static void speakChatMessage(String text) {
-        try {
-            if (VoiceGenerator.isInitialized()) {
-                VoiceGenerator.getInstance().speak(text);
-                logger.debug("[TTS] Speaking: {}", text);
-            } else {
-                logger.warn("[TTS] VoiceGenerator not initialized, cannot speak: {}", text);
-            }
-        } catch (Exception e) {
-            logger.error("[TTS] Failed to speak: {}", e.getMessage());
-        }
-    }
-
 
     private static void handleIncomingStanza(JsonObject obj) {
         if (!obj.has("data") || obj.get("data").isJsonNull()) return;
@@ -489,6 +409,20 @@ public class Main {
         if (xml == null || xml.isBlank()) return;
 
         String xmlLower = xml.toLowerCase();
+
+        // === PHASE 1 FIX: ARCHIVE IQ BLOCK (HARD RULE) ===
+        // If message is embedded inside <iq type="result"> or comes from jabber:iq:riotgames:archive
+        // then NEVER forward to ChatDataHandler, NEVER trigger TTS
+        if (xmlLower.contains("<iq") && xmlLower.contains("type=\"result\"")) {
+            // This is an IQ result stanza - likely contains archived messages
+            logger.debug("[ARCHIVE BLOCK] Dropping IQ result stanza (contains archived messages)");
+            return;
+        }
+        if (xmlLower.contains(ARCHIVE_NAMESPACE.toLowerCase())) {
+            // Contains archive namespace - definitely historical
+            logger.debug("[ARCHIVE BLOCK] Dropping stanza with archive namespace: {}", ARCHIVE_NAMESPACE);
+            return;
+        }
 
         // === COMPREHENSIVE DEBUG LOGGING FOR ALL MESSAGES ===
         if (xmlLower.contains("<message")) {
@@ -577,6 +511,14 @@ public class Main {
                 messageCount++;
 
                 if (singleMessageXml.toLowerCase().contains("<body>")) {
+                    // === PHASE 1 FIX: SESSION START GATE ===
+                    // Check if message has a stamp attribute (historical message indicator)
+                    // If stamp < sessionStartEpochMillis, this is an old message - DROP IT
+                    if (isHistoricalMessage(singleMessageXml)) {
+                        logger.debug("[SESSION GATE] Dropping historical message (stamp < sessionStart)");
+                        continue; // Skip to next message
+                    }
+
                     try {
                         // Parse message using ValorantNarrator's simple domain-first approach
                         Message msg = new Message(singleMessageXml);
@@ -590,6 +532,12 @@ public class Main {
 
             // Fallback: try parsing whole XML if pattern didn't match
             if (messageCount == 0) {
+                // === PHASE 1 FIX: SESSION START GATE (also for fallback) ===
+                if (isHistoricalMessage(xml)) {
+                    logger.debug("[SESSION GATE] Dropping historical message in fallback path");
+                    return;
+                }
+
                 try {
                     Message msg = new Message(xml);
                     if (msg.getContent() != null && !msg.getContent().isBlank()) {
@@ -604,6 +552,84 @@ public class Main {
         }
     }
 
+    /**
+     * PHASE 1 FIX: Check if a message is historical (should not be narrated).
+     *
+     * Historical messages have a 'stamp' attribute indicating when they were originally sent.
+     * If stamp < sessionStartEpochMillis, the message was sent before this session started
+     * and must be dropped to avoid TTS spam on startup/reconnection.
+     *
+     * @param xml The message XML to check
+     * @return true if message is historical and should be dropped, false if it should be processed
+     */
+    private static boolean isHistoricalMessage(String xml) {
+        // If session hasn't started yet (shouldn't happen), allow all messages
+        if (sessionStartEpochMillis == 0) {
+            return false;
+        }
+
+        // Check for stamp attribute (present on archived/historical messages)
+        Matcher stampMatcher = STAMP_PATTERN.matcher(xml);
+        if (!stampMatcher.find()) {
+            // No stamp = live message, not historical
+            return false;
+        }
+
+        String stampValue = stampMatcher.group(1);
+        try {
+            // Parse stamp: format is typically "YYYY-MM-DD HH:mm:ss" or ISO8601
+            long messageEpochMillis = parseStampToEpochMillis(stampValue);
+
+            if (messageEpochMillis < sessionStartEpochMillis) {
+                logger.debug("[SESSION GATE] Historical message detected: stamp={} ({}) < sessionStart={}",
+                    stampValue, messageEpochMillis, sessionStartEpochMillis);
+                return true;
+            }
+        } catch (Exception e) {
+            // If we can't parse the stamp, assume it's historical to be safe
+            // (stamped messages are always historical in Riot's protocol)
+            logger.debug("[SESSION GATE] Could not parse stamp '{}', treating as historical", stampValue);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Parse XMPP stamp attribute to epoch milliseconds.
+     * Handles formats: "YYYY-MM-DD HH:mm:ss" and ISO8601 variants.
+     */
+    private static long parseStampToEpochMillis(String stamp) {
+        // Try common formats
+        java.time.format.DateTimeFormatter[] formatters = {
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"),
+            java.time.format.DateTimeFormatter.ISO_DATE_TIME,
+            java.time.format.DateTimeFormatter.ISO_INSTANT
+        };
+
+        for (var formatter : formatters) {
+            try {
+                // Try parsing as LocalDateTime first (no timezone)
+                java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(stamp, formatter);
+                return ldt.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+            } catch (Exception ignored) {}
+
+            try {
+                // Try parsing as ZonedDateTime
+                java.time.ZonedDateTime zdt = java.time.ZonedDateTime.parse(stamp, formatter);
+                return zdt.toInstant().toEpochMilli();
+            } catch (Exception ignored) {}
+        }
+
+        // Last resort: try Instant.parse for ISO8601 with Z suffix
+        try {
+            return java.time.Instant.parse(stamp).toEpochMilli();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Cannot parse stamp: " + stamp, e);
+        }
+    }
 
 
     /**
