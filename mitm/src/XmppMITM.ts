@@ -16,10 +16,9 @@ export class XmppMITM {
     }
     async start() {
         return new Promise<void>(async (resolve) => {
-            const certsDir = path.join(__dirname, 'certs')
             tls.createServer({
-                key: await fs.promises.readFile(path.join(certsDir, 'server.key')),
-                cert: await fs.promises.readFile(path.join(certsDir, 'server.cert')),
+                key: await fs.promises.readFile(path.join(__dirname, 'certs', 'server.key')),
+                cert: await fs.promises.readFile(path.join(__dirname, 'certs', 'server.cert')),
                 rejectUnauthorized: false,
                 requestCert: false
             }, socket => {
