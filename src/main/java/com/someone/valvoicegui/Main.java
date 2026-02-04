@@ -59,6 +59,15 @@ public class Main {
     // All messages with stamp < APP_START_TIME are historical and must be dropped.
     private static final long APP_START_TIME = System.currentTimeMillis();
 
+    // === GRACE PERIOD: Tolerate clock skew and network latency (ValorantNarrator reference) ===
+    // Live messages may appear a few seconds older than app start due to:
+    // - Clock skew between client and server
+    // - Timezone differences
+    // - Network delay
+    // A 60-second grace window ensures live Team Chat (ares-coregame) is NOT dropped.
+    // This matches ValorantNarrator reference exactly.
+    private static final long GRACE_PERIOD_MS = 60_000; // 60 seconds (ValorantNarrator parity)
+
     // Pattern to extract stamp attribute from archived messages
     // Format: stamp="YYYY-MM-DD HH:mm:ss" or stamp='YYYY-MM-DD HH:mm:ss'
     private static final Pattern STAMP_PATTERN = Pattern.compile(
@@ -587,8 +596,15 @@ public class Main {
      * PHASE 1 FIX: Check if a message is historical (should not be narrated).
      *
      * Historical messages have a 'stamp' attribute indicating when they were originally sent.
-     * If stamp < APP_START_TIME, the message was sent before this app started
+     * If stamp < (APP_START_TIME - GRACE_PERIOD_MS), the message is genuinely old
      * and must be dropped silently to avoid TTS spam on startup/reconnection.
+     *
+     * The grace period (60 seconds) accounts for:
+     * - Clock skew between client and server
+     * - Timezone differences
+     * - Network latency
+     *
+     * This matches ValorantNarrator reference behavior exactly.
      *
      * @param xml The message XML to check
      * @return true if message is historical and should be dropped, false if it should be processed
@@ -606,10 +622,10 @@ public class Main {
             // Parse stamp: format is typically "YYYY-MM-DD HH:mm:ss" or ISO8601
             long messageEpochMillis = parseStampToEpochMillis(stampValue);
 
-            if (messageEpochMillis < APP_START_TIME) {
+            if (messageEpochMillis < (APP_START_TIME - GRACE_PERIOD_MS)) {
                 // DROP silently - do not log as error
-                logger.debug("[TIMESTAMP GATE] Historical message dropped: stamp={} < appStart={}",
-                    stampValue, APP_START_TIME);
+                logger.debug("[TIMESTAMP GATE] Historical message dropped: stamp={} < (appStart={} - grace={})",
+                    stampValue, APP_START_TIME, GRACE_PERIOD_MS);
                 return true;
             }
         } catch (Exception e) {
@@ -671,11 +687,17 @@ public class Main {
     /**
      * Parse XMPP stamp attribute to epoch milliseconds.
      * Handles formats: "YYYY-MM-DD HH:mm:ss" and ISO8601 variants.
+     *
+     * CRITICAL: Riot XMPP servers send timestamps in UTC.
+     * We must parse them as UTC, NOT as local time.
+     * Failure to do this causes a timezone offset (e.g., 5.5 hours for IST)
+     * which makes live messages appear historical and get dropped.
      */
     private static long parseStampToEpochMillis(String stamp) {
-        // Try common formats
+        // Try common formats - ALL parsed as UTC since Riot sends UTC timestamps
         java.time.format.DateTimeFormatter[] formatters = {
             java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
             java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
             java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"),
             java.time.format.DateTimeFormatter.ISO_DATE_TIME,
@@ -684,13 +706,14 @@ public class Main {
 
         for (var formatter : formatters) {
             try {
-                // Try parsing as LocalDateTime first (no timezone)
+                // Parse as LocalDateTime, then convert to UTC (NOT system default!)
+                // Riot sends timestamps in UTC - this is critical for correct filtering
                 java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(stamp, formatter);
-                return ldt.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                return ldt.atZone(java.time.ZoneId.of("UTC")).toInstant().toEpochMilli();
             } catch (Exception ignored) {}
 
             try {
-                // Try parsing as ZonedDateTime
+                // Try parsing as ZonedDateTime (already has timezone info)
                 java.time.ZonedDateTime zdt = java.time.ZonedDateTime.parse(stamp, formatter);
                 return zdt.toInstant().toEpochMilli();
             } catch (Exception ignored) {}
