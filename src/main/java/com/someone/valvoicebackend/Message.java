@@ -92,6 +92,12 @@ public class Message {
             }
         }
 
+        // STORE RAW 'from' ATTRIBUTE - This is AUTHORITATIVE for sender identity (ValorantNarrator reference)
+        // For carbon copies, fromAttr may have been overridden with inner 'to' for classification,
+        // but we need the ORIGINAL 'from' for sender identity. Re-extract it.
+        Matcher originalFromMatcher = FROM_PATTERN.matcher(xml);
+        this.fromJid = originalFromMatcher.find() ? originalFromMatcher.group(1) : null;
+
         // Classify message type using from attribute - DOMAIN FIRST, TYPE SECOND (ValorantNarrator way)
         // Safety: if fromAttr is null, we cannot classify the message
         if (fromAttr == null) {
@@ -107,14 +113,14 @@ public class Message {
         // Extract userId (portion before '@')
         userId = id.split("@")[0];
 
-        // Determine if this is our own message
+        // Determine if this is our own message (legacy - ChatDataHandler uses extractPuuid now)
         String selfId = ChatDataHandler.getInstance().getSelfID();
         ownMessage = selfId != null && selfId.equalsIgnoreCase(userId);
 
 
         // Log parsed message for debugging
         logger.info("📝 Parsed Message: type={} userId={} own={} from='{}' body='{}'",
-            messageType, userId, ownMessage, fromAttr,
+            messageType, userId, ownMessage, this.fromJid,
             content != null ? (content.length() > 50 ? content.substring(0, 47) + "..." : content) : "(null)");
     }
 
@@ -237,6 +243,17 @@ public class Message {
     public String getId() { return id; }
     public boolean isOwnMessage() { return ownMessage; }
     public String getUserId() { return userId; }
+
+    /**
+     * Gets the raw 'from' attribute from the message stanza.
+     * This is the AUTHORITATIVE source for sender identity (ValorantNarrator reference).
+     *
+     * For MUC messages (party/team): room@server/SENDER_PUUID
+     * For direct messages (whisper): SENDER_PUUID@server
+     *
+     * @return The raw 'from' attribute value, or null if not present
+     */
+    public String getFrom() { return fromJid; }
 
     @Override
     public String toString() {

@@ -97,6 +97,18 @@ public class Main {
         Pattern.CASE_INSENSITIVE
     );
 
+    // === PHASE 1: PUUID Identity Capture ===
+    // Pattern to detect Riot RSO-PAS authentication mechanism
+    private static final Pattern RSO_PAS_AUTH_PATTERN = Pattern.compile(
+        "<auth\\s+[^>]*mechanism=['\"]X-Riot-RSO-PAS['\"][^>]*>",
+        Pattern.CASE_INSENSITIVE
+    );
+    // Pattern to extract rso_token from the auth XML
+    private static final Pattern RSO_TOKEN_PATTERN = Pattern.compile(
+        "<rso_token>([^<]+)</rso_token>",
+        Pattern.CASE_INSENSITIVE
+    );
+
     // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
@@ -376,10 +388,14 @@ public class Main {
                 handleIncomingStanza(obj);
             }
             case "outgoing" -> {
-                // Raw XML sent to Riot server
+                // Raw XML sent to Riot server - check for RSO-PAS auth to capture identity
                 if (obj.has("data") && !obj.get("data").isJsonNull()) {
                     String data = obj.get("data").getAsString();
                     logger.info("[MITM:outgoing] {}", data);
+
+                    // === PHASE 1: PUUID Identity Capture ===
+                    // Detect RSO-PAS authentication mechanism and extract PUUID from JWT
+                    tryExtractPuuidFromAuth(data);
                 }
             }
             case "open-valorant" -> {
@@ -398,26 +414,135 @@ public class Main {
             case "close-riot" -> {
                 // Riot server closed connection (may be ECONNRESET)
                 // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
+                // PHASE 3: currentUserPuuid (in ChatDataHandler.selfId) is NOT touched here
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
                 logger.info("[MITM:close-riot] socketID={}", socketID);
+                String currentIdentity = ChatDataHandler.getInstance().getSelfId();
+                logger.debug("[RECONNECT SAFE] Identity preserved after close-riot: {}",
+                            currentIdentity != null ? currentIdentity.substring(0, Math.min(8, currentIdentity.length())) + "..." : "(null)");
             }
             case "close-valorant" -> {
                 // Valorant client closed connection
                 // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
+                // PHASE 3: currentUserPuuid (in ChatDataHandler.selfId) is NOT touched here
                 int socketID = obj.has("socketID") ? obj.get("socketID").getAsInt() : 0;
                 logger.info("[MITM:close-valorant] socketID={}", socketID);
+                String currentIdentity = ChatDataHandler.getInstance().getSelfId();
+                logger.debug("[RECONNECT SAFE] Identity preserved after close-valorant: {}",
+                            currentIdentity != null ? currentIdentity.substring(0, Math.min(8, currentIdentity.length())) + "..." : "(null)");
             }
             case "error" -> {
                 // Error event (may be ECONNRESET)
                 // RECONNECT STABILITY: Do NOT reset any chat state - treat as continuation
+                // PHASE 3: currentUserPuuid (in ChatDataHandler.selfId) is NOT touched here
                 int code = obj.has("code") ? obj.get("code").getAsInt() : 0;
                 String reason = obj.has("reason") && !obj.get("reason").isJsonNull() ? obj.get("reason").getAsString() : "unknown";
                 logger.warn("[MITM:error] code={} reason={}", code, reason);
+                // Log identity preservation for ECONNRESET scenarios
+                if (reason.contains("ECONNRESET") || reason.contains("socket error")) {
+                    String currentIdentity = ChatDataHandler.getInstance().getSelfId();
+                    logger.info("[RECONNECT SAFE] ECONNRESET detected - identity preserved: {}",
+                               currentIdentity != null ? currentIdentity.substring(0, Math.min(8, currentIdentity.length())) + "..." : "(null)");
+                }
             }
             default -> {
                 // Unknown event type
                 logger.debug("[MITM:unknown] {}", obj);
             }
+        }
+    }
+
+    /**
+     * PHASE 1: PUUID Identity Capture
+     *
+     * Detects the Riot RSO-PAS login packet and extracts the user's PUUID from the JWT token.
+     * This is triggered when the client sends an auth stanza with mechanism="X-Riot-RSO-PAS".
+     *
+     * The RSO token is a JWT (JSON Web Token) where the payload contains a 'sub' field
+     * that holds the user's PUUID (Player Universally Unique Identifier).
+     *
+     * @param xml The outgoing XMPP stanza XML
+     */
+    private static void tryExtractPuuidFromAuth(String xml) {
+        if (xml == null || xml.isBlank()) return;
+
+        // Check if this is an RSO-PAS authentication stanza
+        Matcher authMatcher = RSO_PAS_AUTH_PATTERN.matcher(xml);
+        if (!authMatcher.find()) {
+            return; // Not an RSO-PAS auth packet
+        }
+
+        logger.debug("[ValVoice] RSO-PAS auth packet detected");
+
+        // Extract the rso_token value
+        Matcher tokenMatcher = RSO_TOKEN_PATTERN.matcher(xml);
+        if (!tokenMatcher.find()) {
+            logger.warn("[ValVoice] RSO-PAS auth detected but no rso_token found");
+            return;
+        }
+
+        String rsoToken = tokenMatcher.group(1);
+        if (rsoToken == null || rsoToken.isBlank()) {
+            logger.warn("[ValVoice] rso_token is empty");
+            return;
+        }
+
+        // Decode JWT and extract PUUID from 'sub' field
+        String puuid = extractPuuidFromJwt(rsoToken);
+        if (puuid != null && !puuid.isBlank()) {
+            // Store in ChatDataHandler for global access
+            ChatDataHandler.getInstance().setSelfId(puuid);
+            logger.info("[ValVoice] Identity captured: {}", puuid);
+        }
+    }
+
+    /**
+     * Extracts the PUUID (sub field) from a JWT token.
+     *
+     * JWT structure: header.payload.signature (Base64URL encoded)
+     * The payload is a JSON object containing the 'sub' field which is the PUUID.
+     *
+     * @param jwt The JWT token string
+     * @return The PUUID (sub field) or null if extraction fails
+     */
+    private static String extractPuuidFromJwt(String jwt) {
+        try {
+            // JWT format: header.payload.signature
+            String[] parts = jwt.split("\\.");
+            if (parts.length < 2) {
+                logger.warn("[ValVoice] Invalid JWT format - expected 3 parts, got {}", parts.length);
+                return null;
+            }
+
+            // Decode the payload (second part) - Base64 URL-safe
+            String payloadBase64 = parts[1];
+
+            // Base64 URL-safe decoding: replace - with + and _ with /
+            // Also add padding if needed
+            String base64Standard = payloadBase64
+                .replace('-', '+')
+                .replace('_', '/');
+
+            // Add padding if necessary
+            int padding = (4 - base64Standard.length() % 4) % 4;
+            base64Standard = base64Standard + "====".substring(0, padding);
+
+            // Decode using standard Java Base64
+            byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Standard);
+            String payloadJson = new String(decodedBytes, StandardCharsets.UTF_8);
+
+            // Parse JSON and extract 'sub' field
+            JsonObject payload = JsonParser.parseString(payloadJson).getAsJsonObject();
+
+            if (payload.has("sub") && !payload.get("sub").isJsonNull()) {
+                return payload.get("sub").getAsString();
+            } else {
+                logger.warn("[ValVoice] JWT payload does not contain 'sub' field");
+                return null;
+            }
+        } catch (Exception e) {
+            logger.warn("[ValVoice] Failed to decode JWT: {}", e.getMessage());
+            return null;
         }
     }
 

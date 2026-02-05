@@ -109,16 +109,28 @@ public class ChatDataHandler {
     }
 
     /**
-     * Set the self player ID and notify listeners
-     * @param id new self ID
+     * Set the self player ID and notify listeners.
+     *
+     * PHASE 3: RECONNECT STABILITY
+     * This method is called when identity is captured from RSO-PAS JWT.
+     * The identity is stored in a volatile field and persists across ECONNRESET reconnects.
+     * The MITM never calls this method on reconnect - identity is captured ONCE at login.
+     *
+     * @param id new self ID (PUUID)
      */
     public synchronized void setSelfId(String id) {
         String oldId = this.selfId;
         this.selfId = id;
 
         if (id != null && !id.equals(oldId)) {
-            logger.info("Self ID updated: {}", id);
+            logger.info("╔══════════════════════════════════════════════════════════════╗");
+            logger.info("║ IDENTITY CAPTURED (PHASE 1)                                  ║");
+            logger.info("║ PUUID: {}                                    ║", id);
+            logger.info("║ This identity persists across ECONNRESET reconnects.        ║");
+            logger.info("╚══════════════════════════════════════════════════════════════╝");
             notifySelfIdListeners(id);
+        } else if (id != null && id.equals(oldId)) {
+            logger.debug("[IDENTITY] setSelfId called with same PUUID - no change (reconnect safe)");
         }
     }
 
@@ -137,7 +149,71 @@ public class ChatDataHandler {
     }
 
     /**
+     * PHASE 2: Extract sender PUUID from JID.
+     *
+     * Handles TWO JID formats used by Valorant XMPP:
+     *
+     * FORMAT 1 - MUC 'from' attribute (resource contains sender PUUID):
+     *   room@server/SENDER_PUUID
+     *   Example: "abc123@ares-coregame.ap.pvp.net/550e8400-e29b-41d4-a716-446655440000"
+     *   → returns "550e8400-e29b-41d4-a716-446655440000"
+     *
+     * FORMAT 2 - 'jid' attribute (local part IS the sender PUUID):
+     *   SENDER_PUUID@server
+     *   Example: "550e8400-e29b-41d4-a716-446655440000@ap1.pvp.net"
+     *   → returns "550e8400-e29b-41d4-a716-446655440000"
+     *
+     * @param jid The full JID (from 'from' or 'jid' attribute)
+     * @return The sender PUUID, or null if not extractable
+     */
+    private static String extractPuuidFromJid(String jid) {
+        if (jid == null || jid.isBlank()) {
+            return null;
+        }
+
+        // FORMAT 1: Check for resource part (room@server/PUUID)
+        // This is the MUC format where PUUID is in the resource
+        int slashIndex = jid.indexOf('/');
+        if (slashIndex >= 0 && slashIndex < jid.length() - 1) {
+            String resource = jid.substring(slashIndex + 1);
+            if (!resource.isBlank()) {
+                logger.debug("[PUUID EXTRACT] Format 1 (resource): '{}' -> '{}'", jid, resource);
+                return resource;
+            }
+        }
+
+        // FORMAT 2: No resource, PUUID is the local part (PUUID@server)
+        // This is the 'jid' attribute format
+        int atIndex = jid.indexOf('@');
+        if (atIndex > 0) {
+            String localPart = jid.substring(0, atIndex);
+            // Validate: PUUID should look like a UUID (contains hyphens, ~36 chars)
+            // Be lenient but filter out obvious non-PUUIDs like room IDs
+            if (!localPart.isBlank() && localPart.contains("-") && localPart.length() >= 32) {
+                logger.debug("[PUUID EXTRACT] Format 2 (local part): '{}' -> '{}'", jid, localPart);
+                return localPart;
+            }
+        }
+
+        // FORMAT 3: Bare PUUID (no @ or /)
+        // Some edge cases may have just the PUUID
+        if (!jid.contains("@") && !jid.contains("/") && jid.contains("-") && jid.length() >= 32) {
+            logger.debug("[PUUID EXTRACT] Format 3 (bare PUUID): '{}'", jid);
+            return jid;
+        }
+
+        logger.debug("[PUUID EXTRACT] Could not extract PUUID from: '{}'", jid);
+        return null;
+    }
+
+    /**
      * Process and handle a chat message.
+     *
+     * PHASE 2: SELF-ONLY NARRATION (Voice Injector Mode)
+     * ValVoice is a Voice Injector, NOT a screen reader.
+     * We ONLY narrate messages sent BY the local user.
+     * Messages from other players are silently dropped.
+     *
      * @param message the message to process
      */
     public void message(Message message) {
@@ -153,13 +229,13 @@ public class ChatDataHandler {
         boolean isOwn = message.isOwnMessage();
         String content = message.getContent();
         String userId = message.getUserId();
-        String fullId = message.getId();
+        String fromAttr = message.getFrom();  // AUTHORITATIVE sender identity source
 
         logger.info("┌─ Processing message ─────────────────");
         logger.info("│ Type: {} | Own: {} | UserId: {} | Content: '{}'",
                    msgType, isOwn, userId,
                    content != null ? (content.length() > 30 ? content.substring(0, 27) + "..." : content) : "(null)");
-        logger.info("│ Full ID: {}", fullId);
+        logger.info("│ From (authoritative): {}", fromAttr);
         logger.info("│ Chat States:");
         logger.info("│   - Disabled: {}", chat.isDisabled());
         logger.info("│   - Self State: {}", chat.isSelfState());
@@ -186,40 +262,85 @@ public class ChatDataHandler {
             return;
         }
 
-        // MATCHES ValorantNarrator FILTERING LOGIC EXACTLY
-        // Reference: ChatDataHandler.message() in ValorantNarrator
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 2: SELF-ONLY NARRATION GUARD (Voice Injector Policy)
+        // ═══════════════════════════════════════════════════════════════════════
+        // ValVoice is a Voice Injector - we ONLY narrate messages from the LOCAL USER.
+        // This is the INVERTED policy compared to ValorantNarrator (which reads others' messages).
+        //
+        // Logic:
+        // 1. Extract sender PUUID from JID resource (format: room@server/SENDER_PUUID)
+        // 2. Compare with currentUserPuuid (captured in Phase 1 from RSO-PAS JWT)
+        // 3. If sender != local user → DROP immediately (do NOT narrate)
+        // 4. If sender == local user AND channel is PARTY or TEAM → allow TTS
+        // ═══════════════════════════════════════════════════════════════════════
 
-        // Check whisper state first
-        if (Chat.TYPE_WHISPER.equals(msgType) && !chat.isPrivateState()) {
-            logger.info("└─ ❌ FILTERED: WHISPER but privateState=false");
+        // Extract sender PUUID from the full JID
+        String senderPuuid = extractPuuidFromJid(fullId);
+
+        // Get current user's PUUID (captured from RSO-PAS auth in Phase 1)
+        String currentUserPuuid = selfId;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 3: DEBUG LOGGING FOR VERIFICATION
+        // Log senderPuuid vs currentUserPuuid for each message (DEBUG level)
+        // ═══════════════════════════════════════════════════════════════════════
+        logger.debug("│ [SELF-ONLY DEBUG] senderPuuid={} currentUserPuuid={}",
+                    senderPuuid != null ? senderPuuid : "(null)",
+                    currentUserPuuid != null ? currentUserPuuid : "(null)");
+        logger.info("│ Sender PUUID (from 'from' attribute): {}", senderPuuid.isEmpty() ? "(not extractable)" : senderPuuid);
+
+        // SELF-ONLY GUARD: If sender is NOT the local user, drop immediately
+        if (currentUserPuuid == null || currentUserPuuid.isBlank()) {
+            // Identity not yet captured - cannot determine if self
+            // PHASE 3: Be STRICT - if we don't know who we are, we cannot verify sender
+            // Drop the message to avoid narrating others' messages
+            logger.warn("│ ⚠️ WARNING: currentUserPuuid not captured yet - cannot verify sender identity");
+            logger.warn("└─ ❌ FILTERED (SELF-ONLY): Identity not yet established - dropping message for safety");
+            return;
+        } else if (senderPuuid == null || senderPuuid.isBlank()) {
+            // Could not extract sender PUUID from JID
+            // For MUC messages this shouldn't happen - likely a direct message or malformed JID
+            // Be strict: drop the message
+            logger.warn("│ ⚠️ WARNING: Could not extract sender PUUID from JID - likely not a MUC message");
+            logger.warn("└─ ❌ FILTERED (SELF-ONLY): Cannot extract sender PUUID - dropping for safety");
+            return;
+        } else if (!currentUserPuuid.equalsIgnoreCase(senderPuuid)) {
+            // CRITICAL: Sender is NOT the local user - DROP this message
+            // This is the core SELF-ONLY guard - teammates' messages are logged but NOT narrated
+            logger.info("└─ ❌ FILTERED (SELF-ONLY): Sender '{}' != Self '{}' - not narrating teammate's message",
+                       senderPuuid.substring(0, Math.min(8, senderPuuid.length())) + "...",
+                       currentUserPuuid.substring(0, Math.min(8, currentUserPuuid.length())) + "...");
+            logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=false",
+                        senderPuuid, currentUserPuuid);
+            return;
+        } else {
+            // Sender IS the local user - proceed with channel check
+            logger.info("│ ✅ SELF-ONLY: Sender matches local user PUUID");
+            logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=true",
+                        senderPuuid, currentUserPuuid);
+        }
+
+        // CHANNEL RESTRICTION: Only allow PARTY or TEAM for self-narration
+        // (Whisper and All chat are excluded from voice injection)
+        if (!Chat.TYPE_PARTY.equals(msgType) && !Chat.TYPE_TEAM.equals(msgType)) {
+            logger.info("└─ ❌ FILTERED (CHANNEL): {} is not PARTY or TEAM - voice injection only for party/team chat",
+                       msgType);
             return;
         }
 
-        // CRITICAL FIX: If self messages are enabled AND this is own message,
-        // SKIP ALL OTHER FILTERING - narrate everything the user sends!
-        // This matches ValorantNarrator's logic exactly.
-        if (isOwn && chat.isSelfState()) {
-            logger.info("└─ ✅ PASSED (SELF MESSAGE): Own message with selfState=true - skipping other filters");
-        } else {
-            // Only check party/team/all state if NOT a self message (or if self is disabled)
-
-            if (Chat.TYPE_PARTY.equals(msgType) && !chat.isPartyState()) {
-                logger.info("└─ ❌ FILTERED: PARTY but partyState=false");
-                return;
-            }
-
-            if (Chat.TYPE_TEAM.equals(msgType) && !chat.isTeamState()) {
-                logger.info("└─ ❌ FILTERED: TEAM but teamState=false");
-                return;
-            }
-
-            if (Chat.TYPE_ALL.equals(msgType) && !chat.isAllState()) {
-                logger.info("└─ ❌ FILTERED: ALL but allState=false");
-                return;
-            }
-
-            logger.info("└─ ✅ PASSED ALL FILTERS - Proceeding to TTS");
+        // Additional channel state checks (respect user preferences)
+        if (Chat.TYPE_PARTY.equals(msgType) && !chat.isPartyState()) {
+            logger.info("└─ ❌ FILTERED: PARTY but partyState=false");
+            return;
         }
+
+        if (Chat.TYPE_TEAM.equals(msgType) && !chat.isTeamState()) {
+            logger.info("└─ ❌ FILTERED: TEAM but teamState=false");
+            return;
+        }
+
+        logger.info("└─ ✅ PASSED ALL FILTERS (SELF-ONLY MODE) - Proceeding to TTS");
 
         // Clean and narrate - handle null content
         String cleanContent = content != null ? content.replace("/", "").replace("\\", "") : "";
