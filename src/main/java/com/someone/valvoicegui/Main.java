@@ -108,6 +108,11 @@ public class Main {
         "<rso_token>([^<]+)</rso_token>",
         Pattern.CASE_INSENSITIVE
     );
+    // === PHASE 1: ONCE-PER-LAUNCH GUARD ===
+    // Flag to ensure PUUID identity is captured ONLY ONCE per app launch.
+    // This is NOT reset on ECONNRESET, reconnects, or any MITM events.
+    // Once identity is captured, it persists for the entire session.
+    private static volatile boolean identityCaptured = false;
 
     // Store lock file resources to prevent leak (application instance lock, not Riot lockfile)
     private static RandomAccessFile lockFileAccess;
@@ -453,18 +458,34 @@ public class Main {
     }
 
     /**
-     * PHASE 1: PUUID Identity Capture
+     * PHASE 1: PUUID Identity Capture (ValorantNarrator Reference Architecture)
      *
-     * Detects the Riot RSO-PAS login packet and extracts the user's PUUID from the JWT token.
-     * This is triggered when the client sends an auth stanza with mechanism="X-Riot-RSO-PAS".
+     * Intercepts the outgoing XMPP auth stanza during MITM startup:
+     *   &lt;auth mechanism="X-Riot-RSO-PAS"&gt;
      *
-     * The RSO token is a JWT (JSON Web Token) where the payload contains a 'sub' field
-     * that holds the user's PUUID (Player Universally Unique Identifier).
+     * Extracts the &lt;rso_token&gt; JWT, Base64URL-decodes the payload, parses JSON, and stores:
+     *   { "sub": "&lt;PUUID&gt;" }
+     *
+     * CRITICAL REQUIREMENTS (ValorantNarrator parity):
+     * - PUUID is captured ONCE per app launch (not reset on ECONNRESET/reconnects)
+     * - Stored in ChatDataHandler.selfId (volatile field)
+     * - Used by ChatDataHandler for raw PUUID comparison (not by parser utilities)
      *
      * @param xml The outgoing XMPP stanza XML
      */
     private static void tryExtractPuuidFromAuth(String xml) {
         if (xml == null || xml.isBlank()) return;
+
+        // === ONCE-PER-LAUNCH GUARD ===
+        // If identity has already been captured this session, skip processing.
+        // This prevents overwrites from duplicate auth packets during reconnects.
+        if (identityCaptured) {
+            // Still log that we saw an auth packet (for debugging reconnect behavior)
+            if (RSO_PAS_AUTH_PATTERN.matcher(xml).find()) {
+                logger.debug("[ValVoice] RSO-PAS auth packet detected but identity already captured - ignoring");
+            }
+            return;
+        }
 
         // Check if this is an RSO-PAS authentication stanza
         Matcher authMatcher = RSO_PAS_AUTH_PATTERN.matcher(xml);
@@ -472,7 +493,7 @@ public class Main {
             return; // Not an RSO-PAS auth packet
         }
 
-        logger.debug("[ValVoice] RSO-PAS auth packet detected");
+        logger.info("[ValVoice] RSO-PAS auth packet detected - extracting identity...");
 
         // Extract the rso_token value
         Matcher tokenMatcher = RSO_TOKEN_PATTERN.matcher(xml);
@@ -492,7 +513,13 @@ public class Main {
         if (puuid != null && !puuid.isBlank()) {
             // Store in ChatDataHandler for global access
             ChatDataHandler.getInstance().setSelfId(puuid);
+
+            // Set the once-per-launch flag AFTER successful capture
+            identityCaptured = true;
+
+            // Log confirmation (required format per ValorantNarrator reference)
             logger.info("[ValVoice] Identity captured: {}", puuid);
+            logger.info("[ValVoice] Identity persists across ECONNRESET reconnects - will NOT be re-captured this session");
         }
     }
 

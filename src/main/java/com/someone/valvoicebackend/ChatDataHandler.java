@@ -305,67 +305,70 @@ public class ChatDataHandler {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE 2: SELF-ONLY NARRATION GUARD (Voice Injector Policy)
+        // VOICE INJECTOR MODE: SELF-ONLY NARRATION GUARD
         // ═══════════════════════════════════════════════════════════════════════
         // ValVoice is a Voice Injector - we ONLY narrate messages from the LOCAL USER.
         // This is the INVERTED policy compared to ValorantNarrator (which reads others' messages).
         //
-        // Logic (ValorantNarrator reference architecture):
+        // Reference Architecture (ValorantNarrator-aligned):
         // 1. Extract sender PUUID from message.getFrom() - the AUTHORITATIVE 'from' attribute
         // 2. Do NOT rely on message.getId(), jid attribute, or isOwnMessage() booleans
         // 3. Support both JID formats:
         //    - MUC (Party/Team): room@server/PUUID → PUUID is after /
         //    - Direct/Whisper:   PUUID@server      → PUUID is before @
-        // 4. Compare with currentUserPuuid (captured in Phase 1 from RSO-PAS JWT)
+        // 4. Compare with localUserPuuid (captured from RSO-PAS JWT at MITM startup)
         // 5. If sender != local user → DROP immediately (do NOT narrate)
         // 6. If sender == local user AND channel is PARTY or TEAM → allow TTS
         // ═══════════════════════════════════════════════════════════════════════
 
-        // Extract sender PUUID from the AUTHORITATIVE 'from' attribute
-        String senderPuuid = extractPuuid(fromAttr);
+        // Extract sender PUUID from authoritative XMPP 'from' attribute
+        String senderPuuid = extractPuuid(message.getFrom());
 
-        // Get current user's PUUID (captured from RSO-PAS auth in Phase 1)
-        String currentUserPuuid = selfId;
+        // Get local user's PUUID (captured from RSO-PAS auth at MITM startup)
+        String localUserPuuid = selfId;
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE 3: DEBUG LOGGING FOR VERIFICATION
-        // Log senderPuuid vs currentUserPuuid for each message (DEBUG level)
+        // DEBUG LOGGING: Log senderPuuid vs localUserPuuid for each message
         // ═══════════════════════════════════════════════════════════════════════
-        logger.debug("│ [SELF-ONLY DEBUG] senderPuuid={} currentUserPuuid={}",
+        logger.debug("│ [SELF-ONLY DEBUG] senderPuuid={} localUserPuuid={}",
                     senderPuuid.isEmpty() ? "(empty)" : senderPuuid,
-                    currentUserPuuid != null ? currentUserPuuid : "(null)");
+                    localUserPuuid != null ? localUserPuuid : "(null)");
         logger.info("│ Sender PUUID (from 'from' attribute): {}", senderPuuid.isEmpty() ? "(not extractable)" : senderPuuid);
 
-        // SELF-ONLY GUARD: If sender is NOT the local user, drop immediately
-        if (currentUserPuuid == null || currentUserPuuid.isBlank()) {
-            // Identity not yet captured - cannot determine if self
-            // PHASE 3: Be STRICT - if we don't know who we are, we cannot verify sender
-            // Drop the message to avoid narrating others' messages
-            logger.warn("│ ⚠️ WARNING: currentUserPuuid not captured yet - cannot verify sender identity");
+        // ═══════════════════════════════════════════════════════════════════════
+        // VOICE INJECTOR GUARD CLAUSE (per spec)
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Safety: if identity not captured yet, do nothing
+        if (localUserPuuid == null || localUserPuuid.isEmpty()) {
+            logger.warn("│ ⚠️ WARNING: localUserPuuid not captured yet - cannot verify sender identity");
             logger.warn("└─ ❌ FILTERED (SELF-ONLY): Identity not yet established - dropping message for safety");
             return;
-        } else if (senderPuuid.isEmpty()) {
-            // Could not extract sender PUUID from 'from' attribute
-            // For MUC messages this shouldn't happen - likely a direct message or malformed JID
-            // Be strict: drop the message
-            logger.warn("│ ⚠️ WARNING: Could not extract sender PUUID from 'from' attribute - likely malformed");
+        }
+
+        // Safety: if sender PUUID could not be extracted, drop for safety
+        if (senderPuuid.isEmpty()) {
+            logger.warn("│ ⚠️ WARNING: Could not extract sender PUUID from 'from' attribute");
             logger.warn("└─ ❌ FILTERED (SELF-ONLY): Cannot extract sender PUUID - dropping for safety");
             return;
-        } else if (!currentUserPuuid.equalsIgnoreCase(senderPuuid)) {
+        }
+
+        // Voice Injector Policy: Drop everything not sent by me
+        if (!localUserPuuid.equalsIgnoreCase(senderPuuid)) {
             // CRITICAL: Sender is NOT the local user - DROP this message
-            // This is the core SELF-ONLY guard - teammates' messages are logged but NOT narrated
+            // Teammates' messages are logged but NEVER narrated (Voice Injector behavior)
             logger.info("└─ ❌ FILTERED (SELF-ONLY): Sender '{}' != Self '{}' - not narrating teammate's message",
                        senderPuuid.substring(0, Math.min(8, senderPuuid.length())) + "...",
-                       currentUserPuuid.substring(0, Math.min(8, currentUserPuuid.length())) + "...");
+                       localUserPuuid.substring(0, Math.min(8, localUserPuuid.length())) + "...");
             logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=false",
-                        senderPuuid, currentUserPuuid);
+                        senderPuuid, localUserPuuid);
             return;
-        } else {
-            // Sender IS the local user - proceed with channel check
-            logger.info("│ ✅ SELF-ONLY: Sender matches local user PUUID");
-            logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=true",
-                        senderPuuid, currentUserPuuid);
         }
+
+        // ✅ Sender IS the local user - proceed with channel filter
+        logger.info("│ ✅ SELF-ONLY: Sender matches local user PUUID");
+        logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=true",
+                    senderPuuid, localUserPuuid);
 
         // CHANNEL RESTRICTION: Only allow PARTY or TEAM for self-narration
         // (Whisper and All chat are excluded from voice injection)
