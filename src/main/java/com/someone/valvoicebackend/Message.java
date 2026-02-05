@@ -36,6 +36,7 @@ public class Message {
     private final String userId;      // Portion before '@' of the JID
     private final boolean ownMessage; // Whether this message was sent by the current user
     private final String messageType; // Using String constants (PARTY, TEAM, ALL, WHISPER)
+    private final String fromJid;     // Raw 'from' attribute - AUTHORITATIVE sender identity (ValorantNarrator reference)
 
     private PlayerAccount sender;     // The player account associated with this message
 
@@ -134,6 +135,7 @@ public class Message {
         this.messageType = original.messageType;
         this.content = newContent;
         this.sender = original.sender;
+        this.fromJid = original.fromJid;
     }
 
     /**

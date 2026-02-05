@@ -149,23 +149,65 @@ public class ChatDataHandler {
     }
 
     /**
-     * PHASE 2: Extract sender PUUID from JID.
+     * PHASE 2: Extract sender PUUID from raw JID.
+     *
+     * ValorantNarrator Reference Architecture - Dual-Format Extractor:
      *
      * Handles TWO JID formats used by Valorant XMPP:
      *
-     * FORMAT 1 - MUC 'from' attribute (resource contains sender PUUID):
+     * FORMAT 1 - MUC (Party/Team) 'from' attribute:
      *   room@server/SENDER_PUUID
      *   Example: "abc123@ares-coregame.ap.pvp.net/550e8400-e29b-41d4-a716-446655440000"
-     *   → returns "550e8400-e29b-41d4-a716-446655440000"
+     *   → PUUID is after / → returns "550e8400-e29b-41d4-a716-446655440000"
      *
-     * FORMAT 2 - 'jid' attribute (local part IS the sender PUUID):
+     * FORMAT 2 - Direct/Whisper 'from' attribute:
      *   SENDER_PUUID@server
      *   Example: "550e8400-e29b-41d4-a716-446655440000@ap1.pvp.net"
-     *   → returns "550e8400-e29b-41d4-a716-446655440000"
+     *   → PUUID is before @ → returns "550e8400-e29b-41d4-a716-446655440000"
+     *
+     * IMPORTANT: This method is intentionally lenient (no UUID format validation).
+     * This matches ValorantNarrator's simple extraction logic.
+     *
+     * @param rawJid The raw JID from the 'from' attribute of the message stanza
+     * @return The sender PUUID, or empty string if not extractable
+     */
+    private String extractPuuid(String rawJid) {
+        if (rawJid == null || rawJid.isEmpty()) {
+            logger.debug("[PUUID EXTRACT] Input is null or empty");
+            return "";
+        }
+
+        // MUC format: room@server/PUUID
+        // PUUID is in the resource part (after /)
+        if (rawJid.contains("/")) {
+            String puuid = rawJid.substring(rawJid.indexOf("/") + 1);
+            logger.debug("[PUUID EXTRACT] MUC format: '{}' -> '{}'", rawJid, puuid);
+            return puuid;
+        }
+
+        // Direct/Whisper format: PUUID@server
+        // PUUID is the local part (before @)
+        if (rawJid.contains("@")) {
+            String puuid = rawJid.substring(0, rawJid.indexOf("@"));
+            logger.debug("[PUUID EXTRACT] Direct format: '{}' -> '{}'", rawJid, puuid);
+            return puuid;
+        }
+
+        // Fallback: return as-is (might be bare PUUID)
+        logger.debug("[PUUID EXTRACT] Fallback (bare): '{}'", rawJid);
+        return rawJid;
+    }
+
+    /**
+     * DEPRECATED: Use extractPuuid() instead.
+     *
+     * This method is more strict (validates UUID format) but ValorantNarrator
+     * uses a simpler, more lenient extraction logic.
      *
      * @param jid The full JID (from 'from' or 'jid' attribute)
      * @return The sender PUUID, or null if not extractable
      */
+    @Deprecated
     private static String extractPuuidFromJid(String jid) {
         if (jid == null || jid.isBlank()) {
             return null;
@@ -177,7 +219,7 @@ public class ChatDataHandler {
         if (slashIndex >= 0 && slashIndex < jid.length() - 1) {
             String resource = jid.substring(slashIndex + 1);
             if (!resource.isBlank()) {
-                logger.debug("[PUUID EXTRACT] Format 1 (resource): '{}' -> '{}'", jid, resource);
+                logger.debug("[PUUID EXTRACT LEGACY] Format 1 (resource): '{}' -> '{}'", jid, resource);
                 return resource;
             }
         }
@@ -190,7 +232,7 @@ public class ChatDataHandler {
             // Validate: PUUID should look like a UUID (contains hyphens, ~36 chars)
             // Be lenient but filter out obvious non-PUUIDs like room IDs
             if (!localPart.isBlank() && localPart.contains("-") && localPart.length() >= 32) {
-                logger.debug("[PUUID EXTRACT] Format 2 (local part): '{}' -> '{}'", jid, localPart);
+                logger.debug("[PUUID EXTRACT LEGACY] Format 2 (local part): '{}' -> '{}'", jid, localPart);
                 return localPart;
             }
         }
@@ -198,11 +240,11 @@ public class ChatDataHandler {
         // FORMAT 3: Bare PUUID (no @ or /)
         // Some edge cases may have just the PUUID
         if (!jid.contains("@") && !jid.contains("/") && jid.contains("-") && jid.length() >= 32) {
-            logger.debug("[PUUID EXTRACT] Format 3 (bare PUUID): '{}'", jid);
+            logger.debug("[PUUID EXTRACT LEGACY] Format 3 (bare PUUID): '{}'", jid);
             return jid;
         }
 
-        logger.debug("[PUUID EXTRACT] Could not extract PUUID from: '{}'", jid);
+        logger.debug("[PUUID EXTRACT LEGACY] Could not extract PUUID from: '{}'", jid);
         return null;
     }
 
@@ -268,15 +310,19 @@ public class ChatDataHandler {
         // ValVoice is a Voice Injector - we ONLY narrate messages from the LOCAL USER.
         // This is the INVERTED policy compared to ValorantNarrator (which reads others' messages).
         //
-        // Logic:
-        // 1. Extract sender PUUID from JID resource (format: room@server/SENDER_PUUID)
-        // 2. Compare with currentUserPuuid (captured in Phase 1 from RSO-PAS JWT)
-        // 3. If sender != local user → DROP immediately (do NOT narrate)
-        // 4. If sender == local user AND channel is PARTY or TEAM → allow TTS
+        // Logic (ValorantNarrator reference architecture):
+        // 1. Extract sender PUUID from message.getFrom() - the AUTHORITATIVE 'from' attribute
+        // 2. Do NOT rely on message.getId(), jid attribute, or isOwnMessage() booleans
+        // 3. Support both JID formats:
+        //    - MUC (Party/Team): room@server/PUUID → PUUID is after /
+        //    - Direct/Whisper:   PUUID@server      → PUUID is before @
+        // 4. Compare with currentUserPuuid (captured in Phase 1 from RSO-PAS JWT)
+        // 5. If sender != local user → DROP immediately (do NOT narrate)
+        // 6. If sender == local user AND channel is PARTY or TEAM → allow TTS
         // ═══════════════════════════════════════════════════════════════════════
 
-        // Extract sender PUUID from the full JID
-        String senderPuuid = extractPuuidFromJid(fullId);
+        // Extract sender PUUID from the AUTHORITATIVE 'from' attribute
+        String senderPuuid = extractPuuid(fromAttr);
 
         // Get current user's PUUID (captured from RSO-PAS auth in Phase 1)
         String currentUserPuuid = selfId;
@@ -286,7 +332,7 @@ public class ChatDataHandler {
         // Log senderPuuid vs currentUserPuuid for each message (DEBUG level)
         // ═══════════════════════════════════════════════════════════════════════
         logger.debug("│ [SELF-ONLY DEBUG] senderPuuid={} currentUserPuuid={}",
-                    senderPuuid != null ? senderPuuid : "(null)",
+                    senderPuuid.isEmpty() ? "(empty)" : senderPuuid,
                     currentUserPuuid != null ? currentUserPuuid : "(null)");
         logger.info("│ Sender PUUID (from 'from' attribute): {}", senderPuuid.isEmpty() ? "(not extractable)" : senderPuuid);
 
@@ -298,11 +344,11 @@ public class ChatDataHandler {
             logger.warn("│ ⚠️ WARNING: currentUserPuuid not captured yet - cannot verify sender identity");
             logger.warn("└─ ❌ FILTERED (SELF-ONLY): Identity not yet established - dropping message for safety");
             return;
-        } else if (senderPuuid == null || senderPuuid.isBlank()) {
-            // Could not extract sender PUUID from JID
+        } else if (senderPuuid.isEmpty()) {
+            // Could not extract sender PUUID from 'from' attribute
             // For MUC messages this shouldn't happen - likely a direct message or malformed JID
             // Be strict: drop the message
-            logger.warn("│ ⚠️ WARNING: Could not extract sender PUUID from JID - likely not a MUC message");
+            logger.warn("│ ⚠️ WARNING: Could not extract sender PUUID from 'from' attribute - likely malformed");
             logger.warn("└─ ❌ FILTERED (SELF-ONLY): Cannot extract sender PUUID - dropping for safety");
             return;
         } else if (!currentUserPuuid.equalsIgnoreCase(senderPuuid)) {
