@@ -153,6 +153,20 @@ public class ValVoiceBackend {
         }
 
         logger.info("[ValVoiceBackend] Starting backend services...");
+
+        // === STARTUP WARM-UP DELAY ===
+        // Small delay to let Riot Client networking stack initialize.
+        // This reduces early ECONNRESET events (socketID=1,2,3...) that occur
+        // when MITM starts before Riot Client is fully ready.
+        // This is cosmetic - ECONNRESET handling remains non-fatal regardless.
+        try {
+            logger.debug("[ValVoiceBackend] Warm-up delay (2s) before MITM launch...");
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.debug("[ValVoiceBackend] Warm-up delay interrupted");
+        }
+
         launchMitmProxy();
     }
 
@@ -669,7 +683,8 @@ public class ValVoiceBackend {
         if (Roster.getInstance().isRosterIq(xml)) {
             int count = Roster.getInstance().parseRosterIq(xml);
             logger.info("[ROSTER] Parsed {} roster entries from IQ packet", count);
-            // Roster IQs don't contain chat messages - continue to skip them properly
+            // Roster IQs are processed - return immediately to prevent IQ SKIP block
+            return;
         }
 
         // === ARCHIVE IQ BLOCK (HARD RULE) ===

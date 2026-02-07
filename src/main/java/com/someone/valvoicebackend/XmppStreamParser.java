@@ -276,6 +276,10 @@ public class XmppStreamParser {
      * Extract the &lt;p&gt; (presence payload) element content from a presence stanza.
      * The &lt;p&gt; element contains Base64-encoded JSON with game state info.
      *
+     * This method uses a two-phase approach:
+     * 1. First attempts StAX parsing for proper XML handling
+     * 2. Falls back to simple string extraction if StAX fails (handles malformed XML)
+     *
      * @param xml Raw XML string containing a presence stanza
      * @return The Base64-encoded payload string, or null if not found
      */
@@ -284,42 +288,66 @@ public class XmppStreamParser {
             return null;
         }
 
+        // Clean the XML: remove BOM and trim whitespace
+        String cleanedXml = cleanXmlForParsing(xml);
+
+        // Phase 1: Try StAX parsing (proper XML handling)
+        String staxResult = extractPresencePayloadViaStax(cleanedXml);
+        if (staxResult != null) {
+            return staxResult;
+        }
+
+        // Phase 2: Fallback to simple string extraction (handles malformed XML)
+        return extractPresencePayloadViaRegex(xml);
+    }
+
+    /**
+     * Clean XML string for parsing: remove BOM, trim whitespace, normalize.
+     */
+    private static String cleanXmlForParsing(String xml) {
+        if (xml == null) return null;
+
+        // Remove UTF-8 BOM if present (EF BB BF or \uFEFF)
+        String cleaned = xml;
+        if (cleaned.startsWith("\uFEFF")) {
+            cleaned = cleaned.substring(1);
+        }
+        // Also handle potential BOM in byte form that got converted
+        if (cleaned.startsWith("\u00EF\u00BB\u00BF")) {
+            cleaned = cleaned.substring(3);
+        }
+
+        // Trim leading/trailing whitespace
+        cleaned = cleaned.trim();
+
+        // Ensure it starts with < (skip any garbage before XML)
+        int xmlStart = cleaned.indexOf('<');
+        if (xmlStart > 0) {
+            cleaned = cleaned.substring(xmlStart);
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * Extract presence payload using StAX (proper XML parsing).
+     */
+    private static String extractPresencePayloadViaStax(String xml) {
         try {
             XMLStreamReader reader = XML_INPUT_FACTORY.createXMLStreamReader(new StringReader(xml));
-            String currentElement = null;
-            StringBuilder payloadBuilder = null;
-            boolean inP = false;
 
             while (reader.hasNext()) {
                 int event = reader.next();
 
-                switch (event) {
-                    case XMLStreamConstants.START_ELEMENT:
-                        currentElement = reader.getLocalName();
-                        if ("p".equalsIgnoreCase(currentElement)) {
-                            inP = true;
-                            payloadBuilder = new StringBuilder();
-                        }
-                        break;
-
-                    case XMLStreamConstants.CHARACTERS:
-                    case XMLStreamConstants.CDATA:
-                        if (inP && payloadBuilder != null) {
-                            payloadBuilder.append(reader.getText());
-                        }
-                        break;
-
-                    case XMLStreamConstants.END_ELEMENT:
-                        String endElement = reader.getLocalName();
-                        if ("p".equalsIgnoreCase(endElement)) {
-                            inP = false;
-                            if (payloadBuilder != null) {
-                                String payload = payloadBuilder.toString().trim();
-                                reader.close();
-                                return payload.isEmpty() ? null : payload;
-                            }
-                        }
-                        break;
+                if (event == XMLStreamConstants.START_ELEMENT) {
+                    String elementName = reader.getLocalName();
+                    if ("p".equalsIgnoreCase(elementName)) {
+                        // Use getElementText() which properly handles the content
+                        // This reads all text content up to the matching end tag
+                        String payload = reader.getElementText().trim();
+                        reader.close();
+                        return payload.isEmpty() ? null : payload;
+                    }
                 }
             }
 
@@ -327,10 +355,53 @@ public class XmppStreamParser {
             return null;
 
         } catch (XMLStreamException e) {
-            logger.debug("[StAX] Failed to extract presence payload: {}", e.getMessage());
+            logger.debug("[StAX] Presence payload extraction failed (will try fallback): {}", e.getMessage());
             return null;
         } catch (Exception e) {
-            logger.debug("[StAX] Unexpected error extracting presence payload: {}", e.getMessage());
+            logger.debug("[StAX] Unexpected error in presence extraction: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Extract presence payload using simple regex (fallback for malformed XML).
+     * This handles cases where StAX cannot parse the XML.
+     */
+    private static String extractPresencePayloadViaRegex(String xml) {
+        if (xml == null) return null;
+
+        try {
+            // Simple pattern to extract content between <p> and </p>
+            int startTag = xml.indexOf("<p>");
+            if (startTag == -1) {
+                // Try case-insensitive
+                String lower = xml.toLowerCase();
+                startTag = lower.indexOf("<p>");
+            }
+
+            if (startTag == -1) return null;
+
+            int contentStart = startTag + 3; // length of "<p>"
+
+            int endTag = xml.indexOf("</p>", contentStart);
+            if (endTag == -1) {
+                // Try case-insensitive
+                String lower = xml.toLowerCase();
+                endTag = lower.indexOf("</p>", contentStart);
+            }
+
+            if (endTag == -1) return null;
+
+            String payload = xml.substring(contentStart, endTag).trim();
+
+            if (!payload.isEmpty()) {
+                logger.debug("[Regex Fallback] Extracted presence payload ({} chars)", payload.length());
+                return payload;
+            }
+
+            return null;
+        } catch (Exception e) {
+            logger.debug("[Regex Fallback] Failed to extract presence payload: {}", e.getMessage());
             return null;
         }
     }

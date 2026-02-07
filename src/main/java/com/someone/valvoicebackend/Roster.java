@@ -92,9 +92,16 @@ public class Roster {
     public boolean isRosterIq(String xml) {
         if (xml == null || xml.isEmpty()) return false;
         String lower = xml.toLowerCase();
-        return lower.contains("<iq") &&
-               lower.contains("type=\"result\"") &&
-               lower.contains(ROSTER_NAMESPACE.toLowerCase());
+        // Check for IQ stanza with type=result (handle both single and double quotes)
+        boolean isIqResult = lower.contains("<iq") &&
+               (lower.contains("type=\"result\"") || lower.contains("type='result'"));
+        boolean hasRosterNs = lower.contains(ROSTER_NAMESPACE.toLowerCase());
+
+        if (isIqResult && hasRosterNs) {
+            logger.debug("[Roster] Detected roster IQ packet");
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -116,6 +123,10 @@ public class Roster {
         logger.info("╔══════════════════════════════════════════════════════════════╗");
         logger.info("║ ROSTER IQ RECEIVED (Phase 3)                                 ║");
         logger.info("╚══════════════════════════════════════════════════════════════╝");
+
+        // Log a preview of the XML for debugging
+        String preview = xml.length() > 500 ? xml.substring(0, 500) + "..." : xml;
+        logger.debug("[Roster] Raw XML preview: {}", preview);
 
         int count = 0;
 
@@ -165,7 +176,72 @@ public class Roster {
             logger.info("│ Roster now contains {} player(s)", puuidToName.size());
             logger.info("└──────────────────────────────────────────────────────────────");
         } else {
-            logger.debug("[Roster] No roster items found in IQ packet");
+            // If no items found with primary patterns, try fallback extraction
+            logger.debug("[Roster] Primary patterns found 0 items, trying fallback extraction");
+            count = parseRosterItemsFallback(xml);
+            if (count > 0) {
+                logger.info("├──────────────────────────────────────────────────────────────");
+                logger.info("│ Roster now contains {} player(s) (via fallback)", puuidToName.size());
+                logger.info("└──────────────────────────────────────────────────────────────");
+            } else {
+                logger.warn("[Roster] No roster items found in IQ packet - check XML format");
+                // Log first <item> if present for debugging
+                int itemStart = xml.indexOf("<item");
+                if (itemStart >= 0) {
+                    int itemEnd = xml.indexOf(">", itemStart);
+                    if (itemEnd > itemStart) {
+                        String sampleItem = xml.substring(itemStart, Math.min(itemEnd + 1, itemStart + 200));
+                        logger.warn("[Roster] Sample <item>: {}", sampleItem);
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Fallback parser for roster items using individual attribute extraction.
+     * Used when primary regex patterns fail due to unexpected attribute ordering.
+     */
+    private int parseRosterItemsFallback(String xml) {
+        int count = 0;
+
+        // Simple pattern to find <item ...> or <item ... /> tags
+        Pattern itemPattern = Pattern.compile("<item\\s+([^>]*?)/?>");
+        Matcher itemMatcher = itemPattern.matcher(xml);
+
+        while (itemMatcher.find()) {
+            String attrs = itemMatcher.group(1);
+
+            // Extract jid (PUUID@domain)
+            Pattern jidPattern = Pattern.compile("jid=['\"]([^'\"@]+)@[^'\"]*['\"]");
+            Matcher jidMatcher = jidPattern.matcher(attrs);
+            String puuid = jidMatcher.find() ? jidMatcher.group(1) : null;
+
+            if (puuid == null || puuid.isEmpty()) continue;
+
+            // Extract game_name first (preferred)
+            String displayName = null;
+            Matcher gameNameMatcher = GAME_NAME_PATTERN.matcher(attrs);
+            if (gameNameMatcher.find()) {
+                displayName = gameNameMatcher.group(1);
+            }
+
+            // Fallback to name attribute
+            if (displayName == null || displayName.isEmpty()) {
+                Pattern namePattern = Pattern.compile("(?<!game_)name=['\"]([^'\"]+)['\"]");
+                Matcher nameMatcher = namePattern.matcher(attrs);
+                if (nameMatcher.find()) {
+                    displayName = nameMatcher.group(1);
+                }
+            }
+
+            if (displayName != null && !displayName.isEmpty() && !puuidToName.containsKey(puuid)) {
+                puuidToName.put(puuid, displayName);
+                logger.info("│ [+] NEW (fallback): {} → '{}'", abbreviatePuuid(puuid), displayName);
+                count++;
+            }
         }
 
         return count;
