@@ -180,6 +180,21 @@ public class VoiceGenerator {
 
     public void setCurrentVoiceRate(short rate) {
         this.currentVoiceRate = rate;
+        saveConfig();
+    }
+
+    /**
+     * Get the current voice rate (0-100 UI scale).
+     */
+    public short getCurrentVoiceRate() {
+        return currentVoiceRate;
+    }
+
+    /**
+     * Get the PTT key code (java.awt.event.KeyEvent constant).
+     */
+    public int getKeyCode() {
+        return keyEvent;
     }
 
     public List<String> getAvailableVoices() {

@@ -389,6 +389,9 @@ public class ChatDataHandler {
             return;
         }
 
+        // NOTE: HTML entities (&lt;, &amp;, &#39;, etc.) are already unescaped
+        // by Message.java during parsing. No additional unescaping needed here.
+
         // === PHASE 3: WHO IS SPEAKING? ===
         // Use Roster to look up sender's display name for TTS announcement
         // Format: "PlayerName says: message" (if name is known)

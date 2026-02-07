@@ -9,6 +9,7 @@ com\someone\valvoicegui\Main.class
 com\someone\valvoicebackend\Chat.class
 com\someone\valvoicegui\ValVoiceBackend$ValVoiceEventListener.class
 com\someone\valvoicegui\MessageType.class
+com\someone\valvoicebackend\InbuiltVoiceSynthesizer$DependencyMissingException.class
 com\someone\valvoicebackend\XmppStreamParser.class
 com\someone\valvoicebackend\APIHandler$1.class
 com\someone\valvoicebackend\GameStateManager$GameState.class

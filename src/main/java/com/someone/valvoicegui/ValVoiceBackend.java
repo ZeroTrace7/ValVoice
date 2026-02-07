@@ -183,17 +183,24 @@ public class ValVoiceBackend {
 
         logger.info("[ValVoiceBackend] Stopping backend services...");
 
-        // Destroy MITM process
+        // Destroy MITM process (Java Process API)
         if (mitmProcess != null && mitmProcess.isAlive()) {
             logger.info("[ValVoiceBackend] Destroying MITM proxy process");
             mitmProcess.destroy();
             try {
-                mitmProcess.waitFor(5, TimeUnit.SECONDS);
+                if (!mitmProcess.waitFor(3, TimeUnit.SECONDS)) {
+                    logger.warn("[ValVoiceBackend] MITM process did not exit gracefully, forcing...");
+                    mitmProcess.destroyForcibly();
+                    mitmProcess.waitFor(2, TimeUnit.SECONDS);
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 mitmProcess.destroyForcibly();
             }
         }
+
+        // Phase 1: OS-level kill as fallback (ensures no orphaned processes)
+        killMitmProcessOsLevel();
 
         // Shutdown thread pool
         mitmIoPool.shutdown();
@@ -207,6 +214,30 @@ public class ValVoiceBackend {
         }
 
         logger.info("[ValVoiceBackend] Backend services stopped");
+    }
+
+    /**
+     * Phase 1: OS-level MITM process kill.
+     * Uses taskkill to ensure no zombie valvoice-mitm.exe processes remain.
+     * This is a fallback for cases where Java's Process.destroy() fails.
+     */
+    private void killMitmProcessOsLevel() {
+        try {
+            logger.debug("[ValVoiceBackend] Running OS-level MITM cleanup...");
+            ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", "valvoice-mitm.exe");
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            // Consume output (non-blocking best-effort)
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    logger.debug("[taskkill] {}", line);
+                }
+            }
+            proc.waitFor(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            logger.debug("[ValVoiceBackend] OS-level MITM cleanup failed (non-fatal): {}", e.getMessage());
+        }
     }
 
     /**

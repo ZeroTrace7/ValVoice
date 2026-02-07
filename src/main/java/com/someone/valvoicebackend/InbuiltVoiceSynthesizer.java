@@ -10,6 +10,11 @@ import java.util.List;
 /**
  * Persistent PowerShell-based Windows voice synthesizer using System.Speech.
  * Routes TTS audio to VB-CABLE for Valorant voice chat integration.
+ *
+ * Phase 2: Voice Injection Core
+ * - Validates SoundVolumeView.exe presence on startup
+ * - Validates VB-Cable device availability
+ * - Throws DependencyMissingException if critical dependencies are absent
  */
 public class InbuiltVoiceSynthesizer {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltVoiceSynthesizer.class);
@@ -18,12 +23,143 @@ public class InbuiltVoiceSynthesizer {
     private BufferedReader powershellReader;
     private final List<String> voices = new ArrayList<>();
     private String soundVolumeViewPath;
+    private boolean audioRoutingConfigured = false;
 
-    public InbuiltVoiceSynthesizer() {
+    /**
+     * Exception thrown when a required dependency is missing.
+     */
+    public static class DependencyMissingException extends RuntimeException {
+        private final String dependencyName;
+        private final String installUrl;
+
+        public DependencyMissingException(String dependencyName, String message, String installUrl) {
+            super(message);
+            this.dependencyName = dependencyName;
+            this.installUrl = installUrl;
+        }
+
+        public String getDependencyName() { return dependencyName; }
+        public String getInstallUrl() { return installUrl; }
+    }
+
+    /**
+     * Initialize synthesizer with optional strict mode.
+     * @param strictMode If true, throws DependencyMissingException when VB-Cable or SoundVolumeView.exe is missing
+     */
+    public InbuiltVoiceSynthesizer(boolean strictMode) {
         initializePowerShell();
         loadAvailableVoices();
         findSoundVolumeView();
+
+        // Phase 2: Strict dependency validation
+        if (strictMode) {
+            validateDependencies();
+        }
+
         routeAudioToVbCable();
+    }
+
+    public InbuiltVoiceSynthesizer() {
+        this(false); // Non-strict mode for backward compatibility
+    }
+
+    /**
+     * Phase 2: Validate critical dependencies for voice injection.
+     * Throws DependencyMissingException if VB-Cable or SoundVolumeView.exe is missing.
+     */
+    private void validateDependencies() {
+        // Check SoundVolumeView.exe
+        if (soundVolumeViewPath == null) {
+            logger.error("FATAL: SoundVolumeView.exe not found - cannot route audio to VB-Cable");
+            throw new DependencyMissingException(
+                "SoundVolumeView.exe",
+                "SoundVolumeView.exe is required for audio routing.\n\n" +
+                "Please ensure SoundVolumeView.exe is in the ValVoice folder.\n" +
+                "Download from: https://www.nirsoft.net/utils/sound_volume_view.html",
+                "https://www.nirsoft.net/utils/sound_volume_view.html"
+            );
+        }
+
+        // Check VB-Cable device
+        if (!isVbCableInstalled()) {
+            logger.error("FATAL: VB-Audio Virtual Cable not detected - cannot inject voice into game");
+            throw new DependencyMissingException(
+                "VB-Audio Virtual Cable",
+                "VB-Audio Virtual Cable is required for voice injection.\n\n" +
+                "Please install VB-Cable from: https://vb-audio.com/Cable/\n" +
+                "After installation, restart your computer and try again.",
+                "https://vb-audio.com/Cable/"
+            );
+        }
+    }
+
+    /**
+     * Phase 2: Detect if VB-Cable is installed by querying Windows audio devices.
+     */
+    private boolean isVbCableInstalled() {
+        if (powershellWriter == null || powershellProcess == null || !powershellProcess.isAlive()) {
+            logger.warn("PowerShell not available for VB-Cable detection");
+            return false;
+        }
+
+        try {
+            String sentinel = "VBCABLE_CHECK_" + System.currentTimeMillis();
+            String command = "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Name; echo '" + sentinel + "'";
+            powershellWriter.println(command);
+
+            StringBuilder buffer = new StringBuilder();
+            long startTime = System.currentTimeMillis();
+            long timeoutMs = 10000;
+
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                if (powershellReader.ready()) {
+                    int ch = powershellReader.read();
+                    if (ch == -1) break;
+                    if (ch == '\n' || ch == '\r') {
+                        String line = buffer.toString().trim();
+                        if (line.equals(sentinel)) {
+                            return false; // Finished without finding VB-Cable
+                        }
+                        String lower = line.toLowerCase();
+                        if (lower.contains("vb-audio") || lower.contains("cable input") || lower.contains("cable output")) {
+                            // Consume remaining output until sentinel
+                            consumeUntilSentinel(sentinel, timeoutMs - (System.currentTimeMillis() - startTime));
+                            logger.info("VB-Cable detected: {}", line);
+                            return true;
+                        }
+                        buffer.setLength(0);
+                    } else {
+                        buffer.append((char) ch);
+                    }
+                } else {
+                    Thread.sleep(50);
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("VB-Cable detection error: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private void consumeUntilSentinel(String sentinel, long timeoutMs) {
+        try {
+            StringBuilder buffer = new StringBuilder();
+            long startTime = System.currentTimeMillis();
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                if (powershellReader.ready()) {
+                    int ch = powershellReader.read();
+                    if (ch == -1) break;
+                    if (ch == '\n' || ch == '\r') {
+                        if (buffer.toString().trim().equals(sentinel)) return;
+                        buffer.setLength(0);
+                    } else {
+                        buffer.append((char) ch);
+                    }
+                } else {
+                    Thread.sleep(20);
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     private void initializePowerShell() {
@@ -83,7 +219,10 @@ public class InbuiltVoiceSynthesizer {
     }
 
     private void routeAudioToVbCable() {
-        if (soundVolumeViewPath == null || powershellProcess == null) return;
+        if (soundVolumeViewPath == null || powershellProcess == null) {
+            logger.warn("Cannot route audio: SoundVolumeView or PowerShell not available");
+            return;
+        }
 
         try {
             long pid = powershellProcess.pid();
@@ -96,17 +235,44 @@ public class InbuiltVoiceSynthesizer {
                 "1",
                 "CABLE Input"
             );
-            pb.start().waitFor();
-            logger.info("✓ PowerShell PID {} routed to VB-CABLE Input", pid);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            int exitCode = p.waitFor();
+            if (exitCode == 0) {
+                logger.info("✓ PowerShell PID {} routed to VB-CABLE Input", pid);
+            } else {
+                logger.warn("SoundVolumeView /SetAppDefault returned exit code {}", exitCode);
+            }
 
-            // Configure VB-CABLE listen-through
-            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/SetPlaybackThroughDevice", "CABLE Output", "Default Playback Device"});
-            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/SetListenToThisDevice", "CABLE Output", "1"});
-            Runtime.getRuntime().exec(new String[]{soundVolumeViewPath, "/unmute", "CABLE Output"});
+            // Configure VB-CABLE listen-through (so user can hear their own TTS)
+            executeAndLog(soundVolumeViewPath, "/SetPlaybackThroughDevice", "CABLE Output", "Default Playback Device");
+            executeAndLog(soundVolumeViewPath, "/SetListenToThisDevice", "CABLE Output", "1");
+            executeAndLog(soundVolumeViewPath, "/unmute", "CABLE Output");
+
+            audioRoutingConfigured = true;
+            logger.info("✓ VB-CABLE audio routing configured successfully");
 
         } catch (Exception e) {
-            logger.error("Failed to route audio: {}", e.getMessage());
+            logger.error("Failed to route audio to VB-Cable: {}", e.getMessage());
+            audioRoutingConfigured = false;
         }
+    }
+
+    private void executeAndLog(String... command) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            pb.start().waitFor();
+        } catch (Exception e) {
+            logger.debug("Command failed: {}", String.join(" ", command));
+        }
+    }
+
+    /**
+     * Check if audio routing was successfully configured.
+     */
+    public boolean isAudioRoutingConfigured() {
+        return audioRoutingConfigured;
     }
 
     public List<String> getAvailableVoices() {

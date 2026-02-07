@@ -168,11 +168,23 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         // Simulate loading process
         simulateLoading();
 
-        // Initialize persistent inbuilt synthesizer (Windows-only)
-        inbuiltSynth = new InbuiltVoiceSynthesizer();
-        if (inbuiltSynth.isReady()) {
-            logger.info("InbuiltVoiceSynthesizer ready with {} voices", inbuiltSynth.getAvailableVoices().size());
+        // Phase 2: Initialize persistent inbuilt synthesizer with strict dependency validation
+        try {
+            inbuiltSynth = new InbuiltVoiceSynthesizer(true); // Strict mode: validate VB-Cable + SoundVolumeView
+            if (inbuiltSynth.isReady()) {
+                logger.info("InbuiltVoiceSynthesizer ready with {} voices", inbuiltSynth.getAvailableVoices().size());
+                if (inbuiltSynth.isAudioRoutingConfigured()) {
+                    updateStatusLabel(statusAudioRoute, "Active (TTS only)", true);
+                    updateStatusLabel(statusVbCable, "Detected", true);
+                }
+            }
+        } catch (InbuiltVoiceSynthesizer.DependencyMissingException e) {
+            logger.error("Missing dependency: {}", e.getDependencyName());
+            showDependencyError(e.getDependencyName(), e.getMessage(), e.getInstallUrl());
+            return; // Stop initialization - critical dependency missing
+        }
 
+        if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             // Initialize VoiceGenerator (coordinates TTS + Push-to-Talk)
             try {
                 VoiceGenerator.initialize(inbuiltSynth);
@@ -201,6 +213,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             } catch (AWTException e) {
                 logger.error("Failed to initialize VoiceGenerator (keybind automation disabled)", e);
             }
+
+            // === Phase 3: Restore UI from persisted config ===
+            restorePersistedSettings();
         }
         // Dependency + bridge checks
         verifyExternalDependencies();
@@ -231,6 +246,79 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                 logger.info("ValVoiceBackend started successfully");
             } catch (Exception e) {
                 logger.error("Failed to start ValVoiceBackend", e);
+            }
+        });
+    }
+
+    /**
+     * Phase 3: Restore UI controls from persisted VoiceGenerator config.
+     * Called after VoiceGenerator is initialized to reflect saved settings.
+     */
+    private void restorePersistedSettings() {
+        if (!VoiceGenerator.isInitialized()) {
+            logger.debug("VoiceGenerator not initialized - skipping settings restoration");
+            return;
+        }
+
+        VoiceGenerator vg = VoiceGenerator.getInstance();
+
+        // Restore rate slider
+        if (rateSlider != null) {
+            short persistedRate = vg.getCurrentVoiceRate();
+            rateSlider.setValue(persistedRate);
+            logger.info("Restored rate slider to persisted value: {}", persistedRate);
+        }
+
+        // Setup and restore keybind text field
+        setupKeybindField();
+    }
+
+    /**
+     * Phase 3: Setup keybind text field for PTT key capture.
+     * The field captures key presses and updates VoiceGenerator config.
+     */
+    private void setupKeybindField() {
+        if (keybindTextField == null) {
+            logger.debug("keybindTextField not found in FXML");
+            return;
+        }
+
+        // Restore current keybind from VoiceGenerator
+        if (VoiceGenerator.isInitialized()) {
+            keybindTextField.setText(VoiceGenerator.getInstance().getCurrentKeybind());
+            logger.info("Restored keybind field to: {}", VoiceGenerator.getInstance().getCurrentKeybind());
+        }
+
+        // Make field non-editable but focusable for key capture
+        keybindTextField.setEditable(false);
+        keybindTextField.setFocusTraversable(true);
+
+        // Capture key press events
+        keybindTextField.setOnKeyPressed(event -> {
+            if (event.getCode() != null) {
+                int keyCode = event.getCode().getCode();
+                String keyName = event.getCode().getName();
+
+                // Update UI
+                keybindTextField.setText(keyName);
+
+                // Persist to VoiceGenerator
+                if (VoiceGenerator.isInitialized()) {
+                    VoiceGenerator.getInstance().setKeybind(keyCode);
+                    logger.info("PTT keybind changed to: {} (code: {})", keyName, keyCode);
+                }
+
+                // Consume event to prevent further processing
+                event.consume();
+            }
+        });
+
+        // Visual feedback on focus
+        keybindTextField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                keybindTextField.setPromptText("Press a key...");
+            } else {
+                keybindTextField.setPromptText("Click and press key...");
             }
         });
     }
@@ -872,6 +960,48 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         });
     }
 
+    /**
+     * Phase 3: Shows a dependency missing error with option to open install URL.
+     * This provides a graceful failure experience when critical dependencies are missing.
+     * @param dependencyName Name of the missing dependency
+     * @param message Detailed message with remediation steps
+     * @param installUrl Optional URL to download/install the dependency (null if not applicable)
+     */
+    private void showDependencyError(String dependencyName, String message, String installUrl) {
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("ValVoice - Missing Dependency");
+            alert.setHeaderText(dependencyName + " is required");
+            alert.setContentText(message);
+
+            // Add appropriate buttons based on whether we have an install URL
+            ButtonType exitButton = new ButtonType("Exit", ButtonBar.ButtonData.CANCEL_CLOSE);
+            if (installUrl != null && !installUrl.isBlank()) {
+                ButtonType openUrlButton = new ButtonType("Open Download Page");
+                alert.getButtonTypes().setAll(openUrlButton, exitButton);
+
+                alert.showAndWait().ifPresent(response -> {
+                    if (response == openUrlButton) {
+                        try {
+                            java.awt.Desktop.getDesktop().browse(new java.net.URI(installUrl));
+                        } catch (Exception e) {
+                            logger.error("Failed to open URL: {}", installUrl, e);
+                        }
+                    }
+                    // Exit the application after dialog is closed
+                    logger.error("Exiting due to missing dependency: {}", dependencyName);
+                    System.exit(1);
+                });
+            } else {
+                // No install URL - just show exit button
+                alert.getButtonTypes().setAll(exitButton);
+                alert.showAndWait();
+                logger.error("Exiting due to missing dependency: {}", dependencyName);
+                System.exit(1);
+            }
+        });
+    }
+
     public void shutdownServices() {
         shutdownRequested = true;
 
@@ -899,6 +1029,10 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
 
 
+    /**
+     * Phase 3: Verify critical external dependencies on startup.
+     * Shows blocking error dialogs with remediation steps if dependencies are missing.
+     */
     private void verifyExternalDependencies() {
         Path workingDir = Paths.get(System.getProperty("user.dir"));
         Path xmppPrimary = workingDir.resolve(XMPP_BRIDGE_EXE_PRIMARY);
@@ -914,14 +1048,27 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
         boolean xmppExePresent = xmppExe != null;
         if (!xmppExePresent) {
-            logger.error("MITM executable '{}' not found! Application cannot function without it.", XMPP_BRIDGE_EXE_PRIMARY);
+            logger.error("FATAL: MITM executable '{}' not found! Application cannot function without it.", XMPP_BRIDGE_EXE_PRIMARY);
             updateStatusLabel(statusXmpp, "MITM exe missing", false);
+            // Phase 3: Show blocking error dialog for missing MITM
+            showDependencyError(
+                XMPP_BRIDGE_EXE_PRIMARY,
+                "The MITM proxy executable is required for ValVoice to function.\n\n" +
+                "Please ensure " + XMPP_BRIDGE_EXE_PRIMARY + " is present in:\n" +
+                "• " + workingDir.toAbsolutePath() + "\n" +
+                "• or " + workingDir.resolve("mitm").toAbsolutePath() + "\n\n" +
+                "If you're running from source, build the MITM component first.\n" +
+                "If this is an installed version, please reinstall ValVoice.",
+                null // No external download URL for bundled component
+            );
+            return;
         } else {
             logger.info("Detected MITM executable: {}", xmppExe.toAbsolutePath());
             updateStatusLabel(statusXmpp, "Detected", true);
         }
 
-        // Check VB-CABLE and audio routing status via InbuiltVoiceSynthesizer
+        // VB-CABLE and audio routing are already checked in InbuiltVoiceSynthesizer with strict mode
+        // Just update status labels here for informational purposes
         boolean vbDetected = detectVbCableDevices();
         if (vbDetected) {
             logger.info("Configuring audio routing via InbuiltVoiceSynthesizer...");

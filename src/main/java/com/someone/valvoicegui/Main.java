@@ -11,6 +11,7 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.Properties;
 
 /**
@@ -44,6 +45,59 @@ public class Main {
     // Lock file resources (application instance lock)
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
+
+    /**
+     * Phase 1: Startup Guard (Cold Boot Check)
+     * Checks if Riot Client or Valorant is already running.
+     * ValVoice must start BEFORE Riot Client to intercept XMPP traffic.
+     */
+    private static boolean isRiotOrValorantRunning() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("tasklist", "/FO", "CSV", "/NH");
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String lower = line.toLowerCase(Locale.ROOT);
+                    if (lower.contains("riotclientservices.exe") || lower.contains("valorant.exe")) {
+                        logger.warn("Detected running process: {}", line);
+                        return true;
+                    }
+                }
+            }
+            proc.waitFor();
+        } catch (Exception e) {
+            logger.error("Failed to check for Riot/Valorant processes", e);
+            // If we can't check, allow startup (best-effort)
+        }
+        return false;
+    }
+
+    private static void cleanupStaleMitmProcesses() {
+        try {
+            logger.info("Cleaning up stale MITM processes (best-effort)...");
+            ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", "valvoice-mitm.exe");
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            // Consume output to prevent blocking
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    logger.debug("taskkill: {}", line);
+                }
+            }
+            int exitCode = proc.waitFor();
+            if (exitCode == 0) {
+                logger.info("Stale MITM processes terminated successfully");
+            } else {
+                // Exit code 128 = no matching processes found (normal case)
+                logger.debug("taskkill exit code: {} (128 = no processes found)", exitCode);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to cleanup stale MITM processes (non-fatal): {}", e.getMessage());
+        }
+    }
 
     /**
      * Show a pre-JavaFX error dialog using Swing.
@@ -99,6 +153,21 @@ public class Main {
      */
     public static void main(String[] args) {
         logger.info("Starting {} Application", APP_NAME);
+
+        // Phase 1: Startup Guard (Cold Boot Check)
+        // ValVoice must start BEFORE Riot Client to intercept XMPP traffic
+        if (isRiotOrValorantRunning()) {
+            logger.error("Riot Client or Valorant is already running - cannot start ValVoice");
+            showStartupError(APP_NAME + " - Cannot Start",
+                "Riot Client or Valorant is already running.\n\n" +
+                "ValVoice must be started BEFORE launching Riot Client.\n" +
+                "Please close Valorant and Riot Client, then restart ValVoice.");
+            System.exit(0);
+        }
+
+        // Phase 1: Stale MITM Process Cleanup
+        // Kill any zombie valvoice-mitm.exe processes from previous crashed sessions
+        cleanupStaleMitmProcesses();
 
         // 1. Bootstrap config directory
         try {
