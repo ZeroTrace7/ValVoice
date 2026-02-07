@@ -22,7 +22,7 @@
             <!-- App Icon -->
             <ImageView fitHeight="30.0" fitWidth="30.0" preserveRatio="true">
                 <image>
-                    <Image url="@icons/logo.png" />
+                    <Image url="@icons/appIcon.png" />
                 </image>
             </ImageView>
 
@@ -86,7 +86,7 @@
                 <!-- Logo/Icon -->
                 <ImageView fitHeight="100.0" fitWidth="100.0" preserveRatio="true">
                     <image>
-                        <Image url="@icons/logo.png" />
+                        <Image url="@icons/appIcon.png" />
                     </image>
                 </ImageView>
 

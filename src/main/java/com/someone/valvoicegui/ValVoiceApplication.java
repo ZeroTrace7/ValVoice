@@ -139,25 +139,16 @@ public class ValVoiceApplication extends Application {
         if (SystemTray.isSupported()) {
             SystemTray tray = SystemTray.getSystemTray();
 
-            // Load icon (try multiple classpath locations before falling back)
+            // Load icon (ValorantNarrator pattern: single canonical icon, no fallback)
             Image image = null;
             try {
-                java.net.URL iconURL = null;
-                // Try absolute classpath (logo.png in icons folder)
-                iconURL = ValVoiceApplication.class.getResource("/com/someone/valvoicegui/icons/logo.png");
-                if (iconURL == null) {
-                    // Try appIcon.png as fallback
-                    iconURL = ValVoiceApplication.class.getResource("/com/someone/valvoicegui/icons/appIcon.png");
-                }
-                if (iconURL == null) {
-                    // Try same package
-                    iconURL = ValVoiceApplication.class.getResource("appIcon.png");
-                }
+                java.net.URL iconURL = ValVoiceApplication.class.getResource("/com/someone/valvoicegui/icons/appIcon.png");
                 if (iconURL != null) {
                     image = ImageIO.read(iconURL);
+                    logger.debug("Loaded appIcon.png from classpath");
                 } else {
-                    // Create a simple default icon (16x16 blue square)
-                    logger.debug("logo.png/appIcon.png not found on classpath, using default icon");
+                    // appIcon.png missing - create minimal fallback (should not happen in production)
+                    logger.warn("appIcon.png not found on classpath - using default icon");
                     java.awt.image.BufferedImage defaultIcon = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB);
                     java.awt.Graphics2D g = defaultIcon.createGraphics();
                     g.setColor(java.awt.Color.BLUE);
@@ -166,7 +157,7 @@ public class ValVoiceApplication extends Application {
                     image = defaultIcon;
                 }
             } catch (Exception e) {
-                logger.error("Failed to load icon", e);
+                logger.error("Failed to load appIcon.png", e);
                 // Create fallback icon
                 java.awt.image.BufferedImage defaultIcon = new java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB);
                 java.awt.Graphics2D g = defaultIcon.createGraphics();

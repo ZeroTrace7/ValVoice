@@ -124,7 +124,15 @@ public class APIHandler {
 
     /**
      * Retrieve the local auth token (access token) from Riot client.
+     *
+     * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+     * <p>Part of ValorantNarrator's "Authenticated Sidecar" identity model.
+     * Required for client version headers in Riot API calls.
+     * Currently dormant - not wired into v1.0 runtime.</p>
+     *
+     * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
      */
+    @Deprecated(since = "1.0", forRemoval = false)
     public Optional<String> getAuthToken() {
         return send(baseRequest("/riotclient/auth-token").GET().build())
                 .flatMap(body -> {
@@ -138,7 +146,15 @@ public class APIHandler {
 
     /**
      * Retrieve entitlements token (used for many platform endpoints) via local API.
+     *
+     * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+     * <p>Part of ValorantNarrator's "Authenticated Sidecar" identity model.
+     * Required for Riot platform API authentication.
+     * Currently dormant - not wired into v1.0 runtime.</p>
+     *
+     * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
      */
+    @Deprecated(since = "1.0", forRemoval = false)
     public Optional<String> getEntitlementsToken() {
         return send(baseRequest("/entitlements/v1/token").POST(HttpRequest.BodyPublishers.noBody()).build())
                 .flatMap(body -> {
@@ -173,7 +189,15 @@ public class APIHandler {
 
     /**
      * Fetch and cache Riot client / chat session info (puuid, region, client version if available).
+     *
+     * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+     * <p>Part of ValorantNarrator's "Authenticated Sidecar" identity model.
+     * Retrieves client version headers required for Riot API calls.
+     * Currently dormant - not wired into v1.0 runtime.</p>
+     *
+     * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
      */
+    @Deprecated(since = "1.0", forRemoval = false)
     public Optional<RiotClientDetails> fetchClientDetails() {
         JsonObject session = send(baseRequest("/chat/v1/session").GET().build())
                 .flatMap(body -> {
@@ -192,6 +216,14 @@ public class APIHandler {
         return Optional.of(clientDetails);
     }
 
+    /**
+     * Fetch Valorant client version from product session endpoint.
+     *
+     * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+     * <p>Part of ValorantNarrator's "Authenticated Sidecar" identity model.
+     * Currently dormant - called only by fetchClientDetails().</p>
+     */
+    @Deprecated(since = "1.0", forRemoval = false)
     private Optional<String> fetchClientVersion() {
         // Try known local endpoint; ignore failures.
         return send(baseRequest("/product-session/v1/external-sessions").GET().build())
@@ -218,6 +250,15 @@ public class APIHandler {
         return el.getAsString();
     }
 
+    /**
+     * Get cached client details.
+     *
+     * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+     * <p>Currently dormant - not wired into v1.0 runtime.</p>
+     *
+     * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
+     */
+    @Deprecated(since = "1.0", forRemoval = false)
     public Optional<RiotClientDetails> getClientDetails() { return Optional.ofNullable(clientDetails); }
 
     public boolean isReady() { return client != null; }

@@ -115,7 +115,7 @@ public class Message {
         userId = id.split("@")[0];
 
         // Determine if this is our own message (legacy - ChatDataHandler uses extractPuuid now)
-        String selfId = ChatDataHandler.getInstance().getSelfID();
+        String selfId = ChatDataHandler.getInstance().getSelfId();
         ownMessage = selfId != null && selfId.equalsIgnoreCase(userId);
 
 

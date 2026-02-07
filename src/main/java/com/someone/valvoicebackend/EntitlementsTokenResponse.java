@@ -7,7 +7,15 @@ import org.slf4j.LoggerFactory;
 /**
  * Record class for handling Riot Games authentication responses.
  * Used in the XMPP bridge authentication flow.
+ *
+ * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+ * <p>This record is part of the ValorantNarrator reference architecture for parsing
+ * identity tokens during Name Resolution (PUUID → Display Name).
+ * Currently dormant - not wired into v1.0 runtime.</p>
+ *
+ * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
  */
+@Deprecated(since = "1.0", forRemoval = false)
 public record EntitlementsTokenResponse(
     @SerializedName("accessToken") String accessToken,
     @SerializedName("entitlements") String[] entitlements,

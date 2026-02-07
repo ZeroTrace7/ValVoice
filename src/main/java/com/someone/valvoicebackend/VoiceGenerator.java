@@ -125,6 +125,31 @@ public class VoiceGenerator {
         speakVoice(text, currentVoice, currentVoiceRate);
     }
 
+    /**
+     * Queue a message for TTS narration.
+     * Uses stored voice and rate settings.
+     *
+     * PHASE A: Production Cleanup
+     * This method allows backend (ChatDataHandler) to invoke TTS directly
+     * without going through ValVoiceController, maintaining UI-agnostic backend.
+     *
+     * @param msg The message to narrate (uses msg.getContent())
+     */
+    public void queueNarration(Message msg) {
+        if (msg == null || msg.getContent() == null || msg.getContent().isEmpty()) {
+            logger.debug("queueNarration: null or empty message, skipping");
+            return;
+        }
+
+        logger.info("🔊 TTS QUEUED: \"{}\" (voice: {}, rate: {}, PTT: {})",
+            msg.getContent().length() > 50 ? msg.getContent().substring(0, 47) + "..." : msg.getContent(),
+            currentVoice,
+            currentVoiceRate,
+            pttEnabled);
+
+        speak(msg.getContent());
+    }
+
     public void setKeybind(int keyCode) {
         this.keyEvent = keyCode;
         saveConfig();

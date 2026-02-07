@@ -294,22 +294,6 @@ public class Chat {
         if (c != null) legacyCharactersSent.addAndGet(c.length());
     }
 
-    /**
-     * Get self player ID (for ValNarrator compatibility).
-     * Now uses ChatDataHandler's direct selfID access.
-     */
-    public String getSelfID() {
-        return ChatDataHandler.getInstance().getSelfID();
-    }
-
-    /**
-     * Set self player ID (for ValNarrator compatibility).
-     * Now uses ChatDataHandler's direct selfID access.
-     */
-    public void setSelfID(String selfID) {
-        ChatDataHandler.getInstance().setSelfID(selfID);
-    }
-
 
     public boolean toggleState() { disabled = !disabled; return disabled; }
     public boolean isDisabled() { return disabled; }

@@ -17,8 +17,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.*;
 
-
-public class ValVoiceController {
+/**
+ * Main UI controller for ValVoice.
+ *
+ * PHASE 5: EVENT-DRIVEN UI
+ * Implements ValVoiceBackend.ValVoiceEventListener to receive backend events
+ * without direct coupling. All UI updates are wrapped in Platform.runLater().
+ */
+public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener {
     private static final Logger logger = LoggerFactory.getLogger(ValVoiceController.class);
     private static ValVoiceController latestInstance;
 
@@ -95,7 +101,6 @@ public class ValVoiceController {
     private volatile long voicesCacheTimestamp = 0;
     private static final long VOICES_CACHE_DURATION_MS = 300_000; // 5 minutes
 
-    private static final boolean SIMULATE_CHAT = false; // set true for local TTS demo without Valorant
     /**
      * External MITM Proxy Executable (single supported name)
      */
@@ -172,16 +177,62 @@ public class ValVoiceController {
             try {
                 VoiceGenerator.initialize(inbuiltSynth);
                 logger.info("✓ VoiceGenerator initialized with keybind: {}", VoiceGenerator.getInstance().getCurrentKeybind());
+
+                // === UI → VoiceGenerator Propagation Listeners ===
+                // Ensure voice selection changes are always synced to VoiceGenerator
+                if (voices != null) {
+                    voices.valueProperty().addListener((obs, oldVal, newVal) -> {
+                        if (newVal != null && !newVal.isBlank() && VoiceGenerator.isInitialized()) {
+                            VoiceGenerator.getInstance().setCurrentVoice(newVal);
+                            logger.debug("Voice synced to VoiceGenerator: {}", newVal);
+                        }
+                    });
+                }
+
+                // Ensure rate slider changes are synced to VoiceGenerator
+                if (rateSlider != null) {
+                    rateSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+                        if (newVal != null && VoiceGenerator.isInitialized()) {
+                            VoiceGenerator.getInstance().setCurrentVoiceRate(newVal.shortValue());
+                            logger.debug("Voice rate synced to VoiceGenerator: {}", newVal.shortValue());
+                        }
+                });
+                }
             } catch (AWTException e) {
                 logger.error("Failed to initialize VoiceGenerator (keybind automation disabled)", e);
             }
         }
-        if (SIMULATE_CHAT) {
-            startChatSimulation();
-        }
         // Dependency + bridge checks
         verifyExternalDependencies();
         updateBridgeStatusFromSystemProperties();
+
+        // === PHASE 5: EVENT-DRIVEN UI ===
+        // Register this controller as listener for backend events BEFORE starting backend.
+        // This decouples backend from direct UI references while preserving all behavior.
+        ValVoiceBackend.getInstance().addListener(this);
+        logger.info("Controller registered as backend event listener");
+
+        // Register stats callback with ChatDataHandler
+        ChatDataHandler.getInstance().setStatsCallback((sent, chars) -> {
+            Platform.runLater(() -> {
+                setMessagesSentLabel(sent);
+                setCharactersNarratedLabel(chars);
+            });
+        });
+        logger.info("Stats callback registered with ChatDataHandler");
+
+        // === START BACKEND SERVICES ===
+        // Start ValVoiceBackend from a background thread after UI is ready
+        // This matches ValorantNarrator's architecture: UI-triggered backend startup
+        scheduledExecutor.submit(() -> {
+            try {
+                logger.info("Starting ValVoiceBackend from controller...");
+                ValVoiceBackend.getInstance().start();
+                logger.info("ValVoiceBackend started successfully");
+            } catch (Exception e) {
+                logger.error("Failed to start ValVoiceBackend", e);
+            }
+        });
     }
 
     // Ensure status label has base CSS class for consistent badge styling
@@ -218,26 +269,61 @@ public class ValVoiceController {
         });
     }
 
-    // Public helpers to update status badges from background threads
-    public static void updateXmppStatus(String text, boolean ok) {
-        ValVoiceController c = latestInstance;
-        if (c == null) return;
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PHASE 5: EVENT-DRIVEN UI - ValVoiceEventListener Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // These methods receive events from ValVoiceBackend without direct coupling.
+    // All UI updates are wrapped in Platform.runLater() for thread safety.
+    // This is an intentional deviation from ValorantNarrator for production hardening.
+    // NO RUNTIME BEHAVIOR IS CHANGED - only the communication pattern is decoupled.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    @Override
+    public void onStatusChanged(String component, String status, boolean ok) {
         Platform.runLater(() -> {
-            if (c.statusXmpp != null) {
-                c.updateStatusLabel(c.statusXmpp, text, ok);
+            switch (component) {
+                case "xmpp" -> {
+                    if (statusXmpp != null) {
+                        updateStatusLabel(statusXmpp, status, ok);
+                    }
+                }
+                case "bridge" -> {
+                    if (statusBridgeMode != null) {
+                        statusBridgeMode.setText(status);
+                    }
+                    // Also update XMPP status when bridge mode changes
+                    if (statusXmpp != null && "external-exe".equalsIgnoreCase(status)) {
+                        updateStatusLabel(statusXmpp, "MITM Active", true);
+                    }
+                }
+                default -> logger.debug("Unknown status component: {}", component);
             }
         });
     }
 
-    public static void updateBridgeModeLabel(String modeText) {
-        ValVoiceController c = latestInstance;
-        if (c == null) return;
+    @Override
+    public void onIdentityCaptured(String puuid) {
         Platform.runLater(() -> {
-            if (c.statusBridgeMode != null) c.statusBridgeMode.setText(modeText);
-            if (c.statusXmpp != null) {
-                boolean ok = "external-exe".equalsIgnoreCase(modeText);
-                c.updateStatusLabel(c.statusXmpp, ok ? "MITM Active" : "Init...", ok);
+            if (statusSelfId != null) {
+                if (puuid != null && !puuid.isBlank()) {
+                    // Show abbreviated PUUID for privacy
+                    String abbreviated = puuid.length() > 8 ? puuid.substring(0, 8) + "..." : puuid;
+                    updateStatusLabelWithType(statusSelfId, "Self: " + abbreviated, "ok");
+                    applyTooltip(statusSelfId, "Your PUUID: " + puuid);
+                } else {
+                    updateStatusLabelWithType(statusSelfId, "Self: (observer mode)", "info");
+                    applyTooltip(statusSelfId, "Observer mode - player ID not tracked");
+                }
             }
+        });
+    }
+
+    @Override
+    public void onStatsUpdated(long messagesSent, long charactersSent) {
+        Platform.runLater(() -> {
+            setMessagesSentLabel(messagesSent);
+            setCharactersNarratedLabel(charactersSent);
         });
     }
 
@@ -359,7 +445,17 @@ public class ValVoiceController {
                 Platform.runLater(() -> {
                     voices.getItems().setAll(list);
                     voices.setPromptText("Select a voice");
-                    if (voices.getValue() == null && !list.isEmpty()) {
+
+                    // Prefer the persisted voice from VoiceGenerator config, otherwise use first available
+                    String preferredVoice = null;
+                    if (VoiceGenerator.isInitialized()) {
+                        preferredVoice = VoiceGenerator.getInstance().getCurrentVoice();
+                    }
+
+                    if (preferredVoice != null && list.contains(preferredVoice)) {
+                        voices.setValue(preferredVoice);
+                        logger.info("Restored persisted voice selection: {}", preferredVoice);
+                    } else if (voices.getValue() == null && !list.isEmpty()) {
                         voices.setValue(list.get(0));
                     }
                 });
@@ -634,10 +730,6 @@ public class ValVoiceController {
 
     // ========== UI Update Methods ==========
 
-    public void setUserIDLabel(String userID) {
-        Platform.runLater(() -> userIDLabel.setText(userID));
-    }
-
 
     public void setMessagesSentLabel(long count) {
         Platform.runLater(() -> messagesSentLabel.setText(String.valueOf(count)));
@@ -657,6 +749,12 @@ public class ValVoiceController {
         }
         logger.info("Voice selected: {}", selectedVoice);
         showInformation("Voice Selected", "You selected: " + selectedVoice);
+
+        // CRITICAL FIX: Store the selected voice in VoiceGenerator so all future TTS uses it
+        if (VoiceGenerator.isInitialized()) {
+            VoiceGenerator.getInstance().setCurrentVoice(selectedVoice);
+            logger.debug("VoiceGenerator.currentVoice updated to: {}", selectedVoice);
+        }
 
         // Play a brief sample using VoiceGenerator for proper coordination
         if (VoiceGenerator.isInitialized()) {
@@ -746,112 +844,7 @@ public class ValVoiceController {
         }
     }
 
-    /**
-     * Static narration entry-point used by ChatDataHandler after it has already
-     * applied filtering and recorded stats. This method should NOT alter Chat
-     * statistics besides updating UI labels; those are handled upstream.
-     *
-     * ✅ AUTOMATIC TTS WORKFLOW using InbuiltVoiceSynthesizer (with proper VB-Cable routing):
-     * - Called automatically when a chat message passes filters
-     * - Speaks the message immediately via persistent PowerShell TTS
-     * - Audio routes to VB-Cable → Valorant Open Mic → Teammates hear it!
-     * - NO manual trigger (no V key pressing) required!
-     *
-     * Prerequisites for teammates to hear:
-     * - Valorant Voice Activation: OPEN MIC (not Push to Talk)
-     * - Valorant Input Device: CABLE Output (VB-Audio Virtual Cable)
-     * - InbuiltVoiceSynthesizer automatically routes to VB-Cable on startup
-     */
-    public static void narrateMessage(Message msg) {
-        ValVoiceController c = latestInstance;
-        if (c == null) {
-            logger.warn("⚠️ narrateMessage called but ValVoiceController not initialized");
-            return;
-        }
-        if (msg == null) {
-            logger.warn("⚠️ narrateMessage called with null message");
-            return;
-        }
-        if (msg.getContent() == null) {
-            logger.debug("narrateMessage: message has null content, skipping");
-            return;
-        }
 
-        try {
-            // Use VoiceGenerator for coordinated TTS with Push-to-Talk automation
-            if (VoiceGenerator.isInitialized()) {
-                VoiceGenerator voiceGen = VoiceGenerator.getInstance();
-                int uiRate = c.mapSliderToUiRate(); // Get UI rate (0-100)
-                String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
-
-                // If no voice selected, use first available voice
-                if (selectedVoice == null || selectedVoice.isEmpty()) {
-                    java.util.List<String> availableVoices = voiceGen.getAvailableVoices();
-                    if (!availableVoices.isEmpty()) {
-                        selectedVoice = availableVoices.get(0);
-                    } else {
-                        logger.warn("⚠ No voices available - cannot narrate message!");
-                        return;
-                    }
-                }
-
-                // Log TTS trigger
-                logger.info("🔊 TTS TRIGGERED: \"{}\" (voice: {}, rate: {}, PTT: {})",
-                    msg.getContent().length() > 50 ? msg.getContent().substring(0, 47) + "..." : msg.getContent(),
-                    selectedVoice,
-                    uiRate,
-                    voiceGen.isPushToTalkEnabled());
-
-                // Speak using VoiceGenerator (automatic queue + Push-to-Talk)
-                voiceGen.speakVoice(msg.getContent(), selectedVoice, (short) uiRate);
-            } else if (c.inbuiltSynth != null && c.inbuiltSynth.isReady()) {
-                // Fallback: Direct call if VoiceGenerator failed to initialize
-                logger.warn("⚠ VoiceGenerator not initialized - using direct TTS (no Push-to-Talk)");
-                int uiRate = c.mapSliderToUiRate();
-                String selectedVoice = (c.voices != null) ? c.voices.getValue() : null;
-
-                if (selectedVoice == null || selectedVoice.isEmpty()) {
-                    java.util.List<String> availableVoices = c.inbuiltSynth.getAvailableVoices();
-                    if (!availableVoices.isEmpty()) {
-                        selectedVoice = availableVoices.get(0);
-                    } else {
-                        logger.warn("⚠ No voices available in fallback TTS - cannot narrate message!");
-                        return;
-                    }
-                }
-
-                c.inbuiltSynth.speakInbuiltVoice(selectedVoice, msg.getContent(), (short) uiRate);
-            } else {
-                logger.warn("⚠ TTS system not ready - cannot narrate message!");
-            }
-
-            // Update UI stats from Chat (already incremented by ChatDataHandler)
-            Chat chat = Chat.getInstance();
-            c.setMessagesSentLabel(chat.getNarratedMessages());
-            c.setCharactersNarratedLabel(chat.getNarratedCharacters());
-        } catch (Exception e) {
-            logger.error("narrateMessage failed", e);
-        }
-    }
-
-    /**
-     * Entry point for incoming raw XMPP chat XML stanzas.
-     * In a real integration this would be invoked by a networking / XMPP listener thread.
-     */
-    public void handleIncomingChatXml(String xml) {
-        if (xml == null || xml.isBlank()) return;
-        Message message = ChatDataHandler.getInstance().parseMessage(xml);
-        if (message == null) return;
-        // Delegate to unified handler (will record stats + narrate)
-        ChatDataHandler.getInstance().message(message);
-        logger.debug("Processed incoming chat XML via unified handler: {}", message);
-    }
-
-
-    private int mapSliderToUiRate() {
-        if (rateSlider == null) return 50; // neutral (middle of 0-100 range)
-        return (int) Math.round(rateSlider.getValue()); // Direct 0-100 UI value for InbuiltVoiceSynthesizer
-    }
 
     /**
      * Shows an information alert dialog to the user
@@ -882,6 +875,13 @@ public class ValVoiceController {
     public void shutdownServices() {
         shutdownRequested = true;
 
+        // Stop the backend services (MITM, XMPP, etc.)
+        try {
+            ValVoiceBackend.getInstance().stop();
+        } catch (Exception e) {
+            logger.error("Error stopping ValVoiceBackend", e);
+        }
+
         if (inbuiltSynth != null) {
             inbuiltSynth.shutdown();
         }
@@ -897,28 +897,6 @@ public class ValVoiceController {
         }
     }
 
-    private void startChatSimulation() {
-        scheduledExecutor.execute(() -> {
-            try {
-                String[] samples = new String[]{
-                        "<message from='playerSelf@ares-parties.na1.pvp.net' type='groupchat'><body>Hello party!</body></message>",
-                        "<message from='ally123@ares-coregame.na1.pvp.net' type='groupchat'><body>Team push B</body></message>",
-                        "<message from='villainall@ares-coregame.na1.pvp.net' type='groupchat'><body>GL HF</body></message>",
-                        "<message from='friend987@ares-pregame.na1.pvp.net' type='groupchat'><body>Ready?</body></message>",
-                        "<message from='whisperGuy@prod.na1.chat.valorant.gg' type='chat'><body>&amp;Encoded &lt;Whisper&gt;</body></message>"
-                };
-                ChatDataHandler.getInstance().updateSelfId("playerSelf");
-                Platform.runLater(() -> {
-                    if (sources != null) sources.setValue("SELF+PARTY+TEAM+ALL");
-                });
-
-                for (int i = 0; i < samples.length && SIMULATE_CHAT && !shutdownRequested; i++) {
-                    handleIncomingChatXml(samples[i]);
-                    Thread.sleep(2500);
-                }
-            } catch (InterruptedException ignored) { }
-        });
-    }
 
 
     private void verifyExternalDependencies() {
@@ -1021,23 +999,4 @@ public class ValVoiceController {
         }
         return null;
     }
-
-    private void setupAudioRouting() {
-        try {
-            logger.info("Audio routing will be handled by InbuiltVoiceSynthesizer...");
-            // Audio routing is now handled automatically by InbuiltVoiceSynthesizer
-            builtInRoutingOk = inbuiltSynth != null && inbuiltSynth.isReady();
-
-            if (!builtInRoutingOk) {
-                logger.warn("⚠ Automatic audio routing failed - please configure manually:");
-                logger.warn("1. Open Windows sound settings");
-                logger.warn("2. Set CABLE Input as default device for PowerShell");
-            }
-        } catch (Exception e) {
-            logger.error("Failed to configure audio routing", e);
-            builtInRoutingOk = false;
-        }
-    }
-    // REMOVED: routePowershellToCable() - dangerous system-wide routing
-    // Audio routing is handled per-process in InbuiltVoiceSynthesizer only
 }

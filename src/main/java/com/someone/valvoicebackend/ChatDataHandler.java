@@ -22,10 +22,35 @@ public class ChatDataHandler {
     private volatile String selfId = null;
     private final List<Consumer<String>> selfIdListeners = new CopyOnWriteArrayList<>();
 
+    // === PHASE 5: EVENT-DRIVEN UI ===
+    // Stats update callback - allows decoupling from direct UI controller references.
+    // Set by ValVoiceController during initialization.
+    private volatile StatsUpdateCallback statsCallback = null;
+
+    /**
+     * Functional interface for stats updates (Phase 5: Event-Driven UI).
+     * Replaces direct ValVoiceController.getLatestInstance() calls.
+     */
+    @FunctionalInterface
+    public interface StatsUpdateCallback {
+        void onStatsUpdated(long messagesSent, long charactersSent);
+    }
+
     private ChatDataHandler() {}
 
     public static ChatDataHandler getInstance() {
         return INSTANCE;
+    }
+
+    /**
+     * Set the stats update callback (Phase 5: Event-Driven UI).
+     * Called by ValVoiceController during initialization to receive stats updates.
+     *
+     * @param callback The callback to invoke when stats change, or null to disable
+     */
+    public void setStatsCallback(StatsUpdateCallback callback) {
+        this.statsCallback = callback;
+        logger.debug("[ChatDataHandler] Stats callback {}", callback != null ? "registered" : "cleared");
     }
 
     /**
@@ -101,12 +126,6 @@ public class ChatDataHandler {
         return selfId;
     }
 
-    /**
-     * Legacy method for compatibility
-     */
-    public String getSelfID() {
-        return getSelfId();
-    }
 
     /**
      * Set the self player ID and notify listeners.
@@ -134,12 +153,6 @@ public class ChatDataHandler {
         }
     }
 
-    /**
-     * Legacy method for compatibility
-     */
-    public void setSelfID(String selfID) {
-        setSelfId(selfID);
-    }
 
     /**
      * Update self ID (alias for setSelfId)
@@ -196,56 +209,6 @@ public class ChatDataHandler {
         // Fallback: return as-is (might be bare PUUID)
         logger.debug("[PUUID EXTRACT] Fallback (bare): '{}'", rawJid);
         return rawJid;
-    }
-
-    /**
-     * DEPRECATED: Use extractPuuid() instead.
-     *
-     * This method is more strict (validates UUID format) but ValorantNarrator
-     * uses a simpler, more lenient extraction logic.
-     *
-     * @param jid The full JID (from 'from' or 'jid' attribute)
-     * @return The sender PUUID, or null if not extractable
-     */
-    @Deprecated
-    private static String extractPuuidFromJid(String jid) {
-        if (jid == null || jid.isBlank()) {
-            return null;
-        }
-
-        // FORMAT 1: Check for resource part (room@server/PUUID)
-        // This is the MUC format where PUUID is in the resource
-        int slashIndex = jid.indexOf('/');
-        if (slashIndex >= 0 && slashIndex < jid.length() - 1) {
-            String resource = jid.substring(slashIndex + 1);
-            if (!resource.isBlank()) {
-                logger.debug("[PUUID EXTRACT LEGACY] Format 1 (resource): '{}' -> '{}'", jid, resource);
-                return resource;
-            }
-        }
-
-        // FORMAT 2: No resource, PUUID is the local part (PUUID@server)
-        // This is the 'jid' attribute format
-        int atIndex = jid.indexOf('@');
-        if (atIndex > 0) {
-            String localPart = jid.substring(0, atIndex);
-            // Validate: PUUID should look like a UUID (contains hyphens, ~36 chars)
-            // Be lenient but filter out obvious non-PUUIDs like room IDs
-            if (!localPart.isBlank() && localPart.contains("-") && localPart.length() >= 32) {
-                logger.debug("[PUUID EXTRACT LEGACY] Format 2 (local part): '{}' -> '{}'", jid, localPart);
-                return localPart;
-            }
-        }
-
-        // FORMAT 3: Bare PUUID (no @ or /)
-        // Some edge cases may have just the PUUID
-        if (!jid.contains("@") && !jid.contains("/") && jid.contains("-") && jid.length() >= 32) {
-            logger.debug("[PUUID EXTRACT LEGACY] Format 3 (bare PUUID): '{}'", jid);
-            return jid;
-        }
-
-        logger.debug("[PUUID EXTRACT LEGACY] Could not extract PUUID from: '{}'", jid);
-        return null;
     }
 
     /**
@@ -389,6 +352,32 @@ public class ChatDataHandler {
             return;
         }
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PHASE 4: GAME STATE GATE (Smart Mute / Clutch Mode)
+        // ═══════════════════════════════════════════════════════════════════════════
+        // INTENTIONAL DEVIATION FROM VALORANTNARRATOR:
+        // ValorantNarrator does NOT implement presence-based game state awareness.
+        // This gate is a ValVoice enhancement - strictly ADDITIVE and ISOLATED.
+        //
+        // FILTER ORDER PRESERVED (per spec):
+        // Archive → Timestamp → Duplicate → Self-only → Channel → (NEW) Game State → TTS
+        //
+        // NON-NEGOTIABLE INVARIANTS (verified preserved):
+        // - UTC + grace window timestamp gate: UNCHANGED (in ValVoiceBackend)
+        // - Archive IQ blocking: UNCHANGED (in ValVoiceBackend)
+        // - Self-only narration: UNCHANGED (above in this method)
+        // - Teammates never narrated: UNCHANGED (self-only filter above)
+        //
+        // Gate Logic:
+        // If clutchMode is ENABLED AND currentState is INGAME → silently drop narration
+        // ═══════════════════════════════════════════════════════════════════════════
+        if (GameStateManager.getInstance().shouldSuppressNarration()) {
+            GameStateManager.GameState currentState = GameStateManager.getInstance().getCurrentState();
+            logger.info("└─ ❌ FILTERED (SMART MUTE): clutchMode=ON, state={} - suppressing narration", currentState);
+            logger.debug("│ [SMART MUTE DEBUG] Message would have been narrated but clutch mode suppressed it");
+            return;
+        }
+
         logger.info("└─ ✅ PASSED ALL FILTERS (SELF-ONLY MODE) - Proceeding to TTS");
 
         // Clean and narrate - handle null content
@@ -400,13 +389,27 @@ public class ChatDataHandler {
             return;
         }
 
-        logger.info("🔊 TTS DISPATCH: type={} content='{}'", msgType,
-            cleanContent.length() > 40 ? cleanContent.substring(0, 37) + "..." : cleanContent);
+        // === PHASE 3: WHO IS SPEAKING? ===
+        // Use Roster to look up sender's display name for TTS announcement
+        // Format: "PlayerName says: message" (if name is known)
+        String ttsContent = Roster.getInstance().formatTtsMessage(senderPuuid, cleanContent);
 
+        logger.info("🔊 TTS DISPATCH: type={} content='{}'", msgType,
+            ttsContent.length() > 40 ? ttsContent.substring(0, 37) + "..." : ttsContent);
+
+        // Create a copy of the message with the formatted TTS content
+        final Message ttsMessage = new Message(message, ttsContent);
+
+        // === PHASE A: PRODUCTION CLEANUP ===
+        // Call VoiceGenerator directly instead of going through ValVoiceController.
+        // This maintains backend UI-agnostic design (Phase 5 Event-Driven UI).
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
-                // narrateMessage will check if voice system is initialized
-                com.someone.valvoicegui.ValVoiceController.narrateMessage(message);
+                if (VoiceGenerator.isInitialized()) {
+                    VoiceGenerator.getInstance().queueNarration(ttsMessage);
+                } else {
+                    logger.warn("VoiceGenerator not initialized - cannot narrate message");
+                }
             } catch (Exception e) {
                 logger.error("Failed to narrate: {}", e.getMessage());
             }
@@ -426,38 +429,20 @@ public class ChatDataHandler {
     }
 
     private void updateUI(Chat chat) {
-        try {
-            javafx.application.Platform.runLater(() -> {
-                var controller = com.someone.valvoicegui.ValVoiceController.getLatestInstance();
-                if (controller != null) {
-                    controller.setMessagesSentLabel(chat.getMessagesSent());
-                    controller.setCharactersNarratedLabel(chat.getCharactersSent());
-                }
-            });
-        } catch (Exception e) {
-            // Ignore UI update failures
+        // === PHASE 5: EVENT-DRIVEN UI ===
+        // Use callback instead of direct ValVoiceController reference.
+        // The callback handles Platform.runLater() wrapping internally.
+        StatsUpdateCallback callback = this.statsCallback;
+        if (callback != null) {
+            try {
+                callback.onStatsUpdated(chat.getMessagesSent(), chat.getCharactersSent());
+            } catch (Exception e) {
+                // Ignore UI update failures
+                logger.debug("[ChatDataHandler] Stats callback error: {}", e.getMessage());
+            }
         }
     }
 
-    /**
-     * Parse a raw message string into a Message object
-     * @param rawMessage raw message data
-     * @return parsed Message object or null if parsing failed
-     */
-    public Message parseMessage(String rawMessage) {
-        try {
-            // Parse JSON message - this is a placeholder
-            // Actual implementation depends on the message format
-            logger.debug("Parsing message: {}", rawMessage);
-
-            // For now, return null - this should be implemented based on
-            // the actual XMPP message format
-            return null;
-        } catch (Exception e) {
-            logger.error("Failed to parse message: {}", rawMessage, e);
-            return null;
-        }
-    }
 
     /**
      * Register a listener for self ID changes

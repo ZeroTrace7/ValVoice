@@ -22,6 +22,11 @@ import java.util.Optional;
  * ConnectionHandler centralizes creation and reuse of a trust-all HttpClient for the
  * local Riot API (or other localhost HTTPS endpoints with self-signed certificates).
  *
+ * <p><b>TODO(v1.1): VN Hybrid Identity Subsystem</b></p>
+ * <p>This class is part of the ValorantNarrator reference architecture for authenticated
+ * Riot Local API access. It is preserved for v1.1 Name Resolution feature (PUUID → Display Name).
+ * Currently dormant - not wired into v1.0 runtime.</p>
+ *
  * Current scope:
  *  - Provide a singleton trust-all HttpClient (HTTP/1.1 + HTTP/2 capable)
  *  - Helper methods to build and send basic JSON or plain text requests
@@ -32,7 +37,10 @@ import java.util.Optional;
  *  - Rate limiting / backoff
  *  - Metrics & retry policies
  *  - WebSocket / XMPP bridging (if needed later)
+ *
+ * @deprecated Dormant for v1.0 Golden Build. Reserved for v1.1 Name Resolution feature.
  */
+@Deprecated(since = "1.0", forRemoval = false)
 public final class ConnectionHandler {
     private static final Logger logger = LoggerFactory.getLogger(ConnectionHandler.class);
     private static final ConnectionHandler INSTANCE = new ConnectionHandler();
