@@ -2,11 +2,19 @@ package com.someone.valvoicegui;
 
 import com.someone.valvoicebackend.*;
 import com.jfoenix.controls.JFXToggleButton;
+import javafx.animation.FadeTransition;
+import javafx.animation.PauseTransition;
+import javafx.animation.SequentialTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.AnchorPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,6 +93,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     @FXML public Label statusVbCable;      // VB-Audio virtual cable detection
     @FXML public Label statusAudioRoute;   // SoundVolumeView availability
     @FXML public Label statusSelfId;       // Current self player id
+
+    // Toast notification container (overlay)
+    @FXML public VBox toastContainer;
 
     // ========== State Variables ==========
     private boolean isLoading = true;
@@ -1013,36 +1024,149 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             );
         } catch (IOException e) {
             logger.error("Could not open Discord invite", e);
-            showAlert("Error", "Failed to open Discord invite");
+            showToast("Error", "Failed to open Discord invite", ToastType.ERROR);
         }
     }
 
-
+    // ========== TOAST NOTIFICATION SYSTEM ==========
 
     /**
-     * Shows an information alert dialog to the user
+     * Toast notification types for styling
      */
-    private void showInformation(String title, String message) {
+    public enum ToastType {
+        INFO,       // Blue/neutral - general information
+        SUCCESS,    // Green - successful operations
+        WARNING,    // Yellow/amber - warnings (non-fatal)
+        ERROR       // Red - errors (non-fatal)
+    }
+
+    /**
+     * Shows a non-blocking toast notification that auto-dismisses.
+     * Replaces blocking Alert.showAndWait() for non-fatal messages.
+     *
+     * @param title   Toast title (bold header)
+     * @param message Toast message content
+     * @param type    Toast type for styling (INFO, SUCCESS, WARNING, ERROR)
+     */
+    private void showToast(String title, String message, ToastType type) {
+        showToast(title, message, type, 3000); // Default 3 second duration
+    }
+
+    /**
+     * Shows a non-blocking toast notification with custom duration.
+     *
+     * @param title      Toast title
+     * @param message    Toast message
+     * @param type       Toast type for styling
+     * @param durationMs Duration in milliseconds before auto-dismiss
+     */
+    private void showToast(String title, String message, ToastType type, int durationMs) {
         Platform.runLater(() -> {
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle(title);
-            alert.setHeaderText(null);
-            alert.setContentText(message);
-            alert.showAndWait();
+            if (toastContainer == null) {
+                logger.warn("Toast container not initialized, falling back to logger");
+                logger.info("[Toast-{}] {}: {}", type, title, message);
+                return;
+            }
+
+            // Create toast HBox container
+            HBox toast = new HBox(10);
+            toast.setAlignment(Pos.CENTER_LEFT);
+            toast.setPadding(new Insets(12, 16, 12, 16));
+            toast.setMaxWidth(500);
+            toast.getStyleClass().add("toast");
+            toast.getStyleClass().add(getToastStyleClass(type));
+
+            // Icon label based on type
+            Label iconLabel = new Label(getToastIcon(type));
+            iconLabel.setStyle("-fx-font-size: 16px;");
+
+            // Content VBox with title and message
+            VBox content = new VBox(2);
+            Label titleLabel = new Label(title);
+            titleLabel.getStyleClass().add("toast-title");
+            Label messageLabel = new Label(message);
+            messageLabel.getStyleClass().add("toast-message");
+            messageLabel.setWrapText(true);
+            messageLabel.setMaxWidth(400);
+            content.getChildren().addAll(titleLabel, messageLabel);
+
+            toast.getChildren().addAll(iconLabel, content);
+
+            // Start fully transparent
+            toast.setOpacity(0);
+
+            // Add to container
+            toastContainer.getChildren().add(toast);
+
+            // Animate: fade in -> pause -> fade out -> remove
+            FadeTransition fadeIn = new FadeTransition(Duration.millis(200), toast);
+            fadeIn.setFromValue(0);
+            fadeIn.setToValue(1);
+
+            PauseTransition pause = new PauseTransition(Duration.millis(durationMs));
+
+            FadeTransition fadeOut = new FadeTransition(Duration.millis(300), toast);
+            fadeOut.setFromValue(1);
+            fadeOut.setToValue(0);
+
+            SequentialTransition sequence = new SequentialTransition(fadeIn, pause, fadeOut);
+            sequence.setOnFinished(e -> toastContainer.getChildren().remove(toast));
+            sequence.play();
+
+            logger.debug("[Toast-{}] {}: {}", type, title, message);
         });
     }
 
     /**
-     * Shows an error alert dialog to the user
+     * Get CSS style class for toast type
+     */
+    private String getToastStyleClass(ToastType type) {
+        return switch (type) {
+            case SUCCESS -> "toast-success";
+            case WARNING -> "toast-warning";
+            case ERROR -> "toast-error";
+            default -> "toast-info";
+        };
+    }
+
+    /**
+     * Get emoji icon for toast type
+     */
+    private String getToastIcon(ToastType type) {
+        return switch (type) {
+            case SUCCESS -> "✓";
+            case WARNING -> "⚠";
+            case ERROR -> "✕";
+            default -> "ℹ";
+        };
+    }
+
+    /**
+     * Shows an information toast notification (non-blocking replacement for Alert)
+     */
+    private void showInformation(String title, String message) {
+        showToast(title, message, ToastType.INFO);
+    }
+
+    /**
+     * Shows an error toast notification (non-blocking replacement for Alert)
      */
     private void showAlert(String title, String message) {
-        Platform.runLater(() -> {
-            Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle(title);
-            alert.setHeaderText(null);
-            alert.setContentText(message);
-            alert.showAndWait();
-        });
+        showToast(title, message, ToastType.ERROR);
+    }
+
+    /**
+     * Shows a warning toast notification
+     */
+    private void showWarning(String title, String message) {
+        showToast(title, message, ToastType.WARNING);
+    }
+
+    /**
+     * Shows a success toast notification
+     */
+    private void showSuccess(String title, String message) {
+        showToast(title, message, ToastType.SUCCESS);
     }
 
     /**
