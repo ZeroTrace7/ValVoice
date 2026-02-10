@@ -76,16 +76,17 @@ public class Chat {
             messagesPerType.put(type, new LongAdder());
             narratedPerType.put(type, new LongAdder());
         }
-        // VN-parity: Fail-open default - enable ALL channels (SELF+PARTY+TEAM+ALL)
+        // ValVoice default: Enable SELF+PARTY+TEAM (exclude ALL chat by default)
+        // This provides a cleaner default experience for voice injection
         // includeOwnMessages (SELF) already true above
         enabledChannels.add(TYPE_PARTY);
         enabledChannels.add(TYPE_TEAM);
-        enabledChannels.add(TYPE_ALL);
+        // TYPE_ALL intentionally NOT added - excluded by default
         // Whispers remain disabled (whispersEnabled = false) per VN spec
 
         // Sync legacy flags immediately after initialization
         syncLegacyFlagsFromModern();
-        logger.info("Chat initialized with VN fail-open defaults: enabledChannels={} includeOwn={} whispersEnabled={}",
+        logger.info("Chat initialized with defaults: enabledChannels={} includeOwn={} whispersEnabled={}",
             enabledChannels, includeOwnMessages, whispersEnabled);
     }
 
@@ -174,12 +175,12 @@ public class Chat {
      * Updates both modern enum set and legacy boolean flags.
      * Note: WHISPER/PRIVATE tokens can be used but whispers are enabled by default.
      *
-     * VN-parity: Fail-open behavior - if selection is null/blank/invalid, use default (all channels).
+     * ValVoice default: If selection is null/blank/invalid, use default (SELF+PARTY+TEAM).
      */
     public synchronized void applySourceSelection(String selection) {
         if (selection == null || selection.isBlank()) {
-            // VN-parity: Fail-open to default (SELF+PARTY+TEAM+ALL)
-            logger.info("[Chat] applySourceSelection: null/blank input, applying VN fail-open default");
+            // Apply default (SELF+PARTY+TEAM, excludes ALL chat)
+            logger.info("[Chat] applySourceSelection: null/blank input, applying default");
             setSources(Source.getDefault());
             return;
         }
@@ -201,9 +202,9 @@ public class Chat {
             }
         }
 
-        // VN-parity: Fail-open if no valid tokens parsed
+        // If no valid tokens parsed, apply default
         if (!anyValidToken) {
-            logger.warn("[Chat] applySourceSelection: no valid tokens in '{}', applying VN fail-open default", selection);
+            logger.warn("[Chat] applySourceSelection: no valid tokens in '{}', applying default", selection);
             setSources(Source.getDefault());
             return;
         }

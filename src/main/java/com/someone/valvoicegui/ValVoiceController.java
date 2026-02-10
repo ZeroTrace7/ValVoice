@@ -309,8 +309,8 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
      */
     private String mapEnumSetToUiTier(EnumSet<Source> sources) {
         if (sources == null || sources.isEmpty()) {
-            logger.warn("Empty source set, defaulting to SELF+PARTY+TEAM+ALL");
-            return "SELF+PARTY+TEAM+ALL";
+            logger.warn("Empty source set, defaulting to SELF+PARTY+TEAM");
+            return "SELF+PARTY+TEAM";
         }
 
         // VN invariant: UI always includes SELF
@@ -548,13 +548,14 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             "SELF+PARTY+TEAM+ALL"
         );
 
-        // VN-parity: Default to SELF+PARTY+TEAM+ALL (fail open to all channels)
-        sources.setValue("SELF+PARTY+TEAM+ALL");
-        logger.info("Default chat source set to: SELF+PARTY+TEAM+ALL (VN fail-open behavior)");
+        // ValVoice default: SELF+PARTY+TEAM (excludes ALL chat for cleaner default experience)
+        // This differs from VN's fail-open default - intentional UX choice for voice injection
+        sources.setValue("SELF+PARTY+TEAM");
+        logger.info("Default chat source set to: SELF+PARTY+TEAM (ALL chat excluded by default)");
 
         // Apply the default source selection to Chat configuration
-        Chat.getInstance().applySourceSelection("SELF+PARTY+TEAM+ALL");
-        logger.info("Applied default source selection to Chat: SELF+PARTY+TEAM+ALL");
+        Chat.getInstance().applySourceSelection("SELF+PARTY+TEAM");
+        logger.info("Applied default source selection to Chat: SELF+PARTY+TEAM");
 
         // Async load voices to avoid blocking FX thread
         loadVoicesAsync(false);

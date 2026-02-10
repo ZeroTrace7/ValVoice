@@ -248,16 +248,21 @@ public class Main {
         EnumSet<Source> sources;
 
         if (sourceStr == null || sourceStr.isBlank()) {
-            // No persisted source - use default (VN fail-open: SELF+PARTY+TEAM+ALL)
+            // No persisted source - use default (SELF+PARTY+TEAM, excludes ALL chat)
             sources = Source.getDefault();
-            logger.info("[Config] No persisted source, using VN fail-open default: {}", Source.toString(sources));
+            logger.info("[Config] No persisted source, using default: {}", Source.toString(sources));
+
+            // VN-parity: Persist the default immediately so fresh installs have a saved value
+            userProperties.setProperty(PROP_SOURCE, Source.toString(sources));
+            saveConfig();
+            logger.info("[Config] Persisted default source for fresh install: {}", Source.toString(sources));
         } else {
             sources = Source.fromString(sourceStr);
-            if (sources.isEmpty()) {
-                // Invalid config string - fail open to default
-                sources = Source.getDefault();
-                logger.warn("[Config] Invalid source string '{}', using VN fail-open default: {}",
-                    sourceStr, Source.toString(sources));
+            // fromString() now returns default for invalid input, so check if it matches the input
+            String parsedStr = Source.toString(sources);
+            if (!parsedStr.equalsIgnoreCase(sourceStr.replace(" ", ""))) {
+                logger.warn("[Config] Source string '{}' parsed to '{}', using parsed value",
+                    sourceStr, parsedStr);
             } else {
                 logger.info("[Config] Restored source from config: {}", sourceStr);
             }

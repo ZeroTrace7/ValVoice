@@ -29,14 +29,15 @@ public enum Source {
      * VN-parity: Handles "SELF+PARTY+TEAM" format.
      *
      * @param value Config string (e.g., "PARTY+TEAM" or "SELF+PARTY+TEAM+ALL")
-     * @return EnumSet containing parsed sources, empty set if null/blank
+     * @return EnumSet containing parsed sources, default (SELF+PARTY+TEAM) if null/blank
      */
     public static EnumSet<Source> fromString(String value) {
-        EnumSet<Source> result = EnumSet.noneOf(Source.class);
-
+        // VN-parity: Return default for null/blank (fresh install behavior)
         if (value == null || value.isBlank()) {
-            return result;
+            return getDefault();
         }
+
+        EnumSet<Source> result = EnumSet.noneOf(Source.class);
 
         String[] parts = value.toUpperCase(Locale.ROOT).split("\\+");
         for (String part : parts) {
@@ -49,6 +50,11 @@ public enum Source {
             } catch (IllegalArgumentException ignored) {
                 // Unknown source token - skip (VN behavior: ignore unknown)
             }
+        }
+
+        // VN-parity: If parsing resulted in empty set, return default
+        if (result.isEmpty()) {
+            return getDefault();
         }
 
         return result;
@@ -77,14 +83,16 @@ public enum Source {
 
     /**
      * Get default source configuration.
-     * VN-parity: Default is SELF+PARTY+TEAM+ALL (fail-open behavior).
+     * ValVoice default: SELF+PARTY+TEAM (excludes ALL chat by default).
      *
-     * This ensures if config is missing or invalid, all channels are enabled
-     * rather than silently filtering messages. User can always restrict later.
+     * This ensures a clean default experience for new users:
+     * - ALL chat is excluded to reduce noise
+     * - User can enable ALL chat in settings if desired
+     * - Existing users with persisted config are NOT affected
      *
-     * @return Default EnumSet (all channels enabled)
+     * @return Default EnumSet (SELF, PARTY, TEAM enabled; ALL disabled)
      */
     public static EnumSet<Source> getDefault() {
-        return EnumSet.of(SELF, PARTY, TEAM, ALL);
+        return EnumSet.of(SELF, PARTY, TEAM);
     }
 }
