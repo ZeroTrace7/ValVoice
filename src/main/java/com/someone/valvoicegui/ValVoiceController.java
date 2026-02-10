@@ -950,24 +950,52 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
 
     /**
-     * Shows specified panel and hides others
+     * Shows specified panel and hides others with smooth fade transition.
+     * Phase 2: Added fade animation for modern UX feel.
      */
     private void showPanel(AnchorPane panelToShow) {
+        // Determine which scroll pane and panel to show
+        ScrollPane targetScroll = null;
+        AnchorPane targetPanel = panelToShow;
+
+        if (panelToShow == panelInfo && scrollInfo != null) {
+            targetScroll = scrollInfo;
+        } else if (panelToShow == panelUser && scrollUser != null) {
+            targetScroll = scrollUser;
+        } else if (panelToShow == panelSettings && scrollSettings != null) {
+            targetScroll = scrollSettings;
+        }
+
+        // Hide all panels first (no animation on hide for snappy feel)
         panelLogin.setVisible(false);
         if (scrollInfo != null) { scrollInfo.setVisible(false); panelInfo.setVisible(false); }
         if (scrollUser != null) { scrollUser.setVisible(false); panelUser.setVisible(false); }
         if (scrollSettings != null) { scrollSettings.setVisible(false); panelSettings.setVisible(false); }
 
-        if (panelToShow == panelInfo && scrollInfo != null) {
-            scrollInfo.setVisible(true); panelInfo.setVisible(true);
-        } else if (panelToShow == panelUser && scrollUser != null) {
-            scrollUser.setVisible(true); panelUser.setVisible(true);
-        } else if (panelToShow == panelSettings && scrollSettings != null) {
-            scrollSettings.setVisible(true); panelSettings.setVisible(true);
+        // Show target with fade-in animation
+        if (targetScroll != null) {
+            targetScroll.setOpacity(0);
+            targetScroll.setVisible(true);
+            targetPanel.setVisible(true);
+            animateFadeIn(targetScroll);
         } else {
-            panelToShow.setVisible(true);
+            targetPanel.setOpacity(0);
+            targetPanel.setVisible(true);
+            animateFadeIn(targetPanel);
         }
+
         logger.debug("Showing panel: {}", panelToShow.getId());
+    }
+
+    /**
+     * Phase 2: Animate a node with fade-in effect.
+     * Pure UI animation - no effect on backend logic.
+     */
+    private void animateFadeIn(javafx.scene.Node node) {
+        FadeTransition fadeIn = new FadeTransition(Duration.millis(150), node);
+        fadeIn.setFromValue(0.0);
+        fadeIn.setToValue(1.0);
+        fadeIn.play();
     }
 
     // ========== UI Update Methods ==========

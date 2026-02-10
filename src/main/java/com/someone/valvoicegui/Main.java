@@ -139,14 +139,6 @@ public class Main {
         logger.info("[Reaper] Cold Boot cleanup complete");
     }
 
-    /**
-     * @deprecated Use {@link #runProcessReaper()} instead.
-     * Kept for backwards compatibility - now delegates to Reaper.
-     */
-    @Deprecated
-    private static void cleanupStaleMitmProcesses() {
-        runProcessReaper();
-    }
 
     /**
      * Show a pre-JavaFX error dialog using Swing.

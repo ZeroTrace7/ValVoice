@@ -250,14 +250,6 @@ public class ValVoiceBackend {
         logger.info("[Reaper] Shutdown Reaper complete");
     }
 
-    /**
-     * @deprecated Use {@link #runShutdownReaper()} instead.
-     * Kept for backwards compatibility - now delegates to Shutdown Reaper.
-     */
-    @Deprecated
-    private void killMitmProcessOsLevel() {
-        runShutdownReaper();
-    }
 
     /**
      * Check if the backend is currently running.

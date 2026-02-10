@@ -34,6 +34,12 @@ public class VoiceGenerator {
 
     private static final int DEFAULT_KEY = KeyEvent.VK_V;
 
+    // VN-parity: PTT timing constants (not user-configurable)
+    // Pre-roll delay: wait for Valorant to activate voice transmission after keyPress
+    private static final long PTT_PREROLL_DELAY_MS = 200;
+    // Post-roll delay: ensure audio transmission completes before keyRelease
+    private static final long PTT_POSTROLL_DELAY_MS = 100;
+
     private final Robot robot;
     private final InbuiltVoiceSynthesizer synthesizer;
     // Single-threaded executor ensures strict FIFO ordering - no overlapping speech
@@ -47,8 +53,6 @@ public class VoiceGenerator {
     private String currentVoice = "Microsoft Zira Desktop";
     private short currentVoiceRate = 50;
     private volatile boolean isSpeaking = false;
-    private int prerollDelayMs = 200;
-    private int postrollDelayMs = 100;
 
     private VoiceGenerator(InbuiltVoiceSynthesizer synthesizer) throws AWTException {
         this.synthesizer = synthesizer;
@@ -95,8 +99,8 @@ public class VoiceGenerator {
                     logger.debug("PTT pressed");
 
                     // Pre-roll delay: wait for Valorant to activate voice transmission
-                    logger.debug("Preroll sleep {} ms", prerollDelayMs);
-                    Thread.sleep(prerollDelayMs);
+                    logger.debug("Preroll sleep {} ms", PTT_PREROLL_DELAY_MS);
+                    Thread.sleep(PTT_PREROLL_DELAY_MS);
                     logger.debug("Preroll sleep completed");
                 }
 
@@ -107,8 +111,8 @@ public class VoiceGenerator {
 
                 // Post-roll delay: ensure audio transmission completes before releasing PTT
                 if (pttEnabled) {
-                    Thread.sleep(postrollDelayMs);
-                    logger.debug("Postroll delay {} ms completed", postrollDelayMs);
+                    Thread.sleep(PTT_POSTROLL_DELAY_MS);
+                    logger.debug("Postroll delay {} ms completed", PTT_POSTROLL_DELAY_MS);
                 }
 
             } catch (Exception e) {
