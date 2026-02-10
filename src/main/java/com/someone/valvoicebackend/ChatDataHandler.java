@@ -333,22 +333,54 @@ public class ChatDataHandler {
         logger.debug("│ [SELF-ONLY DEBUG] Full comparison: sender='{}' self='{}' match=true",
                     senderPuuid, localUserPuuid);
 
-        // CHANNEL RESTRICTION: Only allow PARTY or TEAM for self-narration
-        // (Whisper and All chat are excluded from voice injection)
-        if (!Chat.TYPE_PARTY.equals(msgType) && !Chat.TYPE_TEAM.equals(msgType)) {
-            logger.info("└─ ❌ FILTERED (CHANNEL): {} is not PARTY or TEAM - voice injection only for party/team chat",
-                       msgType);
+        // VN-parity: CHANNEL FILTER based on user-selected sources
+        // Only channels enabled in Chat runtime state are allowed through.
+        // UI options (additive tiers): SELF | SELF+PARTY | SELF+PARTY+TEAM | SELF+PARTY+TEAM+ALL
+        //
+        // Filtering truth table (for Voice Injector - self messages only):
+        // | Channel | SELF | SELF+PARTY | SELF+PARTY+TEAM | SELF+PARTY+TEAM+ALL |
+        // |---------|------|------------|-----------------|---------------------|
+        // | PARTY   | ❌   | ✅         | ✅              | ✅                  |
+        // | TEAM    | ❌   | ❌         | ✅              | ✅                  |
+        // | ALL     | ❌   | ❌         | ❌              | ✅                  |
+        // | WHISPER | ❌   | ❌         | ❌              | ❌                  |
+
+        // WHISPER is never narrated in VN standard flow
+        if (Chat.TYPE_WHISPER.equals(msgType)) {
+            logger.info("└─ ❌ FILTERED (CHANNEL): WHISPER is not narrated in VN standard flow");
             return;
         }
 
-        // Additional channel state checks (respect user preferences)
-        if (Chat.TYPE_PARTY.equals(msgType) && !chat.isPartyState()) {
-            logger.info("└─ ❌ FILTERED: PARTY but partyState=false");
-            return;
+        // PARTY channel check
+        if (Chat.TYPE_PARTY.equals(msgType)) {
+            if (!chat.isPartyState()) {
+                logger.info("└─ ❌ FILTERED: PARTY but partyState=false");
+                return;
+            }
+            // PARTY allowed, continue to TTS
         }
 
-        if (Chat.TYPE_TEAM.equals(msgType) && !chat.isTeamState()) {
-            logger.info("└─ ❌ FILTERED: TEAM but teamState=false");
+        // TEAM channel check
+        else if (Chat.TYPE_TEAM.equals(msgType)) {
+            if (!chat.isTeamState()) {
+                logger.info("└─ ❌ FILTERED: TEAM but teamState=false");
+                return;
+            }
+            // TEAM allowed, continue to TTS
+        }
+
+        // ALL channel check
+        else if (Chat.TYPE_ALL.equals(msgType)) {
+            if (!chat.isAllState()) {
+                logger.info("└─ ❌ FILTERED: ALL but allState=false");
+                return;
+            }
+            // ALL allowed, continue to TTS
+        }
+
+        // Unknown message type - drop for safety
+        else {
+            logger.warn("└─ ❌ FILTERED (CHANNEL): Unknown message type '{}' - dropping for safety", msgType);
             return;
         }
 

@@ -35,7 +35,7 @@ public class Chat {
     // Enabled channels for narration (using Set<String> instead of EnumSet)
     private final Set<String> enabledChannels = Collections.synchronizedSet(new HashSet<>());
     private boolean includeOwnMessages = true;
-    private volatile boolean whispersEnabled = true;
+    private volatile boolean whispersEnabled = false; // VN-parity: Whispers NOT narrated in standard flow
 
     // Ignored user IDs (case-insensitive stored in lower case)
     private final Set<String> ignoredUsers = new ConcurrentSkipListSet<>();
@@ -76,13 +76,16 @@ public class Chat {
             messagesPerType.put(type, new LongAdder());
             narratedPerType.put(type, new LongAdder());
         }
-        // Default: enable SELF + PARTY + TEAM (includeOwnMessages already true above)
+        // VN-parity: Fail-open default - enable ALL channels (SELF+PARTY+TEAM+ALL)
+        // includeOwnMessages (SELF) already true above
         enabledChannels.add(TYPE_PARTY);
         enabledChannels.add(TYPE_TEAM);
+        enabledChannels.add(TYPE_ALL);
+        // Whispers remain disabled (whispersEnabled = false) per VN spec
 
         // Sync legacy flags immediately after initialization
         syncLegacyFlagsFromModern();
-        logger.info("Chat initialized: enabledChannels={} includeOwn={} whispersEnabled={}",
+        logger.info("Chat initialized with VN fail-open defaults: enabledChannels={} includeOwn={} whispersEnabled={}",
             enabledChannels, includeOwnMessages, whispersEnabled);
     }
 
@@ -109,27 +112,102 @@ public class Chat {
     public boolean isWhispersEnabled() { return whispersEnabled; }
 
     /**
+     * VN-parity: Apply sources from EnumSet<Source>.
+     * Used by Main.java on startup to restore persisted channel filters.
+     * Used by ValVoiceController on UI toggle changes.
+     *
+     * @param sources EnumSet of enabled sources (SELF, PARTY, TEAM, ALL)
+     */
+    public synchronized void setSources(java.util.EnumSet<Source> sources) {
+        if (sources == null) {
+            sources = Source.getDefault();
+        }
+
+        // Clear and rebuild enabled channels
+        enabledChannels.clear();
+        includeOwnMessages = sources.contains(Source.SELF);
+
+        if (sources.contains(Source.PARTY)) {
+            enabledChannels.add(TYPE_PARTY);
+        }
+        if (sources.contains(Source.TEAM)) {
+            enabledChannels.add(TYPE_TEAM);
+        }
+        if (sources.contains(Source.ALL)) {
+            enabledChannels.add(TYPE_ALL);
+        }
+
+        // Sync legacy flags
+        syncLegacyFlagsFromModern();
+
+        logger.info("[Chat] Sources applied: {} (channels={}, includeOwn={})",
+            Source.toString(sources), enabledChannels, includeOwnMessages);
+    }
+
+    /**
+     * VN-parity: Get current sources as EnumSet<Source>.
+     * Used by ValVoiceController to build config string for persistence.
+     *
+     * @return EnumSet of currently enabled sources
+     */
+    public synchronized java.util.EnumSet<Source> getSources() {
+        java.util.EnumSet<Source> sources = java.util.EnumSet.noneOf(Source.class);
+
+        if (includeOwnMessages) {
+            sources.add(Source.SELF);
+        }
+        if (enabledChannels.contains(TYPE_PARTY)) {
+            sources.add(Source.PARTY);
+        }
+        if (enabledChannels.contains(TYPE_TEAM)) {
+            sources.add(Source.TEAM);
+        }
+        if (enabledChannels.contains(TYPE_ALL)) {
+            sources.add(Source.ALL);
+        }
+
+        return sources;
+    }
+
+    /**
      * Unified source selection parser (SELF, PARTY, TEAM, ALL tokens joined by '+').
      * Updates both modern enum set and legacy boolean flags.
      * Note: WHISPER/PRIVATE tokens can be used but whispers are enabled by default.
+     *
+     * VN-parity: Fail-open behavior - if selection is null/blank/invalid, use default (all channels).
      */
     public synchronized void applySourceSelection(String selection) {
-        if (selection == null || selection.isBlank()) return;
+        if (selection == null || selection.isBlank()) {
+            // VN-parity: Fail-open to default (SELF+PARTY+TEAM+ALL)
+            logger.info("[Chat] applySourceSelection: null/blank input, applying VN fail-open default");
+            setSources(Source.getDefault());
+            return;
+        }
+
         enabledChannels.clear();
         includeOwnMessages = false;
+        boolean anyValidToken = false;
         // Don't reset whispersEnabled - it stays enabled unless explicitly disabled via UI
         String[] parts = selection.toUpperCase(Locale.ROOT).split("\\+");
         for (String raw : parts) {
             String p = raw.trim();
             switch (p) {
-                case "SELF" -> includeOwnMessages = true;
-                case "PARTY" -> enabledChannels.add(TYPE_PARTY);
-                case "TEAM" -> enabledChannels.add(TYPE_TEAM);
-                case "ALL" -> enabledChannels.add(TYPE_ALL);
-                case "WHISPER", "PRIVATE" -> whispersEnabled = true; // Explicit enable
+                case "SELF" -> { includeOwnMessages = true; anyValidToken = true; }
+                case "PARTY" -> { enabledChannels.add(TYPE_PARTY); anyValidToken = true; }
+                case "TEAM" -> { enabledChannels.add(TYPE_TEAM); anyValidToken = true; }
+                case "ALL" -> { enabledChannels.add(TYPE_ALL); anyValidToken = true; }
+                case "WHISPER", "PRIVATE" -> { whispersEnabled = true; anyValidToken = true; } // Explicit enable
                 default -> { /* ignore unknown */ }
             }
         }
+
+        // VN-parity: Fail-open if no valid tokens parsed
+        if (!anyValidToken) {
+            logger.warn("[Chat] applySourceSelection: no valid tokens in '{}', applying VN fail-open default", selection);
+            setSources(Source.getDefault());
+            return;
+        }
+
         logger.info("Updated source selection: channels={} includeOwn={} whispersEnabled={}", enabledChannels, includeOwnMessages, whispersEnabled);
         syncLegacyFlagsFromModern();
     }
@@ -303,6 +381,13 @@ public class Chat {
     public boolean isPartyState() { return partyState; }
     public boolean isTeamState() { return teamState; }
     public boolean isAllState() { return allState; }
+
+    // VN-parity: Alias methods for runtime gating (VN uses isXxxEnabled() style)
+    public boolean isSelfEnabled() { return selfState; }
+    public boolean isPartyEnabled() { return partyState; }
+    public boolean isTeamEnabled() { return teamState; }
+    public boolean isAllEnabled() { return allState; }
+    public boolean isWhisperEnabled() { return privateState; }
 
     public void setSelfEnabled() { setIncludeOwnMessages(true); }
     public void setSelfDisabled() { setIncludeOwnMessages(false); }

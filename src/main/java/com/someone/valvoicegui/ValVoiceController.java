@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.EnumSet;
 import java.util.concurrent.*;
 
 /**
@@ -26,7 +27,6 @@ import java.util.concurrent.*;
  */
 public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener {
     private static final Logger logger = LoggerFactory.getLogger(ValVoiceController.class);
-    private static ValVoiceController latestInstance;
 
     // ========== FXML Components ==========
 
@@ -88,7 +88,6 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
     // ========== State Variables ==========
     private boolean isLoading = true;
-    private final boolean isAppDisabled = false;
 
     private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
 
@@ -120,7 +119,6 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     private static final long LOADING_MIN_INTERVAL_MS = 1000L;
 
     public ValVoiceController() {
-        latestInstance = this;
         scheduledExecutor = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r);
             t.setDaemon(true);
@@ -128,9 +126,6 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         });
     }
 
-    public static ValVoiceController getLatestInstance() {
-        return latestInstance;
-    }
 
 
     /**
@@ -169,20 +164,30 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         simulateLoading();
 
         // Phase 2: Initialize persistent inbuilt synthesizer with strict dependency validation
+        // VN-parity: Only VB-Cable is a hard dependency. SoundVolumeView.exe is optional.
         try {
-            inbuiltSynth = new InbuiltVoiceSynthesizer(true); // Strict mode: validate VB-Cable + SoundVolumeView
+            inbuiltSynth = new InbuiltVoiceSynthesizer(true); // Strict mode: validate VB-Cable (required)
             if (inbuiltSynth.isReady()) {
                 logger.info("InbuiltVoiceSynthesizer ready with {} voices", inbuiltSynth.getAvailableVoices().size());
                 if (inbuiltSynth.isAudioRoutingConfigured()) {
                     updateStatusLabel(statusAudioRoute, "Active (TTS only)", true);
                     updateStatusLabel(statusVbCable, "Detected", true);
+                } else {
+                    // VN-parity: Audio routing disabled but TTS still works
+                    updateStatusLabelWithType(statusAudioRoute, "Disabled (SoundVolumeView missing)", "warning");
+                    updateStatusLabel(statusVbCable, "Detected", true);
+                    logger.warn("[AudioRouting] Audio routing disabled - TTS will play through default speakers");
                 }
             }
         } catch (InbuiltVoiceSynthesizer.DependencyMissingException e) {
+            // VN-parity: Only VB-Cable missing should block startup
             logger.error("Missing dependency: {}", e.getDependencyName());
             showDependencyError(e.getDependencyName(), e.getMessage(), e.getInstallUrl());
-            return; // Stop initialization - critical dependency missing
+            return; // Stop initialization - VB-Cable is required
         }
+
+        // === VN-parity: Route main Java process audio to CABLE Input ===
+        routeMainProcessAudioToVbCable();
 
         if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             // Initialize VoiceGenerator (coordinates TTS + Push-to-Talk)
@@ -269,8 +274,69 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             logger.info("Restored rate slider to persisted value: {}", persistedRate);
         }
 
+        // VN-parity: Restore sources ComboBox from Chat runtime model
+        // The Chat model was already populated from config.properties by Main.applySourceToChat()
+        if (sources != null) {
+            EnumSet<Source> currentSources = Chat.getInstance().getSources();
+            String uiTierString = mapEnumSetToUiTier(currentSources);
+            sources.setValue(uiTierString);
+            logger.info("Restored sources ComboBox to VN tier: {} (from EnumSet: {})",
+                uiTierString, Source.toString(currentSources));
+        }
+
         // Setup and restore keybind text field
         setupKeybindField();
+    }
+
+    /**
+     * VN-parity: Map EnumSet<Source> to one of the 4 valid UI tier strings.
+     *
+     * UI invariant: SELF is always included in UI (even if backend allows disabling).
+     * This ensures persisted state maps to a valid ComboBox option.
+     *
+     * Mapping logic (additive tiers):
+     * - SELF only → "SELF"
+     * - SELF + PARTY → "SELF+PARTY"
+     * - SELF + PARTY + TEAM → "SELF+PARTY+TEAM"
+     * - SELF + PARTY + TEAM + ALL → "SELF+PARTY+TEAM+ALL"
+     *
+     * Edge cases (fail-safe to closest tier):
+     * - Missing SELF → add SELF to match UI invariant
+     * - Partial combinations → round up to next tier
+     *
+     * @param sources Current EnumSet from Chat runtime
+     * @return One of the 4 valid UI tier strings
+     */
+    private String mapEnumSetToUiTier(EnumSet<Source> sources) {
+        if (sources == null || sources.isEmpty()) {
+            logger.warn("Empty source set, defaulting to SELF+PARTY+TEAM+ALL");
+            return "SELF+PARTY+TEAM+ALL";
+        }
+
+        // VN invariant: UI always includes SELF
+        // If backend somehow disabled SELF, force it for UI display
+        boolean hasSelf = sources.contains(Source.SELF);
+        boolean hasParty = sources.contains(Source.PARTY);
+        boolean hasTeam = sources.contains(Source.TEAM);
+        boolean hasAll = sources.contains(Source.ALL);
+
+        // Match to one of the 4 valid tiers (additive hierarchy)
+        if (hasAll) {
+            // Tier 4: All channels enabled
+            return "SELF+PARTY+TEAM+ALL";
+        } else if (hasTeam) {
+            // Tier 3: SELF + PARTY + TEAM
+            return "SELF+PARTY+TEAM";
+        } else if (hasParty) {
+            // Tier 2: SELF + PARTY
+            return "SELF+PARTY";
+        } else {
+            // Tier 1: SELF only (or force SELF if missing)
+            if (!hasSelf) {
+                logger.warn("SELF not in EnumSet, forcing SELF for UI invariant compliance");
+            }
+            return "SELF";
+        }
     }
 
     /**
@@ -473,27 +539,22 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
 
     private void populateComboBoxes() {
-        // Populate sources ComboBox
+        // VN-parity: Populate sources ComboBox with EXACTLY 4 additive tiers
+        // UI invariant: SELF is ALWAYS included (backend may allow disabling, UI does not expose it)
         sources.getItems().addAll(
             "SELF",
-            "PARTY",
-            "TEAM",
             "SELF+PARTY",
-            "SELF+TEAM",
-            "PARTY+TEAM",
             "SELF+PARTY+TEAM",
-            "PARTY+TEAM+ALL",
-            "SELF+PARTY+ALL",
             "SELF+PARTY+TEAM+ALL"
         );
 
-        // Set default value to SELF+PARTY+TEAM (matches Chat.java defaults)
-        sources.setValue("SELF+PARTY+TEAM");
-        logger.info("Default chat source set to: SELF+PARTY+TEAM");
+        // VN-parity: Default to SELF+PARTY+TEAM+ALL (fail open to all channels)
+        sources.setValue("SELF+PARTY+TEAM+ALL");
+        logger.info("Default chat source set to: SELF+PARTY+TEAM+ALL (VN fail-open behavior)");
 
         // Apply the default source selection to Chat configuration
-        Chat.getInstance().applySourceSelection("SELF+PARTY+TEAM");
-        logger.info("Applied default source selection to Chat: SELF+PARTY+TEAM");
+        Chat.getInstance().applySourceSelection("SELF+PARTY+TEAM+ALL");
+        logger.info("Applied default source selection to Chat: SELF+PARTY+TEAM+ALL");
 
         // Async load voices to avoid blocking FX thread
         loadVoicesAsync(false);
@@ -782,13 +843,13 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             return;
         }
         Object source = event.getSource();
-        if (source == btnInfo && !isAppDisabled) {
+        if (source == btnInfo) {
             showPanel(panelInfo);
             highlightActiveButton(btnInfo);
-        } else if (source == btnUser && !isAppDisabled) {
+        } else if (source == btnUser) {
             showPanel(panelUser);
             highlightActiveButton(btnUser);
-        } else if (source == btnSettings && !isAppDisabled) {
+        } else if (source == btnSettings) {
             showPanel(panelSettings);
             highlightActiveButton(btnSettings);
         }
@@ -860,17 +921,36 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         String selectedSource = sources.getValue();
         logger.info("Source selected: {}", selectedSource);
         Chat.getInstance().applySourceSelection(selectedSource);
+
+        // VN-parity: Persist source immediately
+        persistSourceConfig();
+
         showInformation("Source Selected", "You selected: " + selectedSource);
     }
 
+    /**
+     * VN-parity: Persist source (channel filters) to config.properties immediately.
+     * Called on any channel toggle/selection change.
+     */
+    private void persistSourceConfig() {
+        if (VoiceGenerator.isInitialized()) {
+            // VoiceGenerator.saveConfig() includes source from Chat.getSources()
+            VoiceGenerator.getInstance().saveConfig();
+            logger.debug("[Config] Source persisted: {}", Source.toString(Chat.getInstance().getSources()));
+        }
+    }
+
+    /**
+     * TODO: Stub handler - mic passthrough not implemented for Golden Build v1.0
+     * This toggle currently only shows an alert, no actual audio routing.
+     */
     @FXML
     public void toggleMic() {
         if (micButton.isSelected()) {
-            logger.info("Microphone enabled");
-            showInformation("Microphone", "Microphone enabled");
+            logger.info("Microphone enabled (stub - no implementation)");
+            showInformation("Microphone", "Microphone passthrough is not yet implemented.");
         } else {
-            logger.info("Microphone disabled");
-            showInformation("Microphone", "Microphone disabled");
+            logger.info("Microphone disabled (stub - no implementation)");
         }
     }
 
@@ -912,10 +992,14 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         }
     }
 
+    /**
+     * TODO: Stub handler - Valorant settings sync not implemented for Golden Build v1.0
+     * This button currently only shows a success alert, no actual sync logic.
+     */
     @FXML
     public void syncValorantSettings() {
-        logger.info("Syncing Valorant settings");
-        showInformation("Sync Complete", "Valorant settings synced successfully!");
+        logger.info("Syncing Valorant settings (stub - no implementation)");
+        showInformation("Not Implemented", "Valorant settings sync is not yet implemented.");
     }
 
 
@@ -1034,36 +1118,30 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
      * Shows blocking error dialogs with remediation steps if dependencies are missing.
      */
     private void verifyExternalDependencies() {
+        // VN-parity: Single canonical path - no fallbacks
         Path workingDir = Paths.get(System.getProperty("user.dir"));
-        Path xmppPrimary = workingDir.resolve(XMPP_BRIDGE_EXE_PRIMARY);
-        Path xmppExe = Files.isRegularFile(xmppPrimary) ? xmppPrimary : null;
+        Path xmppExe = workingDir.resolve("mitm").resolve(XMPP_BRIDGE_EXE_PRIMARY);
 
-        // Also check mitm/ subdirectory
-        if (xmppExe == null) {
-            Path xmppInMitm = workingDir.resolve("mitm").resolve(XMPP_BRIDGE_EXE_PRIMARY);
-            if (Files.isRegularFile(xmppInMitm)) {
-                xmppExe = xmppInMitm;
-            }
-        }
-
-        boolean xmppExePresent = xmppExe != null;
-        if (!xmppExePresent) {
-            logger.error("FATAL: MITM executable '{}' not found! Application cannot function without it.", XMPP_BRIDGE_EXE_PRIMARY);
+        if (!Files.isRegularFile(xmppExe)) {
+            logger.error("FATAL: MITM executable '{}' not found at canonical location: {}",
+                XMPP_BRIDGE_EXE_PRIMARY, xmppExe.toAbsolutePath());
             updateStatusLabel(statusXmpp, "MITM exe missing", false);
             // Phase 3: Show blocking error dialog for missing MITM
             showDependencyError(
                 XMPP_BRIDGE_EXE_PRIMARY,
                 "The MITM proxy executable is required for ValVoice to function.\n\n" +
-                "Please ensure " + XMPP_BRIDGE_EXE_PRIMARY + " is present in:\n" +
-                "• " + workingDir.toAbsolutePath() + "\n" +
-                "• or " + workingDir.resolve("mitm").toAbsolutePath() + "\n\n" +
-                "If you're running from source, build the MITM component first.\n" +
+                "Expected location:\n" +
+                "  " + xmppExe.toAbsolutePath() + "\n\n" +
+                "If running from source:\n" +
+                "  cd mitm\n" +
+                "  npm install\n" +
+                "  npm run build:exe\n\n" +
                 "If this is an installed version, please reinstall ValVoice.",
                 null // No external download URL for bundled component
             );
             return;
         } else {
-            logger.info("Detected MITM executable: {}", xmppExe.toAbsolutePath());
+            logger.info("✓ Detected MITM executable at canonical location: {}", xmppExe.toAbsolutePath());
             updateStatusLabel(statusXmpp, "Detected", true);
         }
 
@@ -1145,5 +1223,55 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             if (Files.isRegularFile(pfAlt)) return pfAlt;
         }
         return null;
+    }
+
+    /**
+     * VN-parity: Route main Java process audio to CABLE Input.
+     * Uses fixed path %ProgramFiles%/ValVoice/SoundVolumeView.exe - no PATH search.
+     * Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+     *
+     * GRACEFUL DEGRADATION: If SoundVolumeView.exe is missing, logs warning and continues.
+     * TTS still works but audio plays through default speakers instead of VB-Cable.
+     */
+    private void routeMainProcessAudioToVbCable() {
+        // VN-parity: Fixed path construction - no fallbacks, no PATH search
+        String fileLocation = String.format(
+            "%s/ValVoice/SoundVolumeView.exe",
+            System.getenv("ProgramFiles").replace("\\", "/")
+        );
+
+        // VN-parity: Check if SoundVolumeView.exe exists - graceful degradation if missing
+        if (!new java.io.File(fileLocation).exists()) {
+            logger.warn("[AudioRouting] Disabled: SoundVolumeView.exe not found at %ProgramFiles%/ValVoice/SoundVolumeView.exe");
+            // Update status indicator - do NOT block startup
+            Platform.runLater(() -> {
+                if (statusAudioRoute != null) {
+                    updateStatusLabelWithType(statusAudioRoute, "Disabled (tool missing)", "warning");
+                }
+            });
+            return;
+        }
+
+        try {
+            // Get current Java process PID
+            long pid = ProcessHandle.current().pid();
+
+            // VN-parity command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+            String command = fileLocation + " /SetAppDefault \"CABLE Input\" all " + pid;
+            logger.debug("[AudioRouting] Executing: {}", command);
+
+            Runtime.getRuntime().exec(command);
+            logger.info("[AudioRouting] ✓ Main Java process (PID {}) routed to CABLE Input", pid);
+
+        } catch (IOException e) {
+            // VN-parity: Wrap in try/catch - log and continue, do not propagate fatal exception
+            logger.error("[AudioRouting] Failed to route main process audio: {}", e.getMessage());
+            Platform.runLater(() -> {
+                if (statusAudioRoute != null) {
+                    updateStatusLabelWithType(statusAudioRoute, "Failed (exec error)", "error");
+                }
+            });
+            // Do NOT crash - TTS still works, just won't be injected into mic
+        }
     }
 }

@@ -172,6 +172,7 @@ public class ValVoiceBackend {
 
     /**
      * Stop the backend services and cleanup resources.
+     * VN-parity: Uses destroyForcibly() and runs full process reaper on shutdown.
      */
     public void stop() {
         synchronized (instanceLock) {
@@ -183,24 +184,21 @@ public class ValVoiceBackend {
 
         logger.info("[ValVoiceBackend] Stopping backend services...");
 
-        // Destroy MITM process (Java Process API)
+        // VN-parity: Destroy MITM process with destroyForcibly() for reliable termination
         if (mitmProcess != null && mitmProcess.isAlive()) {
-            logger.info("[ValVoiceBackend] Destroying MITM proxy process");
-            mitmProcess.destroy();
+            logger.info("[ValVoiceBackend] Destroying MITM proxy process (forcibly)");
+            mitmProcess.destroyForcibly();
             try {
                 if (!mitmProcess.waitFor(3, TimeUnit.SECONDS)) {
-                    logger.warn("[ValVoiceBackend] MITM process did not exit gracefully, forcing...");
-                    mitmProcess.destroyForcibly();
-                    mitmProcess.waitFor(2, TimeUnit.SECONDS);
+                    logger.warn("[ValVoiceBackend] MITM process did not exit in time");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                mitmProcess.destroyForcibly();
             }
         }
 
-        // Phase 1: OS-level kill as fallback (ensures no orphaned processes)
-        killMitmProcessOsLevel();
+        // VN-parity: OS-level reaper as safety net for orphaned child processes
+        runShutdownReaper();
 
         // Shutdown thread pool
         mitmIoPool.shutdown();
@@ -217,27 +215,48 @@ public class ValVoiceBackend {
     }
 
     /**
-     * Phase 1: OS-level MITM process kill.
-     * Uses taskkill to ensure no zombie valvoice-mitm.exe processes remain.
-     * This is a fallback for cases where Java's Process.destroy() fails.
+     * VN-parity: Shutdown Reaper - OS-level process cleanup.
+     * Kills orphaned child processes that may have escaped Java's Process API.
+     * Best-effort: failures are non-fatal.
      */
-    private void killMitmProcessOsLevel() {
-        try {
-            logger.debug("[ValVoiceBackend] Running OS-level MITM cleanup...");
-            ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", "valvoice-mitm.exe");
-            pb.redirectErrorStream(true);
-            Process proc = pb.start();
-            // Consume output (non-blocking best-effort)
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logger.debug("[taskkill] {}", line);
+    private void runShutdownReaper() {
+        logger.info("[Reaper] Running Shutdown Reaper (backend)...");
+
+        String[] processesToKill = {"valvoice-mitm.exe"};
+
+        for (String processName : processesToKill) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", processName);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                // Consume output to prevent blocking
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        logger.debug("[Reaper] taskkill {}: {}", processName, line);
+                    }
                 }
+                int exitCode = proc.waitFor(2, TimeUnit.SECONDS) ? proc.exitValue() : -1;
+                if (exitCode == 0) {
+                    logger.info("[Reaper] Terminated: {}", processName);
+                } else {
+                    logger.debug("[Reaper] {} not running or already terminated", processName);
+                }
+            } catch (Exception e) {
+                logger.debug("[Reaper] Failed to kill {} (non-fatal): {}", processName, e.getMessage());
             }
-            proc.waitFor(2, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            logger.debug("[ValVoiceBackend] OS-level MITM cleanup failed (non-fatal): {}", e.getMessage());
         }
+
+        logger.info("[Reaper] Shutdown Reaper complete");
+    }
+
+    /**
+     * @deprecated Use {@link #runShutdownReaper()} instead.
+     * Kept for backwards compatibility - now delegates to Shutdown Reaper.
+     */
+    @Deprecated
+    private void killMitmProcessOsLevel() {
+        runShutdownReaper();
     }
 
     /**
@@ -281,24 +300,18 @@ public class ValVoiceBackend {
         logger.info("[ValVoiceBackend] Starting MITM proxy...");
         fireStatusChanged("xmpp", "Starting...", false);
 
-        // Find valvoice-mitm.exe
+        // VN-parity: Single canonical MITM binary location
+        // NO fallbacks, NO search paths - enforces single source of truth
         Path workingDir = Paths.get(System.getProperty("user.dir"));
-        Path exePrimary = workingDir.resolve(XMPP_EXE_NAME_PRIMARY);
-        Path exeCandidate = Files.isRegularFile(exePrimary) ? exePrimary : null;
+        Path exeCandidate = workingDir.resolve("mitm").resolve(XMPP_EXE_NAME_PRIMARY);
 
-        // Also check mitm/ subdirectory
-        if (exeCandidate == null) {
-            Path exeInMitm = workingDir.resolve("mitm").resolve(XMPP_EXE_NAME_PRIMARY);
-            if (Files.isRegularFile(exeInMitm)) {
-                exeCandidate = exeInMitm;
-            }
-        }
-
-        if (exeCandidate == null || !Files.isReadable(exeCandidate)) {
-            logger.error("[ValVoiceBackend] FATAL: {} not found! ValVoice cannot function without the MITM proxy.", XMPP_EXE_NAME_PRIMARY);
-            logger.error("[ValVoiceBackend] Please ensure valvoice-mitm.exe is present in the application directory or mitm/ subdirectory.");
+        if (!Files.isRegularFile(exeCandidate) || !Files.isReadable(exeCandidate)) {
+            logger.error("[ValVoiceBackend] FATAL: {} not found at canonical location!", XMPP_EXE_NAME_PRIMARY);
+            logger.error("[ValVoiceBackend] Expected path: {}", exeCandidate.toAbsolutePath());
+            logger.error("[ValVoiceBackend] If running from source: cd mitm && npm install && npm run build:exe");
+            logger.error("[ValVoiceBackend] If installed version: please reinstall ValVoice");
             fireStatusChanged("xmpp", "MITM exe missing", false);
-            showFatalErrorAndExit("MITM executable not found: " + XMPP_EXE_NAME_PRIMARY);
+            showFatalErrorAndExit("MITM executable not found at: " + exeCandidate.toAbsolutePath());
             return;
         }
 

@@ -65,22 +65,19 @@ public class InbuiltVoiceSynthesizer {
 
     /**
      * Phase 2: Validate critical dependencies for voice injection.
-     * Throws DependencyMissingException if VB-Cable or SoundVolumeView.exe is missing.
+     * VN-parity: Only VB-Cable is a hard dependency. SoundVolumeView.exe is optional.
+     * If SoundVolumeView.exe is missing, audio routing is disabled but TTS still works.
      */
     private void validateDependencies() {
-        // Check SoundVolumeView.exe
+        // VN-parity: SoundVolumeView.exe is NOT a hard dependency
+        // Log warning but continue - TTS still works, just audio routing disabled
         if (soundVolumeViewPath == null) {
-            logger.error("FATAL: SoundVolumeView.exe not found - cannot route audio to VB-Cable");
-            throw new DependencyMissingException(
-                "SoundVolumeView.exe",
-                "SoundVolumeView.exe is required for audio routing.\n\n" +
-                "Please ensure SoundVolumeView.exe is in the ValVoice folder.\n" +
-                "Download from: https://www.nirsoft.net/utils/sound_volume_view.html",
-                "https://www.nirsoft.net/utils/sound_volume_view.html"
-            );
+            logger.warn("[AudioRouting] Disabled: SoundVolumeView.exe not found at %ProgramFiles%/ValVoice/SoundVolumeView.exe");
+            logger.warn("[AudioRouting] TTS will play through default speakers instead of VB-Cable");
+            // Do NOT throw - graceful degradation per VN architecture
         }
 
-        // Check VB-Cable device
+        // Check VB-Cable device - this IS a hard dependency for voice injection
         if (!isVbCableInstalled()) {
             logger.error("FATAL: VB-Audio Virtual Cable not detected - cannot inject voice into game");
             throw new DependencyMissingException(
@@ -201,47 +198,61 @@ public class InbuiltVoiceSynthesizer {
         }
     }
 
+    /**
+     * VN-parity: Fixed path construction for SoundVolumeView.exe.
+     * Uses %ProgramFiles%/ValVoice/SoundVolumeView.exe exclusively.
+     * No PATH search, no dynamic discovery - matches ValorantNarrator exactly.
+     */
     private void findSoundVolumeView() {
-        String[] paths = {
-            System.getProperty("user.dir") + "/SoundVolumeView.exe",
-            System.getenv("ProgramFiles") + "/ValorantNarrator/SoundVolumeView.exe",
-            System.getenv("ProgramFiles") + "/ValVoice/SoundVolumeView.exe"
-        };
+        // VN-parity: Fixed path - %ProgramFiles%/ValVoice/SoundVolumeView.exe
+        String fileLocation = String.format(
+            "%s/ValVoice/SoundVolumeView.exe",
+            System.getenv("ProgramFiles").replace("\\", "/")
+        );
 
-        for (String path : paths) {
-            if (path != null && new File(path).exists()) {
-                soundVolumeViewPath = path;
-                logger.debug("Found SoundVolumeView.exe at: {}", path);
-                return;
-            }
+        if (new File(fileLocation).exists()) {
+            soundVolumeViewPath = fileLocation;
+            logger.info("[AudioRouting] Found SoundVolumeView.exe at: {}", fileLocation);
+        } else {
+            soundVolumeViewPath = null;
+            logger.warn("[AudioRouting] Audio routing disabled: SoundVolumeView.exe not found at {}", fileLocation);
         }
-        logger.warn("SoundVolumeView.exe not found - TTS will use default audio device");
     }
 
+    /**
+     * VN-parity: Route PowerShell TTS child process audio to VB-CABLE Input.
+     * Uses fixed path and VN command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+     */
     private void routeAudioToVbCable() {
-        if (soundVolumeViewPath == null || powershellProcess == null) {
-            logger.warn("Cannot route audio: SoundVolumeView or PowerShell not available");
+        if (soundVolumeViewPath == null) {
+            logger.warn("[AudioRouting] Cannot route TTS audio: SoundVolumeView.exe not found");
+            audioRoutingConfigured = false;
+            return;
+        }
+
+        if (powershellProcess == null || !powershellProcess.isAlive()) {
+            logger.warn("[AudioRouting] Cannot route TTS audio: PowerShell process not running");
+            audioRoutingConfigured = false;
             return;
         }
 
         try {
             long pid = powershellProcess.pid();
 
-            // Route PowerShell PID to VB-CABLE Input (valorantnarrator-compatible syntax)
-            ProcessBuilder pb = new ProcessBuilder(
-                soundVolumeViewPath,
-                "/SetAppDefault",
-                "PID=" + pid,
-                "1",
-                "CABLE Input"
-            );
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            int exitCode = p.waitFor();
+            // VN-parity: Route PowerShell PID to CABLE Input
+            // Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+            String command = soundVolumeViewPath + " /SetAppDefault \"CABLE Input\" all " + pid;
+            logger.debug("[AudioRouting] Executing: {}", command);
+
+            Process routeProcess = Runtime.getRuntime().exec(command);
+            int exitCode = routeProcess.waitFor();
+
             if (exitCode == 0) {
-                logger.info("✓ PowerShell PID {} routed to VB-CABLE Input", pid);
+                logger.info("[AudioRouting] ✓ PowerShell TTS (PID {}) routed to CABLE Input", pid);
+                audioRoutingConfigured = true;
             } else {
-                logger.warn("SoundVolumeView /SetAppDefault returned exit code {}", exitCode);
+                logger.warn("[AudioRouting] SoundVolumeView returned exit code {} - routing may have failed", exitCode);
+                audioRoutingConfigured = false;
             }
 
             // Configure VB-CABLE listen-through (so user can hear their own TTS)
@@ -249,11 +260,10 @@ public class InbuiltVoiceSynthesizer {
             executeAndLog(soundVolumeViewPath, "/SetListenToThisDevice", "CABLE Output", "1");
             executeAndLog(soundVolumeViewPath, "/unmute", "CABLE Output");
 
-            audioRoutingConfigured = true;
-            logger.info("✓ VB-CABLE audio routing configured successfully");
+            logger.info("[AudioRouting] ✓ VB-CABLE listen-through configured");
 
         } catch (Exception e) {
-            logger.error("Failed to route audio to VB-Cable: {}", e.getMessage());
+            logger.error("[AudioRouting] Failed to route TTS audio: {}", e.getMessage());
             audioRoutingConfigured = false;
         }
     }

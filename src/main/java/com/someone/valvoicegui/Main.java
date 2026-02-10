@@ -1,5 +1,7 @@
 package com.someone.valvoicegui;
 
+import com.someone.valvoicebackend.Chat;
+import com.someone.valvoicebackend.Source;
 import javafx.application.Application;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +13,7 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Properties;
 
@@ -41,6 +44,18 @@ public class Main {
     public static final String LOCK_FILE_NAME = "lockFile";
     public static final String LOCK_FILE = Paths.get(CONFIG_DIR, LOCK_FILE_NAME).toString();
     public static double currentVersion;
+
+    // === VN-parity: User Config Persistence ===
+    // Storage: %APPDATA%/ValVoice/config.properties
+    private static final String USER_CONFIG_FILE = "config.properties";
+    private static final Properties userProperties = new Properties();
+
+    // Property keys
+    public static final String PROP_VOICE = "voice";
+    public static final String PROP_SPEED = "speed";
+    public static final String PROP_PTT_KEY = "pttKey";
+    public static final String PROP_PTT_ENABLED = "pttEnabled";
+    public static final String PROP_SOURCE = "source"; // VN-parity: channel filter persistence
 
     // Lock file resources (application instance lock)
     private static RandomAccessFile lockFileAccess;
@@ -74,29 +89,63 @@ public class Main {
         return false;
     }
 
-    private static void cleanupStaleMitmProcesses() {
-        try {
-            logger.info("Cleaning up stale MITM processes (best-effort)...");
-            ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", "valvoice-mitm.exe");
-            pb.redirectErrorStream(true);
-            Process proc = pb.start();
-            // Consume output to prevent blocking
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logger.debug("taskkill: {}", line);
+    /**
+     * VN-parity Process Reaper: Cold Boot Cleanup.
+     * Kills orphaned processes from previous sessions to ensure ports are free.
+     * Best-effort: failures are non-fatal (process may not exist).
+     */
+    private static void runProcessReaper() {
+        String[] processesToKill = {
+            "valvoice-mitm.exe",
+            "RiotClientServices.exe",
+            "VALORANT-Win64-Shipping.exe"
+        };
+
+        logger.info("[Reaper] Running Cold Boot Process Reaper (best-effort)...");
+
+        for (String processName : processesToKill) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", processName);
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                // Consume output to prevent blocking
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        logger.debug("[Reaper] taskkill {}: {}", processName, line);
+                    }
                 }
+                int exitCode = proc.waitFor();
+                if (exitCode == 0) {
+                    logger.info("[Reaper] Terminated: {}", processName);
+                } else {
+                    // Exit code 128 = no matching processes found (normal/expected case)
+                    logger.debug("[Reaper] {} not running (exit code: {})", processName, exitCode);
+                }
+            } catch (Exception e) {
+                logger.debug("[Reaper] Failed to kill {} (non-fatal): {}", processName, e.getMessage());
             }
-            int exitCode = proc.waitFor();
-            if (exitCode == 0) {
-                logger.info("Stale MITM processes terminated successfully");
-            } else {
-                // Exit code 128 = no matching processes found (normal case)
-                logger.debug("taskkill exit code: {} (128 = no processes found)", exitCode);
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to cleanup stale MITM processes (non-fatal): {}", e.getMessage());
         }
+
+        // Wait for OS to release ports (avoid EADDRINUSE race condition)
+        logger.debug("[Reaper] Waiting 1s for port release...");
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.debug("[Reaper] Port wait interrupted");
+        }
+
+        logger.info("[Reaper] Cold Boot cleanup complete");
+    }
+
+    /**
+     * @deprecated Use {@link #runProcessReaper()} instead.
+     * Kept for backwards compatibility - now delegates to Reaper.
+     */
+    @Deprecated
+    private static void cleanupStaleMitmProcesses() {
+        runProcessReaper();
     }
 
     /**
@@ -148,6 +197,76 @@ public class Main {
         }
     }
 
+    // ========== VN-parity: User Config Persistence ==========
+
+    /**
+     * Get the user properties (for reading/writing config values).
+     * Thread-safe: callers should synchronize if doing read-modify-write.
+     */
+    public static Properties getProperties() {
+        return userProperties;
+    }
+
+    /**
+     * Get the full path to the user config file.
+     */
+    public static String getConfigPath() {
+        return Paths.get(CONFIG_DIR, USER_CONFIG_FILE).toString();
+    }
+
+    /**
+     * Load user config from %APPDATA%/ValVoice/config.properties.
+     * VN-parity: If file missing or corrupt, use defaults (no crash).
+     * Also applies persisted source (channel filters) to Chat runtime model.
+     */
+    private static void loadUserConfig() {
+        Path configPath = Paths.get(CONFIG_DIR, USER_CONFIG_FILE);
+        try {
+            if (Files.exists(configPath)) {
+                try (InputStream in = new FileInputStream(configPath.toFile())) {
+                    userProperties.load(in);
+                    logger.info("[Config] Loaded user config from: {}", configPath);
+                }
+            } else {
+                logger.info("[Config] No user config file found, using defaults");
+            }
+        } catch (Exception e) {
+            logger.warn("[Config] Failed to load user config (using defaults): {}", e.getMessage());
+            userProperties.clear();
+        }
+
+        // VN-parity: Apply persisted source (channel filters) to Chat runtime model
+        applySourceToChat();
+    }
+
+    /**
+     * VN-parity: Apply persisted source property to Chat runtime model.
+     * Called after config load to restore channel filter state.
+     */
+    private static void applySourceToChat() {
+        String sourceStr = userProperties.getProperty(PROP_SOURCE);
+        EnumSet<Source> sources;
+
+        if (sourceStr == null || sourceStr.isBlank()) {
+            // No persisted source - use default (VN fail-open: SELF+PARTY+TEAM+ALL)
+            sources = Source.getDefault();
+            logger.info("[Config] No persisted source, using VN fail-open default: {}", Source.toString(sources));
+        } else {
+            sources = Source.fromString(sourceStr);
+            if (sources.isEmpty()) {
+                // Invalid config string - fail open to default
+                sources = Source.getDefault();
+                logger.warn("[Config] Invalid source string '{}', using VN fail-open default: {}",
+                    sourceStr, Source.toString(sources));
+            } else {
+                logger.info("[Config] Restored source from config: {}", sourceStr);
+            }
+        }
+
+        // Apply to Chat runtime model
+        Chat.getInstance().setSources(sources);
+    }
+
     /**
      * Application entry point - pure launcher.
      */
@@ -165,9 +284,28 @@ public class Main {
             System.exit(0);
         }
 
-        // Phase 1: Stale MITM Process Cleanup
-        // Kill any zombie valvoice-mitm.exe processes from previous crashed sessions
-        cleanupStaleMitmProcesses();
+        // VN-parity: Cold Boot Process Reaper
+        // Kill any zombie processes from previous crashed sessions
+        // Includes: valvoice-mitm.exe, RiotClientServices.exe, VALORANT-Win64-Shipping.exe
+        runProcessReaper();
+
+        // VN-parity: Shutdown Reaper Hook
+        // Safety net to kill orphaned processes on exit
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("[Reaper] Running Shutdown Reaper...");
+            String[] processesToKill = {"valvoice-mitm.exe"};
+            for (String processName : processesToKill) {
+                try {
+                    ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", processName);
+                    pb.redirectErrorStream(true);
+                    Process proc = pb.start();
+                    proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    // Best-effort, ignore failures
+                }
+            }
+            logger.info("[Reaper] Shutdown Reaper complete");
+        }, "valvoice-shutdown-reaper"));
 
         // 1. Bootstrap config directory
         try {
@@ -176,6 +314,9 @@ public class Main {
         } catch (IOException e) {
             logger.error("Could not create config directory", e);
         }
+
+        // VN-parity: Load user config (voice, speed, PTT key)
+        loadUserConfig();
 
         // 2. Load configuration
         try (InputStream in = Main.class.getResourceAsStream("/com/someone/valvoicegui/config.properties")) {

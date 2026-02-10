@@ -6,30 +6,32 @@ package com.someone.valvoicebackend;
 // based on current context (lobby vs in-game), matching
 // valorantnarrator's proven working behavior.
 
+import com.someone.valvoicegui.Main;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.*;
 import java.awt.event.KeyEvent;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import com.google.gson.*;
 
 /**
  * Coordinates TTS playback and Push-to-Talk automation.
  * Handles key press/release timing for Valorant voice chat.
+ *
+ * VN-parity: Uses Main.getProperties() for Java Properties-based persistence.
  */
 public class VoiceGenerator {
     private static final Logger logger = LoggerFactory.getLogger(VoiceGenerator.class);
     private static VoiceGenerator instance;
 
-    private static final String CONFIG_DIR = Paths.get(System.getenv("APPDATA"), "ValVoice").toString();
-    private static final String CONFIG_FILE = "voice-config.json";
     private static final int DEFAULT_KEY = KeyEvent.VK_V;
 
     private final Robot robot;
@@ -205,37 +207,73 @@ public class VoiceGenerator {
         return isSpeaking;
     }
 
+    /**
+     * VN-parity: Load config from Main.getProperties() (Java Properties).
+     * Called once at startup. Errors fall back to defaults.
+     */
     private void loadConfig() {
         try {
-            Path configPath = Paths.get(CONFIG_DIR, CONFIG_FILE);
-            if (Files.exists(configPath)) {
-                JsonObject config = JsonParser.parseString(Files.readString(configPath)).getAsJsonObject();
+            Properties props = Main.getProperties();
 
-                if (config.has("keyEvent")) keyEvent = config.get("keyEvent").getAsInt();
-                if (config.has("isTeamKeyDisabled")) pttEnabled = config.get("isTeamKeyDisabled").getAsBoolean();
-                if (config.has("currentVoice")) currentVoice = config.get("currentVoice").getAsString();
-                if (config.has("currentVoiceRate")) currentVoiceRate = config.get("currentVoiceRate").getAsShort();
+            String voiceStr = props.getProperty(Main.PROP_VOICE);
+            if (voiceStr != null && !voiceStr.isBlank()) {
+                currentVoice = voiceStr;
             }
+
+            String speedStr = props.getProperty(Main.PROP_SPEED);
+            if (speedStr != null) {
+                try {
+                    currentVoiceRate = Short.parseShort(speedStr);
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String keyStr = props.getProperty(Main.PROP_PTT_KEY);
+            if (keyStr != null) {
+                try {
+                    keyEvent = Integer.parseInt(keyStr);
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String pttStr = props.getProperty(Main.PROP_PTT_ENABLED);
+            if (pttStr != null) {
+                pttEnabled = Boolean.parseBoolean(pttStr);
+            }
+
+            logger.info("[VoiceGenerator] Config loaded: voice={}, rate={}, pttKey={}, pttEnabled={}",
+                currentVoice, currentVoiceRate, KeyEvent.getKeyText(keyEvent), pttEnabled);
         } catch (Exception e) {
-            logger.debug("Could not load config: {}", e.getMessage());
+            logger.warn("[VoiceGenerator] Could not load config (using defaults): {}", e.getMessage());
         }
     }
 
-    private void saveConfig() {
-        try {
-            Files.createDirectories(Paths.get(CONFIG_DIR));
+    /**
+     * VN-parity: Save config to %APPDATA%/ValVoice/config.properties.
+     * Called immediately on any setting change. Non-blocking (async).
+     * Saves: voice, speed, pttKey, pttEnabled, source (channel filters)
+     */
+    public void saveConfig() {
+        // Run async to avoid blocking JavaFX thread
+        new Thread(() -> {
+            try {
+                Properties props = Main.getProperties();
+                props.setProperty(Main.PROP_VOICE, currentVoice);
+                props.setProperty(Main.PROP_SPEED, String.valueOf(currentVoiceRate));
+                props.setProperty(Main.PROP_PTT_KEY, String.valueOf(keyEvent));
+                props.setProperty(Main.PROP_PTT_ENABLED, String.valueOf(pttEnabled));
 
-            JsonObject config = new JsonObject();
-            config.addProperty("keyEvent", keyEvent);
-            config.addProperty("isTeamKeyDisabled", pttEnabled);
-            config.addProperty("currentVoice", currentVoice);
-            config.addProperty("currentVoiceRate", currentVoiceRate);
+                // VN-parity: Save source (channel filters) from Chat runtime model
+                java.util.EnumSet<Source> sources = Chat.getInstance().getSources();
+                props.setProperty(Main.PROP_SOURCE, Source.toString(sources));
 
-            Files.writeString(Paths.get(CONFIG_DIR, CONFIG_FILE), config.toString());
-        } catch (Exception e) {
-            logger.debug("Could not save config: {}", e.getMessage());
-        }
+                Files.createDirectories(Paths.get(Main.CONFIG_DIR));
+                try (OutputStream out = new FileOutputStream(Main.getConfigPath())) {
+                    props.store(out, "ValVoice User Configuration");
+                }
+                logger.debug("[VoiceGenerator] Config saved to: {}", Main.getConfigPath());
+            } catch (Exception e) {
+                logger.warn("[VoiceGenerator] Could not save config: {}", e.getMessage());
+            }
+        }, "config-saver").start();
     }
 }
-
 

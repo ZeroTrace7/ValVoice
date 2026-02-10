@@ -1,5 +1,6 @@
 com\someone\valvoicebackend\GameStateManager.class
 com\someone\valvoicebackend\RiotClientDetails.class
+com\someone\valvoicebackend\Source.class
 com\someone\valvoicegui\ValVoiceController.class
 com\someone\valvoicegui\ValVoiceBackend$1.class
 com\someone\valvoicebackend\Message.class
