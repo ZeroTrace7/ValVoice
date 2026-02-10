@@ -1,0 +1,502 @@
+/*
+ * ============================================================================
+ * VALORANT PROTOCOL THEME - Phase 1 Visual Skinning
+ * ============================================================================
+ * Pure CSS overlay for Valorant-inspired dark gamer aesthetic.
+ * This file is additive - it enhances the base style.css without replacing it.
+ *
+ * Color Palette:
+ *   Primary Background:   #0f1923
+ *   Secondary Panels:     #1c252e
+ *   Accent Red:           #ff4655
+ *   Text Primary:         #ece8e1
+ *   Text Secondary:       #9aa0a6
+ *   Borders:              rgba(255,255,255,0.1)
+ *
+ * Constraints:
+ *   - CSS-only changes (no FXML layout modifications)
+ *   - No control replacement
+ *   - No logic changes
+ * ============================================================================
+ */
+
+/* ========== VALORANT PROTOCOL ROOT ========== */
+.root {
+    -fx-base: #0f1923;
+    -fx-background: #0f1923;
+    -fx-accent: #ff4655;
+    -fx-focus-color: #ff4655;
+    -fx-faint-focus-color: rgba(255, 70, 85, 0.3);
+    -fx-default-button: #ff4655;
+    -fx-font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+}
+
+/* ========== VALORANT TEXT COLORS ========== */
+.label {
+    -fx-text-fill: #ece8e1;
+}
+
+.text {
+    -fx-fill: #ece8e1;
+}
+
+/* Secondary/muted text */
+.hint-label,
+.page-subtitle,
+.version-label {
+    -fx-text-fill: #9aa0a6;
+}
+
+/* ========== VALORANT TOP BAR REFINEMENT ========== */
+.top-bar {
+    -fx-background-color: linear-gradient(to right, #0f1923, #1c252e);
+    -fx-border-color: #ff4655;
+    -fx-border-width: 0 0 2 0;
+}
+
+.window-title {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+    -fx-font-size: 20px;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 4, 0, 0, 0);
+}
+
+/* ========== VALORANT SIDEBAR ========== */
+.sidebar {
+    -fx-background-color: linear-gradient(to bottom, #0f1923, #1c252e);
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 0 1 0 0;
+}
+
+.nav-label {
+    -fx-text-fill: #9aa0a6;
+    -fx-font-weight: 600;
+    -fx-font-size: 11px;
+}
+
+/* ========== VALORANT NAVIGATION BUTTONS ========== */
+.nav-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+}
+
+.nav-button:hover {
+    -fx-background-color: rgba(255, 70, 85, 0.15);
+    -fx-border-color: rgba(255, 70, 85, 0.4);
+}
+
+.nav-button-active,
+.nav-button:focused {
+    -fx-background-color: rgba(255, 70, 85, 0.2);
+    -fx-border-color: #ff4655;
+}
+
+/* ========== VALORANT CONTENT PANELS ========== */
+.content-panel {
+    -fx-background-color: #0f1923;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: #0f1923;
+}
+
+/* ========== VALORANT CARDS ========== */
+.card {
+    -fx-background-color: linear-gradient(to bottom right, #1c252e, #0f1923);
+    -fx-background-radius: 8;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.card-title {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+    -fx-font-size: 16px;
+}
+
+/* ========== VALORANT BUTTONS - TACTICAL STYLE ========== */
+.button {
+    -fx-background-color: linear-gradient(to bottom, #2a3441, #1c252e);
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-padding: 10 20;
+    -fx-cursor: hand;
+}
+
+.button:hover {
+    -fx-background-color: linear-gradient(to bottom, #3a4451, #2a3441);
+    -fx-border-color: #ff4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
+}
+
+.button:pressed {
+    -fx-background-color: linear-gradient(to bottom, #1c252e, #0f1923);
+}
+
+/* Primary Button (Accent Red) */
+.primary-button {
+    -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
+    -fx-text-fill: #ffffff;
+    -fx-font-weight: bold;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: transparent;
+}
+
+.primary-button:hover {
+    -fx-background-color: linear-gradient(to bottom, #ff5a68, #ff4655);
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 12, 0, 0, 0);
+}
+
+.primary-button:pressed {
+    -fx-background-color: linear-gradient(to bottom, #cc3844, #aa2d38);
+}
+
+/* Secondary Button (Ghost/Outline) */
+.secondary-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #ff4655;
+    -fx-font-weight: bold;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: #ff4655;
+    -fx-border-width: 2;
+}
+
+.secondary-button:hover {
+    -fx-background-color: rgba(255, 70, 85, 0.15);
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
+}
+
+/* Discord Button */
+.discord-button {
+    -fx-background-color: linear-gradient(to bottom, #5865F2, #4752C4);
+    -fx-text-fill: #ffffff;
+}
+
+.discord-button:hover {
+    -fx-background-color: linear-gradient(to bottom, #6875F5, #5865F2);
+    -fx-effect: dropshadow(gaussian, rgba(88, 101, 242, 0.5), 10, 0, 0, 0);
+}
+
+/* ========== VALORANT FORM CONTROLS ========== */
+/* ComboBox */
+.combo-box,
+.setting-combo {
+    -fx-background-color: #1c252e;
+    -fx-background-radius: 4;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+}
+
+.combo-box:hover,
+.setting-combo:hover {
+    -fx-border-color: #ff4655;
+}
+
+.combo-box:focused,
+.setting-combo:focused {
+    -fx-border-color: #ff4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 6, 0, 0, 0);
+}
+
+.combo-box .list-cell {
+    -fx-background-color: #1c252e;
+    -fx-text-fill: #ece8e1;
+}
+
+.combo-box .list-cell:hover {
+    -fx-background-color: #2a3441;
+}
+
+.combo-box .list-cell:selected {
+    -fx-background-color: rgba(255, 70, 85, 0.3);
+}
+
+.combo-box-popup .list-view {
+    -fx-background-color: #1c252e;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* TextField */
+.text-field,
+.keybind-field {
+    -fx-background-color: #1c252e;
+    -fx-text-fill: #ece8e1;
+    -fx-prompt-text-fill: #9aa0a6;
+    -fx-background-radius: 4;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+}
+
+.text-field:focused,
+.keybind-field:focused {
+    -fx-border-color: #ff4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 6, 0, 0, 0);
+}
+
+.keybind-field {
+    -fx-text-fill: #ff4655;
+    -fx-font-weight: bold;
+    -fx-border-color: #ff4655;
+}
+
+/* ========== VALORANT SLIDERS ========== */
+.slider .track {
+    -fx-background-color: #1c252e;
+    -fx-background-radius: 4;
+}
+
+.slider .thumb {
+    -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
+    -fx-background-radius: 50%;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 6, 0, 0, 0);
+}
+
+.slider .thumb:hover {
+    -fx-background-color: linear-gradient(to bottom, #ff5a68, #ff4655);
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.7), 10, 0, 0, 0);
+}
+
+/* ========== VALORANT TOGGLE BUTTONS (JFoenix) ========== */
+.jfx-toggle-button {
+    -fx-toggle-color: #ff4655;
+    -fx-toggle-line-color: #1c252e;
+    -fx-untoggle-color: #9aa0a6;
+    -fx-untoggle-line-color: #1c252e;
+}
+
+/* ========== VALORANT PROGRESS BARS ========== */
+.progress-bar {
+    -fx-background-color: #1c252e;
+    -fx-background-radius: 4;
+}
+
+.progress-bar > .track {
+    -fx-background-color: #1c252e;
+    -fx-background-radius: 4;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: linear-gradient(to right, #ff4655, #ff6b77);
+    -fx-background-radius: 4;
+}
+
+.quota-bar > .bar {
+    -fx-background-color: linear-gradient(to right, #ff4655, #ff8a94);
+    -fx-background-radius: 4;
+}
+
+/* ========== VALORANT SCROLLBARS ========== */
+.scroll-bar:vertical,
+.scroll-bar:horizontal {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar:vertical .track,
+.scroll-bar:horizontal .track {
+    -fx-background-color: #1c252e;
+    -fx-background-radius: 4;
+}
+
+.scroll-bar:vertical .thumb,
+.scroll-bar:horizontal .thumb {
+    -fx-background-color: #ff4655;
+    -fx-background-radius: 4;
+}
+
+.scroll-bar:vertical .thumb:hover,
+.scroll-bar:horizontal .thumb:hover {
+    -fx-background-color: #ff6b77;
+}
+
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+/* ========== VALORANT SEPARATORS ========== */
+.separator .line {
+    -fx-background-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 0;
+}
+
+/* ========== VALORANT STATUS BAR ========== */
+#statusBar {
+    -fx-background-color: linear-gradient(to right, #0f1923, #1c252e);
+    -fx-border-color: #ff4655;
+    -fx-border-width: 2 0 0 0;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.2), 8, 0, 0, -2);
+}
+
+.status-label-static {
+    -fx-text-fill: #9aa0a6;
+    -fx-font-weight: bold;
+}
+
+/* ========== VALORANT STAT BOXES ========== */
+.stat-box {
+    -fx-background-color: rgba(255, 70, 85, 0.1);
+    -fx-background-radius: 8;
+    -fx-border-color: rgba(255, 70, 85, 0.3);
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.stat-value {
+    -fx-text-fill: #ff4655;
+    -fx-font-weight: bold;
+}
+
+.stat-label {
+    -fx-text-fill: #9aa0a6;
+}
+
+/* ========== VALORANT PAGE HEADERS ========== */
+.page-title {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+    -fx-font-size: 24px;
+}
+
+.section-title {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+}
+
+/* ========== VALORANT STEP NUMBERS ========== */
+.step-number {
+    -fx-text-fill: #ff4655;
+    -fx-font-weight: bold;
+    -fx-font-size: 16px;
+}
+
+/* ========== VALORANT INFO TEXT ========== */
+.info-text {
+    -fx-text-fill: #ece8e1;
+    -fx-line-spacing: 2px;
+}
+
+.info-label {
+    -fx-text-fill: #9aa0a6;
+}
+
+.info-value {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: bold;
+}
+
+/* ========== VALORANT QUOTA LABEL ========== */
+.quota-label {
+    -fx-text-fill: #ff4655;
+    -fx-font-weight: bold;
+}
+
+/* ========== VALORANT LOADING SCREEN ========== */
+.loading-label {
+    -fx-text-fill: #ece8e1;
+    -fx-font-size: 18px;
+}
+
+/* ========== VALORANT SETTING LABELS ========== */
+.setting-label {
+    -fx-text-fill: #ece8e1;
+    -fx-font-weight: 600;
+}
+
+/* ========== VALORANT TTS INDICATOR ========== */
+.tts-indicator {
+    -fx-background-color: rgba(255, 70, 85, 0.2);
+    -fx-background-radius: 6;
+    -fx-border-color: #ff4655;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-padding: 6 12;
+}
+
+.tts-indicator-label {
+    -fx-text-fill: #ff4655;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.tts-pulse {
+    -fx-text-fill: #ff4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.8), 8, 0, 0, 0);
+}
+
+/* ========== VALORANT TOAST NOTIFICATIONS ========== */
+.toast {
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 4);
+}
+
+.toast-title {
+    -fx-font-weight: bold;
+    -fx-text-fill: #ece8e1;
+}
+
+.toast-message {
+    -fx-text-fill: rgba(236, 232, 225, 0.9);
+}
+
+.toast-info {
+    -fx-background-color: linear-gradient(to right, #1c3a5f, #2d4a6f);
+    -fx-border-color: #3d7ab8;
+}
+
+.toast-success {
+    -fx-background-color: linear-gradient(to right, #1a3d2e, #245a40);
+    -fx-border-color: #3da870;
+}
+
+.toast-warning {
+    -fx-background-color: linear-gradient(to right, #4a3a19, #5c4a22);
+    -fx-border-color: #d4a843;
+}
+
+.toast-error {
+    -fx-background-color: linear-gradient(to right, #3d1a1a, #4a2222);
+    -fx-border-color: #ff4655;
+}
+
+/* ========== VALORANT SETTINGS CARD VARIANTS ========== */
+.settings-card-voice {
+    -fx-border-color: rgba(255, 70, 85, 0.3);
+}
+
+.settings-card-routing {
+    -fx-border-color: rgba(0, 200, 150, 0.3);
+}
+
+.settings-card-injection {
+    -fx-border-color: rgba(100, 150, 255, 0.3);
+}
+
+.settings-card-sync {
+    -fx-border-color: rgba(255, 180, 0, 0.3);
+}
+
+.settings-card-players {
+    -fx-border-color: rgba(180, 100, 255, 0.3);
+}
+
+.routing-status-box {
+    -fx-background-color: rgba(0, 0, 0, 0.2);
+    -fx-background-radius: 6;
+    -fx-padding: 12;
+    -fx-border-color: rgba(255, 255, 255, 0.05);
+    -fx-border-radius: 6;
+}
+

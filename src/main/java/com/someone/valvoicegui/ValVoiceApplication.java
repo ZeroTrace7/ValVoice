@@ -98,6 +98,12 @@ public class ValVoiceApplication extends Application {
         Scene scene = new Scene(fxmlLoader.load());
         controller = fxmlLoader.getController();
 
+        // === PHASE 1: VALORANT PROTOCOL THEME ===
+        // Load additional Valorant-inspired theme stylesheet (CSS-only, no layout changes)
+        String valorantTheme = getClass().getResource("/css/valorant-theme.css").toExternalForm();
+        scene.getStylesheets().add(valorantTheme);
+        logger.info("Valorant Protocol theme loaded: {}", valorantTheme);
+
         // Configure stage
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setTitle("ValVoice");
