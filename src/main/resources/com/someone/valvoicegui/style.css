@@ -160,6 +160,44 @@
     -fx-font-size: 18px;
 }
 
+/* ========== SETTINGS CARD VARIANTS ========== */
+/* Subtle accent colors for different setting categories */
+
+.settings-card-voice {
+    -fx-border-color: rgba(255, 70, 85, 0.3);
+    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(255, 70, 85, 0.05));
+}
+
+.settings-card-routing {
+    -fx-border-color: rgba(0, 200, 150, 0.3);
+    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(0, 200, 150, 0.05));
+}
+
+.settings-card-injection {
+    -fx-border-color: rgba(100, 150, 255, 0.3);
+    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(100, 150, 255, 0.05));
+}
+
+.settings-card-sync {
+    -fx-border-color: rgba(255, 180, 0, 0.3);
+    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(255, 180, 0, 0.05));
+}
+
+.settings-card-players {
+    -fx-border-color: rgba(180, 100, 255, 0.3);
+    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(180, 100, 255, 0.05));
+}
+
+/* Routing status box inside settings card */
+.routing-status-box {
+    -fx-background-color: rgba(0, 0, 0, 0.2);
+    -fx-background-radius: 8;
+    -fx-padding: 15;
+    -fx-border-color: rgba(255, 255, 255, 0.05);
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
 /* ========== LABELS ========== */
 .section-title {
     -fx-text-fill: #ffffff;
@@ -670,4 +708,29 @@
 
 .toast-error .toast-title {
     -fx-text-fill: #FF4655;
+}
+
+/* ========== TTS SPEAKING INDICATOR ========== */
+/* Visual feedback when TTS is actively speaking */
+
+.tts-indicator {
+    -fx-background-color: rgba(255, 70, 85, 0.2);
+    -fx-background-radius: 6;
+    -fx-border-color: #FF4655;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-padding: 6 12 6 12;
+}
+
+.tts-indicator-label {
+    -fx-text-fill: #FF4655;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 1px;
+}
+
+.tts-pulse {
+    -fx-text-fill: #FF4655;
+    -fx-font-size: 14px;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.8), 8, 0, 0, 0);
 }

@@ -94,8 +94,15 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     @FXML public Label statusAudioRoute;   // SoundVolumeView availability
     @FXML public Label statusSelfId;       // Current self player id
 
+    // Routing status labels in Settings card (mirrors status bar)
+    @FXML public Label routingStatusVbCable;  // VB-Cable status in settings
+    @FXML public Label routingStatusAudio;    // Audio routing status in settings
+
     // Toast notification container (overlay)
     @FXML public VBox toastContainer;
+
+    // TTS Speaking indicator (visual feedback)
+    @FXML public HBox ttsIndicator;
 
     // ========== State Variables ==========
     private boolean isLoading = true;
@@ -264,6 +271,36 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                 logger.error("Failed to start ValVoiceBackend", e);
             }
         });
+
+        // === TTS SPEAKING INDICATOR ===
+        // Poll VoiceGenerator speaking state every 100ms to update the visual indicator
+        // This is UI-only feedback and does not affect TTS pipeline behavior
+        startTtsIndicatorPolling();
+    }
+
+    /**
+     * Start polling for TTS speaking state to update the visual indicator.
+     * Uses scheduled executor to check VoiceGenerator.isBusy() periodically.
+     * This is purely visual feedback - no effect on TTS pipeline.
+     */
+    private void startTtsIndicatorPolling() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            if (shutdownRequested) return;
+
+            boolean speaking = VoiceGenerator.isInitialized() && VoiceGenerator.getInstance().isBusy();
+            Platform.runLater(() -> updateTtsIndicator(speaking));
+        }, 500, 100, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Update the TTS speaking indicator visibility.
+     * Shows animated indicator when TTS is actively speaking.
+     */
+    private void updateTtsIndicator(boolean speaking) {
+        if (ttsIndicator == null) return;
+
+        ttsIndicator.setVisible(speaking);
+        ttsIndicator.setManaged(speaking);
     }
 
     /**
@@ -501,6 +538,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             label.setText(prefix + text);
             label.getStyleClass().removeAll("status-ok", "status-warning", "status-error", "status-info");
             label.getStyleClass().add(ok ? "status-ok" : "status-warning");
+
+            // Sync to settings card routing labels if applicable
+            syncRoutingStatusToSettingsCard(label, prefix + text, ok ? "ok" : "warning");
         });
     }
 
@@ -545,7 +585,48 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                     label.getStyleClass().add("status-info");
                     break;
             }
+
+            // Sync to settings card routing labels if applicable
+            syncRoutingStatusToSettingsCard(label, prefix + text, st);
         });
+    }
+
+    /**
+     * Sync status bar labels to corresponding settings card routing status labels.
+     * This keeps the Routing card in settings in sync with the status bar.
+     */
+    private void syncRoutingStatusToSettingsCard(Label sourceLabel, String text, String statusType) {
+        Label targetLabel = null;
+
+        // Determine which settings card label to sync
+        if (sourceLabel == statusVbCable) {
+            targetLabel = routingStatusVbCable;
+        } else if (sourceLabel == statusAudioRoute) {
+            targetLabel = routingStatusAudio;
+        }
+
+        if (targetLabel == null) return;
+
+        // Apply the same styling to the settings card label
+        ensureBaseStatusClass(targetLabel);
+        targetLabel.setText(text);
+        targetLabel.getStyleClass().removeAll("status-ok", "status-warning", "status-error", "status-info");
+        switch (statusType.toLowerCase()) {
+            case "ok":
+            case "success":
+                targetLabel.getStyleClass().add("status-ok");
+                break;
+            case "warning":
+                targetLabel.getStyleClass().add("status-warning");
+                break;
+            case "error":
+                targetLabel.getStyleClass().add("status-error");
+                break;
+            case "info":
+            default:
+                targetLabel.getStyleClass().add("status-info");
+                break;
+        }
     }
 
 
