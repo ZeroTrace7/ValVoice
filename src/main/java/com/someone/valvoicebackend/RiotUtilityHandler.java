@@ -16,6 +16,21 @@ import java.util.Base64;
 
 /**
  * Utility class for interacting with Riot Local API
+ *
+ * PHASE 3 SECURITY (VN-Parity):
+ * ════════════════════════════════════════════════════════════════════════════════
+ * SSL BYPASS IS STRICTLY LOCALHOST-ONLY
+ *
+ * This class uses a trust-all TrustManager that bypasses certificate validation.
+ * This is ONLY safe because ALL URLs are hardcoded to 127.0.0.1 (localhost).
+ *
+ * INVARIANTS:
+ * 1. All URL constructions use "127.0.0.1" - NEVER external hosts
+ * 2. The trust-all SSLContext is used ONLY for Riot Local API calls
+ * 3. No method accepts arbitrary host parameters
+ *
+ * NEVER modify this class to accept external hosts - it would allow MITM attacks.
+ * ════════════════════════════════════════════════════════════════════════════════
  */
 public class RiotUtilityHandler {
     private static final Logger logger = LoggerFactory.getLogger(RiotUtilityHandler.class);

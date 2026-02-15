@@ -27,6 +27,21 @@ import java.util.Optional;
  * Riot Local API access. It is preserved for v1.1 Name Resolution feature (PUUID → Display Name).
  * Currently dormant - not wired into v1.0 runtime.</p>
  *
+ * PHASE 3 SECURITY (VN-Parity):
+ * ════════════════════════════════════════════════════════════════════════════════
+ * SSL BYPASS IS STRICTLY LOCALHOST-ONLY
+ *
+ * This class provides a trust-all HttpClient that bypasses certificate validation.
+ * This is ONLY safe for localhost (127.0.0.1) connections where Riot uses self-signed certs.
+ *
+ * GUARDRAILS:
+ * 1. buildLocalBase() ALWAYS uses 127.0.0.1 (hardcoded, not configurable)
+ * 2. sendForBody/send methods validate URL is localhost before execution
+ * 3. No public method accepts arbitrary hosts
+ *
+ * NEVER use this client for public internet endpoints - it would allow MITM attacks.
+ * ════════════════════════════════════════════════════════════════════════════════
+ *
  * Current scope:
  *  - Provide a singleton trust-all HttpClient (HTTP/1.1 + HTTP/2 capable)
  *  - Helper methods to build and send basic JSON or plain text requests
@@ -44,6 +59,13 @@ import java.util.Optional;
 public final class ConnectionHandler {
     private static final Logger logger = LoggerFactory.getLogger(ConnectionHandler.class);
     private static final ConnectionHandler INSTANCE = new ConnectionHandler();
+
+    // PHASE 3 SECURITY: Allowed localhost hosts for SSL bypass
+    private static final java.util.Set<String> ALLOWED_LOCALHOST_HOSTS = java.util.Set.of(
+        "127.0.0.1",
+        "localhost",
+        "::1"
+    );
 
     private volatile HttpClient insecureClient; // lazily initialized
     private volatile InstantMetadata lastInit;
@@ -124,8 +146,17 @@ public final class ConnectionHandler {
 
     /**
      * Send request returning body on 2xx else empty. Caller responsible for parsing.
+     *
+     * PHASE 3 SECURITY: Validates URL is localhost before sending via trust-all client.
      */
     public Optional<String> sendForBody(HttpRequest request) {
+        // PHASE 3 SECURITY: Guardrail - reject non-localhost URLs
+        if (!isLocalhostUrl(request.uri())) {
+            logger.error("[SECURITY] BLOCKED: Attempted to use trust-all client for non-localhost URL: {}",
+                        request.uri().getHost());
+            return Optional.empty();
+        }
+
         try {
             HttpResponse<String> resp = insecureClient().send(request, HttpResponse.BodyHandlers.ofString());
             int sc = resp.statusCode();
@@ -139,8 +170,17 @@ public final class ConnectionHandler {
 
     /**
      * Raw response (caller inspects status code directly).
+     *
+     * PHASE 3 SECURITY: Validates URL is localhost before sending via trust-all client.
      */
     public Optional<HttpResponse<String>> send(HttpRequest request) {
+        // PHASE 3 SECURITY: Guardrail - reject non-localhost URLs
+        if (!isLocalhostUrl(request.uri())) {
+            logger.error("[SECURITY] BLOCKED: Attempted to use trust-all client for non-localhost URL: {}",
+                        request.uri().getHost());
+            return Optional.empty();
+        }
+
         try {
             return Optional.of(insecureClient().send(request, HttpResponse.BodyHandlers.ofString()));
         } catch (Exception e) {
@@ -155,10 +195,27 @@ public final class ConnectionHandler {
     }
 
     /**
+     * PHASE 3 SECURITY: Validate that a URI points to localhost only.
+     * This guardrail ensures the trust-all client is NEVER used for public internet endpoints.
+     *
+     * @param uri The URI to validate
+     * @return true if the URI host is localhost (127.0.0.1, localhost, or ::1)
+     */
+    private boolean isLocalhostUrl(java.net.URI uri) {
+        if (uri == null) return false;
+        String host = uri.getHost();
+        if (host == null) return false;
+        return ALLOWED_LOCALHOST_HOSTS.contains(host.toLowerCase());
+    }
+
+    /**
      * Build a local Riot base URL from protocol+port (host fixed to 127.0.0.1).
+     *
+     * PHASE 3 SECURITY: Host is ALWAYS 127.0.0.1 - not configurable.
      */
     public String buildLocalBase(String protocol, int port) {
         if (protocol == null || protocol.isBlank()) protocol = "https";
+        // PHASE 3 SECURITY: Hardcoded to localhost - NEVER change
         return protocol + "://127.0.0.1:" + port;
     }
 
