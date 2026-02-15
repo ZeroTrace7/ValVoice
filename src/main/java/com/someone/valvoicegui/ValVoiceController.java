@@ -1445,17 +1445,26 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         }
     }
 
+    /**
+     * PHASE 2 SECURITY: Locate SoundVolumeView.exe at SINGLE canonical path.
+     * VN-parity: No fallbacks, no PATH search - uses %ProgramFiles%/ValVoice/ exclusively.
+     * Returns null if not found (graceful degradation).
+     */
     private Path locateSoundVolumeView() {
-        Path workingDir = Paths.get(System.getProperty("user.dir"));
-        Path candidate = workingDir.resolve(SOUND_VOLUME_VIEW_EXE);
-        if (Files.isRegularFile(candidate)) return candidate;
+        // PHASE 2 SECURITY: Single canonical path - no fallbacks
         String programFiles = System.getenv("ProgramFiles");
-        if (programFiles != null) {
-            Path pf = Paths.get(programFiles, "ValVoice", SOUND_VOLUME_VIEW_EXE);
-            if (Files.isRegularFile(pf)) return pf;
-            Path pfAlt = Paths.get(programFiles, SOUND_VOLUME_VIEW_EXE);
-            if (Files.isRegularFile(pfAlt)) return pfAlt;
+        if (programFiles == null) {
+            logger.warn("[AudioRouting] ProgramFiles environment variable not set");
+            return null;
         }
+
+        Path canonicalPath = Paths.get(programFiles, "ValVoice", SOUND_VOLUME_VIEW_EXE);
+        if (Files.isRegularFile(canonicalPath)) {
+            logger.debug("[AudioRouting] SoundVolumeView.exe found at canonical path: {}", canonicalPath);
+            return canonicalPath;
+        }
+
+        logger.warn("[AudioRouting] SoundVolumeView.exe not found at canonical path: {}", canonicalPath);
         return null;
     }
 
@@ -1468,11 +1477,19 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
      * TTS still works but audio plays through default speakers instead of VB-Cable.
      */
     private void routeMainProcessAudioToVbCable() {
-        // VN-parity: Fixed path construction - no fallbacks, no PATH search
-        String fileLocation = String.format(
-            "%s/ValVoice/SoundVolumeView.exe",
-            System.getenv("ProgramFiles").replace("\\", "/")
-        );
+        // PHASE 2 SECURITY: Fixed path construction - no fallbacks, no PATH search
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles == null) {
+            logger.warn("[AudioRouting] ProgramFiles environment variable not set - audio routing disabled");
+            Platform.runLater(() -> {
+                if (statusAudioRoute != null) {
+                    updateStatusLabelWithType(statusAudioRoute, "Disabled (env missing)", "warning");
+                }
+            });
+            return;
+        }
+
+        String fileLocation = programFiles.replace("\\", "/") + "/ValVoice/SoundVolumeView.exe";
 
         // VN-parity: Check if SoundVolumeView.exe exists - graceful degradation if missing
         if (!new java.io.File(fileLocation).exists()) {
