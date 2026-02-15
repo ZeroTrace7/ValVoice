@@ -15,6 +15,12 @@ import java.util.List;
  * - Validates SoundVolumeView.exe presence on startup
  * - Validates VB-Cable device availability
  * - Throws DependencyMissingException if critical dependencies are absent
+ *
+ * PHASE 2 SECURITY (VN-Parity):
+ * - SoundVolumeView.exe executed via ABSOLUTE PATH only (no PATH lookup)
+ * - Fixed path: %ProgramFiles%/ValVoice/SoundVolumeView.exe
+ * - File existence check before execution (graceful degradation if missing)
+ * - PowerShell executed via system binary name (OS resolves from System32)
  */
 public class InbuiltVoiceSynthesizer {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltVoiceSynthesizer.class);
@@ -199,33 +205,48 @@ public class InbuiltVoiceSynthesizer {
     }
 
     /**
-     * VN-parity: Fixed path construction for SoundVolumeView.exe.
-     * Uses %ProgramFiles%/ValVoice/SoundVolumeView.exe exclusively.
+     * PHASE 2 SECURITY: Absolute path enforcement for SoundVolumeView.exe.
+     * VN-parity: Uses %ProgramFiles%/ValVoice/SoundVolumeView.exe exclusively.
      * No PATH search, no dynamic discovery - matches ValorantNarrator exactly.
+     *
+     * Guardrail: Checks file existence before setting path.
+     * If missing → soundVolumeViewPath remains null → graceful degradation.
      */
     private void findSoundVolumeView() {
-        // VN-parity: Fixed path - %ProgramFiles%/ValVoice/SoundVolumeView.exe
-        String fileLocation = String.format(
-            "%s/ValVoice/SoundVolumeView.exe",
-            System.getenv("ProgramFiles").replace("\\", "/")
-        );
+        // PHASE 2 SECURITY: Fixed absolute path - no PATH lookup
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles == null) {
+            logger.warn("[AudioRouting] ProgramFiles environment variable not set");
+            soundVolumeViewPath = null;
+            return;
+        }
 
-        if (new File(fileLocation).exists()) {
+        String fileLocation = programFiles.replace("\\", "/") + "/ValVoice/SoundVolumeView.exe";
+        File exeFile = new File(fileLocation);
+
+        // PHASE 2 SECURITY: Existence check before storing path
+        if (exeFile.exists() && exeFile.isFile()) {
             soundVolumeViewPath = fileLocation;
-            logger.info("[AudioRouting] Found SoundVolumeView.exe at: {}", fileLocation);
+            logger.info("[AudioRouting] SoundVolumeView.exe found at absolute path: {}", fileLocation);
         } else {
             soundVolumeViewPath = null;
-            logger.warn("[AudioRouting] Audio routing disabled: SoundVolumeView.exe not found at {}", fileLocation);
+            logger.warn("[AudioRouting] SoundVolumeView.exe not found at {}", fileLocation);
+            logger.warn("[AudioRouting] Audio routing disabled - TTS will play through default speakers");
         }
     }
 
     /**
-     * VN-parity: Route PowerShell TTS child process audio to VB-CABLE Input.
-     * Uses fixed path and VN command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+     * PHASE 2 SECURITY: Route PowerShell TTS child process audio to VB-CABLE Input.
+     * VN-parity: Uses absolute path from findSoundVolumeView() - never relies on PATH.
+     * Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
+     *
+     * Guardrail: If soundVolumeViewPath is null (tool missing), logs warning and returns.
+     * TTS continues to work but audio plays through default device instead of VB-Cable.
      */
     private void routeAudioToVbCable() {
+        // PHASE 2 SECURITY: Graceful degradation if tool missing
         if (soundVolumeViewPath == null) {
-            logger.warn("[AudioRouting] Cannot route TTS audio: SoundVolumeView.exe not found");
+            logger.warn("[AudioRouting] Skipping audio routing: SoundVolumeView.exe not available");
             audioRoutingConfigured = false;
             return;
         }
@@ -239,10 +260,10 @@ public class InbuiltVoiceSynthesizer {
         try {
             long pid = powershellProcess.pid();
 
-            // VN-parity: Route PowerShell PID to CABLE Input
+            // PHASE 2 SECURITY: Execute using absolute path (soundVolumeViewPath already validated)
             // Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
             String command = soundVolumeViewPath + " /SetAppDefault \"CABLE Input\" all " + pid;
-            logger.debug("[AudioRouting] Executing: {}", command);
+            logger.debug("[AudioRouting] Executing (absolute path): {}", soundVolumeViewPath);
 
             Process routeProcess = Runtime.getRuntime().exec(command);
             int exitCode = routeProcess.waitFor();
@@ -263,6 +284,7 @@ public class InbuiltVoiceSynthesizer {
             logger.info("[AudioRouting] ✓ VB-CABLE listen-through configured");
 
         } catch (Exception e) {
+            // PHASE 2 SECURITY: Graceful degradation - log and continue, do not crash
             logger.error("[AudioRouting] Failed to route TTS audio: {}", e.getMessage());
             audioRoutingConfigured = false;
         }

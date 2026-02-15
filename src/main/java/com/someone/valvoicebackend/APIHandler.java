@@ -28,6 +28,11 @@ import java.util.Optional;
  * Typical flow:
  *  1. loadLockfile(path)
  *  2. resolveSelfPlayerId() / getAuthToken() / getEntitlementsToken()
+ *
+ * PHASE 2 SECURITY (VN-Parity):
+ * - No credentials logged (passwords, tokens, auth headers are NEVER logged)
+ * - Only URL endpoints and HTTP status codes appear in logs
+ * - Lockfile contents remain local-only (127.0.0.1 binding enforced by Riot)
  */
 public class APIHandler {
     private static final Logger logger = LoggerFactory.getLogger(APIHandler.class);
@@ -60,7 +65,8 @@ public class APIHandler {
         }
         baseUrl = lockFileHandler.getProtocol() + "://127.0.0.1:" + lockFileHandler.getPort();
         client = buildInsecureClient();
-        logger.info("Lockfile loaded. Base URL: {}", baseUrl);
+        // PHASE 2 SECURITY: Log success without exposing port/credentials
+        logger.info("Lockfile loaded successfully (local API ready)");
         return true;
     }
 
@@ -108,15 +114,16 @@ public class APIHandler {
                 return Optional.ofNullable(resp.body());
             }
             consecutiveFailures++;
-            // Only log first few failures and then periodically to avoid spam
+            // PHASE 2 SECURITY: Log only endpoint and status, never response body (may contain tokens)
             if (consecutiveFailures < FAILURE_LOG_THRESHOLD || consecutiveFailures % 50 == 0) {
-                logger.debug("Request {} failed with status {} body {}", request.uri(), resp.statusCode(), resp.body());
+                logger.debug("Request to {} failed with status {}", request.uri().getPath(), resp.statusCode());
             }
             return Optional.empty();
         } catch (IOException | InterruptedException e) {
             consecutiveFailures++;
             if (consecutiveFailures < FAILURE_LOG_THRESHOLD || consecutiveFailures % 50 == 0) {
-                logger.debug("HTTP request failed: {}", request.uri(), e);
+                // PHASE 2 SECURITY: Log only endpoint path, not full URI (which includes port)
+                logger.debug("HTTP request failed: {} - {}", request.uri().getPath(), e.getMessage());
             }
             return Optional.empty();
         }

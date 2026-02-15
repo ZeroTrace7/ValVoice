@@ -282,6 +282,12 @@ public class ValVoiceBackend {
      *
      * Data Flow:
      * XMPP → MITM logs → Java Parser → TTS
+     *
+     * PHASE 2 SECURITY (VN-Parity):
+     * - MITM executable resolved via ABSOLUTE PATH only (user.dir + /mitm/)
+     * - NO PATH lookup, NO environment variable search
+     * - File existence check before execution
+     * - Graceful fatal error if missing (user-friendly dialog, clean exit)
      */
     private void launchMitmProxy() {
         if (mitmProcess != null && mitmProcess.isAlive()) {
@@ -292,31 +298,33 @@ public class ValVoiceBackend {
         logger.info("[ValVoiceBackend] Starting MITM proxy...");
         fireStatusChanged("xmpp", "Starting...", false);
 
-        // VN-parity: Single canonical MITM binary location
-        // NO fallbacks, NO search paths - enforces single source of truth
+        // PHASE 2 SECURITY: Single canonical MITM binary location (absolute path)
+        // NO fallbacks, NO PATH search - enforces single source of truth
         Path workingDir = Paths.get(System.getProperty("user.dir"));
         Path exeCandidate = workingDir.resolve("mitm").resolve(XMPP_EXE_NAME_PRIMARY);
+        Path absolutePath = exeCandidate.toAbsolutePath();
 
+        // PHASE 2 SECURITY: File existence + readability check before execution
         if (!Files.isRegularFile(exeCandidate) || !Files.isReadable(exeCandidate)) {
             logger.error("[ValVoiceBackend] FATAL: {} not found at canonical location!", XMPP_EXE_NAME_PRIMARY);
-            logger.error("[ValVoiceBackend] Expected path: {}", exeCandidate.toAbsolutePath());
+            logger.error("[ValVoiceBackend] Expected path: {}", absolutePath);
             logger.error("[ValVoiceBackend] If running from source: cd mitm && npm install && npm run build:exe");
             logger.error("[ValVoiceBackend] If installed version: please reinstall ValVoice");
             fireStatusChanged("xmpp", "MITM exe missing", false);
-            showFatalErrorAndExit("MITM executable not found at: " + exeCandidate.toAbsolutePath());
+            showFatalErrorAndExit("MITM executable not found at: " + absolutePath);
             return;
         }
 
-        // Launch the exe
+        // PHASE 2 SECURITY: Launch using validated absolute path
         // Observer-only: Java reads MITM stdout JSON, never writes to stdin
-        ProcessBuilder pb = new ProcessBuilder(exeCandidate.toAbsolutePath().toString());
+        ProcessBuilder pb = new ProcessBuilder(absolutePath.toString());
         pb.redirectErrorStream(true);
         pb.directory(workingDir.toFile());
         try {
             mitmProcess = pb.start();
             System.setProperty("valvoice.bridgeMode", "external-exe");
             fireStatusChanged("bridge", "external-exe", true);
-            logger.info("[ValVoiceBackend] MITM proxy started successfully from: {}", exeCandidate.toAbsolutePath());
+            logger.info("[ValVoiceBackend] MITM proxy started from absolute path: {}", absolutePath);
         } catch (IOException e) {
             logger.error("[ValVoiceBackend] FATAL: Failed to start MITM proxy: {}", e.getMessage());
             fireStatusChanged("xmpp", "Start failed", false);
