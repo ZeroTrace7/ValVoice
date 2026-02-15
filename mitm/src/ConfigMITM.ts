@@ -1,6 +1,15 @@
 import * as http from 'node:http'
 import {HeadersInit} from 'undici'
 
+/**
+ * ConfigMITM - HTTP proxy for Riot client configuration.
+ *
+ * PHASE 3 SECURITY (VN-Parity):
+ * - Server binds STRICTLY to 127.0.0.1 (localhost only)
+ * - NEVER binds to 0.0.0.0 (which would expose to LAN)
+ * - No public endpoints - all traffic is local process-to-process
+ */
+
 interface PlayerConfigAffinities {
     'chat.affinities': {
         [key: string]: string
@@ -109,6 +118,8 @@ export class ConfigMITM {
         })
 
         return new Promise<void>((resolve, reject) => {
+            // PHASE 3 SECURITY: Explicitly bind to localhost (this._host = '127.0.0.1')
+            // NEVER use default binding (0.0.0.0) which would expose to LAN
             this._server?.listen(this._port, this._host, () => {
                 resolve()
             })

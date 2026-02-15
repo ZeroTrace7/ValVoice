@@ -3,6 +3,16 @@ import {ConfigMITM} from './ConfigMITM'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 
+/**
+ * XmppMITM - TLS proxy for Valorant XMPP traffic.
+ *
+ * PHASE 3 SECURITY (VN-Parity):
+ * - Server binds STRICTLY to 127.0.0.1 (localhost only)
+ * - NEVER binds to 0.0.0.0 (which would expose to LAN)
+ * - No public endpoints - all traffic is local process-to-process
+ * - Affinity mappings use 127.0.0.x addresses (localhost range only)
+ */
+
 export class XmppMITM {
     private readonly _port: number
     private readonly _host: string
@@ -156,7 +166,9 @@ export class XmppMITM {
                     reason: `TLS server error: ${err.message}`
                 }) + '\n')
                 // DO NOT crash - allow MITM to continue accepting connections
-            }).listen(this._port, () => {
+            }).listen(this._port, this._host, () => {
+                // PHASE 3 SECURITY: Explicitly bind to localhost (this._host = '127.0.0.1')
+                // NEVER use default binding (0.0.0.0) which would expose to LAN
                 resolve()
             })
         })
