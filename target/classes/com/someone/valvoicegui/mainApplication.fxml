@@ -13,6 +13,11 @@
             xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
             fx:controller="com.someone.valvoicegui.ValVoiceController">
 
+    <!-- ========== TOAST NOTIFICATION CONTAINER (overlay, always on top) ========== -->
+    <VBox fx:id="toastContainer" alignment="TOP_CENTER" spacing="8" mouseTransparent="true"
+          AnchorPane.topAnchor="60.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0"
+          style="-fx-padding: 10 20 0 20;" pickOnBounds="false" />
+
     <!-- ========== TOP BAR (Draggable) ========== -->
     <AnchorPane fx:id="topBar" prefHeight="50.0" prefWidth="900.0" styleClass="top-bar"
                 AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0">
@@ -331,22 +336,24 @@
 
                     <Separator />
 
-                    <!-- Voice Settings Card -->
-                    <VBox styleClass="card" spacing="20">
+                    <!-- ==================== VOICE CARD ==================== -->
+                    <!-- Voice selection and speech rate configuration -->
+                    <VBox styleClass="card, settings-card-voice" spacing="20">
                         <padding>
                             <Insets top="20" left="25" right="25" bottom="20" />
                         </padding>
 
-                        <Label text="Voice Settings" styleClass="card-title">
-                            <font>
-                                <Font name="System Bold" size="18.0" />
-                            </font>
-                        </Label>
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="🎤" style="-fx-font-size: 20px;" />
+                            <Label text="Voice" styleClass="card-title">
+                                <font><Font name="System Bold" size="18.0" /></font>
+                            </Label>
+                        </HBox>
 
                         <VBox spacing="15">
                             <!-- Voice Selection -->
                             <VBox spacing="8">
-                                <Label text="Voice" styleClass="setting-label" />
+                                <Label text="TTS Voice" styleClass="setting-label" />
                                 <HBox spacing="10" alignment="CENTER_LEFT">
                                     <ComboBox fx:id="voices" prefWidth="Infinity" maxWidth="500.0"
                                               onAction="#selectVoice" promptText="Select a voice"
@@ -367,71 +374,102 @@
                                             showTickMarks="false" styleClass="setting-slider" />
                                     <Label text="Fast" styleClass="hint-label" />
                                 </HBox>
+                                <Label text="Adjust how fast the voice speaks"
+                                       styleClass="hint-label" />
                             </VBox>
                         </VBox>
                     </VBox>
 
-                    <!-- Chat Settings Card -->
-                    <VBox styleClass="card" spacing="20">
+                    <!-- ==================== ROUTING CARD ==================== -->
+                    <!-- Audio routing status and configuration -->
+                    <VBox styleClass="card, settings-card-routing" spacing="20">
                         <padding>
                             <Insets top="20" left="25" right="25" bottom="20" />
                         </padding>
 
-                        <Label text="Chat Settings" styleClass="card-title">
-                            <font>
-                                <Font name="System Bold" size="18.0" />
-                            </font>
-                        </Label>
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="🔊" style="-fx-font-size: 20px;" />
+                            <Label text="Audio Routing" styleClass="card-title">
+                                <font><Font name="System Bold" size="18.0" /></font>
+                            </Label>
+                        </HBox>
 
                         <VBox spacing="15">
-                            <!-- Chat Source -->
-                            <VBox spacing="8">
-                                <Label text="Chat Source" styleClass="setting-label" />
-                                <ComboBox fx:id="sources" prefWidth="Infinity" maxWidth="500.0"
-                                          onAction="#selectSource" promptText="Select chat source"
-                                          styleClass="setting-combo" />
-                                <Label text="Choose which chat channels to narrate"
-                                       styleClass="hint-label" />
+                            <!-- Routing Status Display -->
+                            <VBox styleClass="routing-status-box" spacing="12">
+                                <HBox alignment="CENTER_LEFT" spacing="15">
+                                    <VBox HBox.hgrow="ALWAYS" spacing="2">
+                                        <Label text="VB-Audio Virtual Cable" styleClass="setting-label" />
+                                        <Label text="Required for voice injection into Valorant" styleClass="hint-label" />
+                                    </VBox>
+                                    <Label fx:id="routingStatusVbCable" text="Checking..." styleClass="status-label, status-info" />
+                                </HBox>
+
+                                <Separator prefWidth="Infinity" style="-fx-opacity: 0.3;" />
+
+                                <HBox alignment="CENTER_LEFT" spacing="15">
+                                    <VBox HBox.hgrow="ALWAYS" spacing="2">
+                                        <Label text="Audio Routing (SoundVolumeView)" styleClass="setting-label" />
+                                        <Label text="Routes TTS audio to VB-Cable input" styleClass="hint-label" />
+                                    </VBox>
+                                    <Label fx:id="routingStatusAudio" text="Checking..." styleClass="status-label, status-info" />
+                                </HBox>
                             </VBox>
 
-                            <!-- Keybind -->
-                            <VBox spacing="8">
-                                <Label text="Team Chat Keybind" styleClass="setting-label" />
-                                <TextField fx:id="keybindTextField" prefWidth="200.0" maxWidth="200.0"
-                                           promptText="Click and press key..." editable="false"
-                                           styleClass="keybind-field" />
-                                <Label text="Set push-to-talk key for team chat"
-                                       styleClass="hint-label" />
-                            </VBox>
-                        </VBox>
-                    </VBox>
+                            <Label text="Audio routing sends your TTS voice through VB-Cable so Valorant can hear it as microphone input."
+                                   styleClass="hint-label" wrapText="true" />
 
-                    <!-- Feature Toggles Card -->
-                    <VBox styleClass="card" spacing="20">
-                        <padding>
-                            <Insets top="20" left="25" right="25" bottom="20" />
-                        </padding>
-
-                        <Label text="Features" styleClass="card-title">
-                            <font>
-                                <Font name="System Bold" size="18.0" />
-                            </font>
-                        </Label>
-
-                        <VBox spacing="18">
-                            <!-- Microphone Toggle -->
+                            <!-- Microphone Passthrough Toggle -->
+                            <Separator prefWidth="Infinity" />
                             <HBox alignment="CENTER_LEFT" spacing="15">
                                 <VBox HBox.hgrow="ALWAYS">
-                                    <Label text="Microphone" styleClass="setting-label" />
-                                    <Label text="Enable microphone passthrough" styleClass="hint-label" />
+                                    <Label text="Microphone Passthrough" styleClass="setting-label" />
+                                    <Label text="Mix your real microphone with TTS output" styleClass="hint-label" />
                                 </VBox>
                                 <JFXToggleButton fx:id="micButton" onAction="#toggleMic"
                                                  styleClass="toggle-button" />
                             </HBox>
+                        </VBox>
+                    </VBox>
+
+                    <!-- ==================== INJECTION CARD ==================== -->
+                    <!-- PTT keybind and channel selection -->
+                    <VBox styleClass="card, settings-card-injection" spacing="20">
+                        <padding>
+                            <Insets top="20" left="25" right="25" bottom="20" />
+                        </padding>
+
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="💉" style="-fx-font-size: 20px;" />
+                            <Label text="Voice Injection" styleClass="card-title">
+                                <font><Font name="System Bold" size="18.0" /></font>
+                            </Label>
+                        </HBox>
+
+                        <VBox spacing="15">
+                            <!-- Chat Source / Channel Selection -->
+                            <VBox spacing="8">
+                                <Label text="Enabled Channels" styleClass="setting-label" />
+                                <ComboBox fx:id="sources" prefWidth="Infinity" maxWidth="500.0"
+                                          onAction="#selectSource" promptText="Select chat source"
+                                          styleClass="setting-combo" />
+                                <Label text="Choose which chat channels trigger voice narration"
+                                       styleClass="hint-label" />
+                            </VBox>
+
+                            <!-- PTT Keybind -->
+                            <VBox spacing="8">
+                                <Label text="Push-to-Talk Key" styleClass="setting-label" />
+                                <TextField fx:id="keybindTextField" prefWidth="200.0" maxWidth="200.0"
+                                           promptText="Click and press key..." editable="false"
+                                           styleClass="keybind-field" />
+                                <Label text="Key to simulate when injecting voice into team chat"
+                                       styleClass="hint-label" />
+                            </VBox>
 
                             <Separator prefWidth="Infinity" />
 
-                            <!-- Private Messages Toggle -->
+                            <!-- Channel Toggles -->
                             <HBox alignment="CENTER_LEFT" spacing="15">
                                 <VBox HBox.hgrow="ALWAYS">
                                     <Label text="Private Messages" styleClass="setting-label" />
@@ -442,48 +480,63 @@
                                                  styleClass="toggle-button" />
                             </HBox>
 
-                            <Separator prefWidth="Infinity" />
+                            <Separator prefWidth="Infinity" style="-fx-opacity: 0.3;" />
 
-                            <!-- Team Chat Toggle -->
                             <HBox alignment="CENTER_LEFT" spacing="15">
                                 <VBox HBox.hgrow="ALWAYS">
                                     <Label text="Team Chat PTT" styleClass="setting-label" />
-                                    <Label text="Enable push-to-talk for team chat" styleClass="hint-label" />
+                                    <Label text="Auto-press PTT key when narrating" styleClass="hint-label" />
                                 </VBox>
                                 <JFXToggleButton fx:id="teamChatButton" onAction="#toggleTeamChat"
                                                  styleClass="toggle-button" />
                             </HBox>
+                        </VBox>
+                    </VBox>
 
-                            <Separator prefWidth="Infinity" />
+                    <!-- ==================== VALORANT SYNC CARD ==================== -->
+                    <!-- Valorant settings synchronization -->
+                    <VBox styleClass="card, settings-card-sync" spacing="20">
+                        <padding>
+                            <Insets top="20" left="25" right="25" bottom="20" />
+                        </padding>
 
-                            <!-- Valorant Settings Sync -->
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="🎮" style="-fx-font-size: 20px;" />
+                            <Label text="Valorant Sync" styleClass="card-title">
+                                <font><Font name="System Bold" size="18.0" /></font>
+                            </Label>
+                        </HBox>
+
+                        <VBox spacing="15">
                             <HBox alignment="CENTER_LEFT" spacing="15">
                                 <VBox HBox.hgrow="ALWAYS">
-                                    <Label text="Sync Valorant Settings" styleClass="setting-label" />
+                                    <Label text="Auto-Sync Settings" styleClass="setting-label" />
                                     <Label text="Automatically sync voice settings with Valorant"
                                            styleClass="hint-label" />
                                 </VBox>
                                 <JFXToggleButton fx:id="valorantSettings" styleClass="toggle-button" />
                             </HBox>
-                        </VBox>
 
-                        <HBox spacing="15">
-                            <Button fx:id="voiceSettingsSync" text="Sync Now"
-                                    onAction="#syncValorantSettings" styleClass="secondary-button" />
-                        </HBox>
+                            <HBox spacing="15">
+                                <Button fx:id="voiceSettingsSync" text="Sync Now"
+                                        onAction="#syncValorantSettings" styleClass="secondary-button" />
+                            </HBox>
+                        </VBox>
                     </VBox>
 
-                    <!-- Player Management Card -->
-                    <VBox styleClass="card" spacing="20">
+                    <!-- ==================== PLAYER MANAGEMENT CARD ==================== -->
+                    <!-- Ignore/unignore players -->
+                    <VBox styleClass="card, settings-card-players" spacing="20">
                         <padding>
                             <Insets top="20" left="25" right="25" bottom="20" />
                         </padding>
 
-                        <Label text="Player Management" styleClass="card-title">
-                            <font>
-                                <Font name="System Bold" size="18.0" />
-                            </font>
-                        </Label>
+                        <HBox alignment="CENTER_LEFT" spacing="10">
+                            <Label text="👥" style="-fx-font-size: 20px;" />
+                            <Label text="Player Management" styleClass="card-title">
+                                <font><Font name="System Bold" size="18.0" /></font>
+                            </Label>
+                        </HBox>
 
                         <VBox spacing="15">
                             <!-- Add Ignored Player -->
@@ -496,6 +549,8 @@
                                     <Button text="Ignore" onAction="#ignorePlayer"
                                             styleClass="secondary-button" />
                                 </HBox>
+                                <Label text="Messages from ignored players won't be narrated"
+                                       styleClass="hint-label" />
                             </VBox>
 
                             <!-- Remove Ignored Player -->
@@ -516,37 +571,43 @@
         </ScrollPane>
 
         <!-- ========== STATUS BAR (Dependency / Runtime Status) ========== -->
-        <HBox fx:id="statusBar" id="statusBar" spacing="30" alignment="CENTER_LEFT"
+        <HBox fx:id="statusBar" id="statusBar" spacing="20" alignment="CENTER_LEFT"
               AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0"
-              prefHeight="50" style="-fx-background-color: linear-gradient(to right, #0f1620, #1a1a2e); -fx-padding:12 30 12 30; -fx-border-color:#00d4ff; -fx-border-width:2 0 0 0;">
+              prefHeight="50">
+
+            <!-- TTS Speaking Indicator -->
+            <HBox fx:id="ttsIndicator" spacing="8" alignment="CENTER_LEFT" styleClass="tts-indicator" visible="false" managed="false">
+                <Label text="●" styleClass="tts-pulse" />
+                <Label text="SPEAKING" styleClass="tts-indicator-label" />
+            </HBox>
 
             <!-- XMPP Status -->
-            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="140">
-                <Label text="XMPP:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
-                <Label fx:id="statusXmpp" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="XMPP:" styleClass="status-label-static" />
+                <Label fx:id="statusXmpp" text="Checking..." styleClass="status-label" />
             </HBox>
 
             <!-- Bridge Mode -->
-            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="160">
-                <Label text="Bridge:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
-                <Label fx:id="statusBridgeMode" text="-" styleClass="status-label" style="-fx-font-size: 13px;" />
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="Bridge:" styleClass="status-label-static" />
+                <Label fx:id="statusBridgeMode" text="-" styleClass="status-label" />
             </HBox>
 
             <!-- VB-Cable Status -->
-            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="140">
-                <Label text="VB-Cable:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
-                <Label fx:id="statusVbCable" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="VB-Cable:" styleClass="status-label-static" />
+                <Label fx:id="statusVbCable" text="Checking..." styleClass="status-label" />
             </HBox>
 
             <!-- Audio Routing Status -->
-            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="160">
-                <Label text="Audio:" styleClass="status-label-static" style="-fx-font-size: 13px; -fx-font-weight: bold;" />
-                <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" style="-fx-font-size: 13px;" />
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="Audio:" styleClass="status-label-static" />
+                <Label fx:id="statusAudioRoute" text="Checking..." styleClass="status-label" />
             </HBox>
 
             <!-- Self ID Status -->
-            <HBox spacing="10" alignment="CENTER_LEFT" minWidth="180">
-                <Label fx:id="statusSelfId" text="Self: (pending)" styleClass="status-label" style="-fx-font-size: 13px;" />
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label fx:id="statusSelfId" text="Self: (pending)" styleClass="status-label" />
             </HBox>
 
             <Region HBox.hgrow="ALWAYS" />

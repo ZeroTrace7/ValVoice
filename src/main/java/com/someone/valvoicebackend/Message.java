@@ -17,9 +17,24 @@ import java.util.regex.Pattern;
  *  - Extract and HTML-unescape the body text
  *  - Classify the chat channel (PARTY / TEAM / ALL / WHISPER)
  *  - Determine if the message was authored by the local player (isOwnMessage)
+ *
+ * PHASE 1 SECURITY HARDENING (VN-Parity):
+ * - Input length validation
+ * - Defensive try/catch for all regex operations
+ * - HTML unescaping happens exactly once (via HtmlEscape.unescapeHtml)
+ * - Malformed input results in null/safe-default values, never crashes
  */
 public class Message {
     private static final Logger logger = LoggerFactory.getLogger(Message.class);
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PHASE 1 SECURITY: INPUT LENGTH CAPS (VN-Parity)
+    // ═══════════════════════════════════════════════════════════════════════════════
+    /** Max length for raw XML input (must match XmppStreamParser) */
+    private static final int MAX_XML_LENGTH = 32 * 1024;
+
+    /** Max length for extracted body content */
+    private static final int MAX_BODY_LENGTH = 8 * 1024;
 
     // Precompiled patterns - support BOTH single and double quotes (Riot uses both)
     private static final Pattern TYPE_PATTERN = Pattern.compile("type=['\"]([^'\"]*)['\"]", Pattern.CASE_INSENSITIVE);
@@ -44,6 +59,11 @@ public class Message {
      * Parse XMPP message stanza into Message object.
      * MATCHES ValorantNarrator's Message constructor exactly.
      *
+     * PHASE 1 SECURITY HARDENING:
+     * - Input length validation (drops oversized payloads)
+     * - Defensive try/catch for regex operations (malformed = safe defaults)
+     * - HTML unescaping happens exactly ONCE via HtmlEscape.unescapeHtml()
+     *
      * CARBON COPY HANDLING:
      * When you send a message, Valorant echoes it back as a carbon copy with:
      *   - Outer message: from = your JID
@@ -51,65 +71,113 @@ public class Message {
      * For carbon copies, we use the inner 'to' attribute for classification.
      */
     public Message(String xml) {
+        // === PHASE 1 SECURITY: Null check ===
         if (xml == null) {
             throw new IllegalArgumentException("xml cannot be null");
         }
 
-        Matcher typeMatcher = TYPE_PATTERN.matcher(xml);
-        Matcher bodyMatcher = BODY_PATTERN.matcher(xml);
-        Matcher jidMatcher = JID_PATTERN.matcher(xml);
-        Matcher fromMatcher = FROM_PATTERN.matcher(xml);
+        // === PHASE 1 SECURITY: Input length cap ===
+        if (xml.length() > MAX_XML_LENGTH) {
+            logger.warn("[SECURITY] Message XML exceeds max length: {} > {}, using truncated parse",
+                       xml.length(), MAX_XML_LENGTH);
+            // Use safe defaults for oversized input
+            this.content = null;
+            this.id = "@";
+            this.userId = "";
+            this.ownMessage = false;
+            this.messageType = null;
+            this.fromJid = null;
+            return;
+        }
 
-        // Extract ID: prefer jid attribute, fallback to from attribute
-        // ValorantNarrator: id = jidMatcher.find() ? jidMatcher.group(1) : fromMatcher.find() ? fromMatcher.group(1) : "@";
-        id = jidMatcher.find() ? jidMatcher.group(1) : (fromMatcher.find() ? fromMatcher.group(1) : "@");
+        // === DEFENSIVE PARSING: Wrap all regex operations in try/catch ===
+        String extractedId = "@";
+        String extractedTypeAttr = null;
+        String extractedFromAttr = null;
+        String extractedBody = null;
+        String extractedFromJid = null;
 
-        // Extract 'type' attribute value (e.g., chat, groupchat)
-        String typeAttr = typeMatcher.find() ? typeMatcher.group(1) : null;
+        try {
+            Matcher typeMatcher = TYPE_PATTERN.matcher(xml);
+            Matcher bodyMatcher = BODY_PATTERN.matcher(xml);
+            Matcher jidMatcher = JID_PATTERN.matcher(xml);
+            Matcher fromMatcher = FROM_PATTERN.matcher(xml);
 
-        // Re-match from for message classification (ValorantNarrator resets and re-matches)
-        fromMatcher = FROM_PATTERN.matcher(xml);
-        String fromAttr = fromMatcher.find() ? fromMatcher.group(1) : null;
+            // Extract ID: prefer jid attribute, fallback to from attribute
+            // ValorantNarrator: id = jidMatcher.find() ? jidMatcher.group(1) : fromMatcher.find() ? fromMatcher.group(1) : "@";
+            extractedId = jidMatcher.find() ? jidMatcher.group(1) : (fromMatcher.find() ? fromMatcher.group(1) : "@");
 
-        // Carbon copy handling: Valorant sends carbon copies for messages YOU send.
-        // The outer 'from' is your JID, but the inner <message to="..."> has the actual destination.
-        // If that destination is a MUC room (ares-parties, ares-pregame, ares-coregame),
-        // we override 'from' with 'to' so getMessageType() classifies correctly.
-        if (xml.contains("urn:xmpp:carbons:2")) {
-            Matcher innerMsgMatcher = INNER_MESSAGE_PATTERN.matcher(xml);
-            if (innerMsgMatcher.find()) {
-                String innerMsgAttrs = innerMsgMatcher.group(1);
-                Matcher toMatcher = TO_PATTERN.matcher(innerMsgAttrs);
-                if (toMatcher.find()) {
-                    String innerTo = toMatcher.group(1);
-                    // Only override if 'to' points to a MUC room
-                    if (innerTo.contains("ares-parties") ||
-                        innerTo.contains("ares-pregame") ||
-                        innerTo.contains("ares-coregame")) {
-                        logger.debug("🔄 Carbon copy detected - overriding 'from' with inner 'to': '{}'", innerTo);
-                        fromAttr = innerTo;
+            // Extract 'type' attribute value (e.g., chat, groupchat)
+            extractedTypeAttr = typeMatcher.find() ? typeMatcher.group(1) : null;
+
+            // Re-match from for message classification (ValorantNarrator resets and re-matches)
+            fromMatcher = FROM_PATTERN.matcher(xml);
+            extractedFromAttr = fromMatcher.find() ? fromMatcher.group(1) : null;
+
+            // Carbon copy handling: Valorant sends carbon copies for messages YOU send.
+            // The outer 'from' is your JID, but the inner <message to="..."> has the actual destination.
+            // If that destination is a MUC room (ares-parties, ares-pregame, ares-coregame),
+            // we override 'from' with 'to' so getMessageType() classifies correctly.
+            if (xml.contains("urn:xmpp:carbons:2")) {
+                Matcher innerMsgMatcher = INNER_MESSAGE_PATTERN.matcher(xml);
+                if (innerMsgMatcher.find()) {
+                    String innerMsgAttrs = innerMsgMatcher.group(1);
+                    Matcher toMatcher = TO_PATTERN.matcher(innerMsgAttrs);
+                    if (toMatcher.find()) {
+                        String innerTo = toMatcher.group(1);
+                        // Only override if 'to' points to a MUC room
+                        if (innerTo.contains("ares-parties") ||
+                            innerTo.contains("ares-pregame") ||
+                            innerTo.contains("ares-coregame")) {
+                            logger.debug("🔄 Carbon copy detected - overriding 'from' with inner 'to': '{}'", innerTo);
+                            extractedFromAttr = innerTo;
+                        }
                     }
                 }
             }
+
+            // STORE RAW 'from' ATTRIBUTE - This is AUTHORITATIVE for sender identity (ValorantNarrator reference)
+            // For carbon copies, fromAttr may have been overridden with inner 'to' for classification,
+            // but we need the ORIGINAL 'from' for sender identity. Re-extract it.
+            Matcher originalFromMatcher = FROM_PATTERN.matcher(xml);
+            extractedFromJid = originalFromMatcher.find() ? originalFromMatcher.group(1) : null;
+
+            // Extract body content
+            if (bodyMatcher.find()) {
+                String rawBody = bodyMatcher.group(1);
+                // === PHASE 1 SECURITY: Body length cap ===
+                if (rawBody != null && rawBody.length() > MAX_BODY_LENGTH) {
+                    logger.warn("[SECURITY] Message body exceeds max length: {} > {}, truncating",
+                               rawBody.length(), MAX_BODY_LENGTH);
+                    rawBody = rawBody.substring(0, MAX_BODY_LENGTH);
+                }
+                // === HTML UNESCAPING: Happens exactly ONCE here ===
+                // HtmlEscape.unescapeHtml() handles &amp; &lt; &gt; &quot; &#39; and numeric entities
+                // This is the ONLY place unescaping occurs - no double-unescape risk
+                extractedBody = HtmlEscape.unescapeHtml(rawBody);
+            }
+
+        } catch (Exception e) {
+            // === PHASE 1 SECURITY: Fail-safe on malformed input ===
+            logger.warn("[SECURITY] Regex parsing failed (malformed XML?): {}", e.getMessage());
+            // Continue with safe defaults - do not crash
         }
 
-        // STORE RAW 'from' ATTRIBUTE - This is AUTHORITATIVE for sender identity (ValorantNarrator reference)
-        // For carbon copies, fromAttr may have been overridden with inner 'to' for classification,
-        // but we need the ORIGINAL 'from' for sender identity. Re-extract it.
-        Matcher originalFromMatcher = FROM_PATTERN.matcher(xml);
-        this.fromJid = originalFromMatcher.find() ? originalFromMatcher.group(1) : null;
+        // Assign parsed values
+        id = extractedId != null ? extractedId : "@";
+        this.fromJid = extractedFromJid;
 
         // Classify message type using from attribute - DOMAIN FIRST, TYPE SECOND (ValorantNarrator way)
         // Safety: if fromAttr is null, we cannot classify the message
-        if (fromAttr == null) {
+        if (extractedFromAttr == null) {
             logger.warn("⚠️ Message has no 'from' attribute - cannot classify");
             messageType = null;
         } else {
-            messageType = getMessageType(fromAttr, typeAttr);
+            messageType = getMessageType(extractedFromAttr, extractedTypeAttr);
         }
 
-        // Extract and unescape body content
-        content = bodyMatcher.find() ? HtmlEscape.unescapeHtml(bodyMatcher.group(1)) : null;
+        // Store content (already HTML-unescaped above)
+        content = extractedBody;
 
         // Extract userId (portion before '@')
         userId = id.split("@")[0];

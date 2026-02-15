@@ -5,6 +5,23 @@ import java.util.regex.Pattern;
 
 /**
  * Minimal HTML entity un-escape (and now escape) utility.
+ *
+ * PHASE 1 SECURITY HARDENING (VN-Parity):
+ * ════════════════════════════════════════════════════════════════════════════════
+ * HTML UNESCAPING HAPPENS EXACTLY ONCE - This is the SINGLE point of unescaping.
+ *
+ * Call sites (AUTHORITATIVE LIST):
+ * - Message.java constructor: body content is unescaped ONCE during parsing
+ *
+ * IMPORTANT: Do NOT call unescapeHtml() multiple times on the same content.
+ * Double-unescaping would convert &amp;lt; → &lt; → <, which is incorrect.
+ *
+ * The VN-parity contract is:
+ * 1. Raw body extracted from XML (still escaped, e.g., "&lt;hello&gt;")
+ * 2. HtmlEscape.unescapeHtml() called ONCE → produces "<hello>"
+ * 3. Content flows through ChatDataHandler → VoiceGenerator → TTS
+ * 4. NO additional unescaping anywhere in the pipeline
+ * ════════════════════════════════════════════════════════════════════════════════
  */
 public final class HtmlEscape {
     private HtmlEscape() {}

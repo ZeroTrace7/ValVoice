@@ -677,6 +677,11 @@ public class ValVoiceBackend {
      * Phase 2B: Production Cutover - Now uses XmppStreamParser (StAX) exclusively.
      * All regex-based message parsing has been removed.
      *
+     * PHASE 1 SECURITY HARDENING:
+     * - XmppStreamParser enforces input length caps (MAX_STANZA_LENGTH, MAX_BODY_LENGTH)
+     * - All parsing failures result in silent drop (no crash, no propagation)
+     * - Message.java constructor has defensive try/catch with safe defaults
+     *
      * Processing Pipeline:
      * 0. PRESENCE: Extract game state for Smart Mute (Phase 4 - additive)
      * 1. ROSTER IQ: Parse to build PUUID→Name mapping (Phase 3)
@@ -831,6 +836,11 @@ public class ValVoiceBackend {
     /**
      * Handle presence stanzas to extract game state for Smart Mute.
      *
+     * PHASE 1 SECURITY HARDENING:
+     * - All parsing wrapped in defensive try/catch
+     * - Malformed input silently dropped (log WARN, no crash)
+     * - Invalid Base64 or JSON → fail-safe return
+     *
      * Presence stanzas contain a Base64-encoded JSON payload in the &lt;p&gt; element.
      * The JSON includes a "sessionLoopState" field with values:
      * - "MENUS"   : Player is in main menu / lobby
@@ -843,22 +853,36 @@ public class ValVoiceBackend {
      * @param xml Raw presence stanza XML
      */
     private void handlePresenceStanza(String xml) {
-        // Quick check: does this presence have a <p> payload?
-        if (!XmppStreamParser.presenceHasPayload(xml)) {
-            logger.debug("[PRESENCE] Stanza has no <p> payload, ignoring");
-            return;
-        }
-
-        // Extract the Base64-encoded payload from <p> element
-        String base64Payload = XmppStreamParser.extractPresencePayload(xml);
-        if (base64Payload == null || base64Payload.isEmpty()) {
-            logger.debug("[PRESENCE] Could not extract <p> payload");
+        // === PHASE 1 SECURITY: Defensive entry guard ===
+        if (xml == null || xml.isEmpty()) {
             return;
         }
 
         try {
+            // Quick check: does this presence have a <p> payload?
+            if (!XmppStreamParser.presenceHasPayload(xml)) {
+                logger.debug("[PRESENCE] Stanza has no <p> payload, ignoring");
+                return;
+            }
+
+            // Extract the Base64-encoded payload from <p> element
+            // Note: XmppStreamParser.extractPresencePayload already has length caps
+            String base64Payload = XmppStreamParser.extractPresencePayload(xml);
+            if (base64Payload == null || base64Payload.isEmpty()) {
+                logger.debug("[PRESENCE] Could not extract <p> payload");
+                return;
+            }
+
             // Decode Base64 to JSON string
-            byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Payload);
+            byte[] decodedBytes;
+            try {
+                decodedBytes = java.util.Base64.getDecoder().decode(base64Payload);
+            } catch (IllegalArgumentException e) {
+                // Base64 decoding failed - not a valid payload
+                logger.debug("[PRESENCE] Failed to decode Base64 payload (malformed): {}", e.getMessage());
+                return;
+            }
+
             String jsonPayload = new String(decodedBytes, StandardCharsets.UTF_8);
 
             // Parse JSON and extract sessionLoopState
@@ -874,12 +898,10 @@ public class ValVoiceBackend {
                 logger.debug("[PRESENCE] JSON payload does not contain sessionLoopState");
             }
 
-        } catch (IllegalArgumentException e) {
-            // Base64 decoding failed - not a valid payload
-            logger.debug("[PRESENCE] Failed to decode Base64 payload: {}", e.getMessage());
         } catch (Exception e) {
-            // JSON parsing failed or other error - never crash
-            logger.debug("[PRESENCE] Failed to parse presence payload: {}", e.getMessage());
+            // === PHASE 1 SECURITY: Fail-safe on any parsing error ===
+            // JSON parsing failed or other error - never crash, silently drop
+            logger.debug("[PRESENCE] Failed to parse presence payload (dropped): {}", e.getMessage());
         }
     }
 

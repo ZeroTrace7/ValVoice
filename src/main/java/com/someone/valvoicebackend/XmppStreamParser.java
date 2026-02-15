@@ -25,9 +25,31 @@ import java.util.List;
  * - Correct parsing of nested elements
  * - Handles attribute order variations
  * - More resilient to XML formatting changes
+ *
+ * PHASE 1 SECURITY HARDENING (VN-Parity):
+ * - Input length caps to prevent memory exhaustion
+ * - Fail-safe parsing with silent drop on malformed payloads
+ * - No schema validation (VN-style loose parsing)
  */
 public class XmppStreamParser {
     private static final Logger logger = LoggerFactory.getLogger(XmppStreamParser.class);
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PHASE 1 SECURITY: INPUT LENGTH CAPS (VN-Parity)
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Valorant chat messages are typically short (< 1KB).
+    // These caps prevent malformed/malicious payloads from exhausting memory.
+    // If exceeded → silently drop stanza (log WARN, no crash, no propagation).
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /** Max length for entire XMPP stanza XML (32KB should cover any legitimate message) */
+    private static final int MAX_STANZA_LENGTH = 32 * 1024;
+
+    /** Max length for chat body content (8KB is very generous for chat messages) */
+    private static final int MAX_BODY_LENGTH = 8 * 1024;
+
+    /** Max length for Base64 presence payload (16KB handles richest presence data) */
+    private static final int MAX_PRESENCE_PAYLOAD_LENGTH = 16 * 1024;
 
     // StAX factory - thread-safe after initialization
     private static final XMLInputFactory XML_INPUT_FACTORY;
@@ -44,11 +66,24 @@ public class XmppStreamParser {
     /**
      * Parse a single XMPP message stanza and extract all relevant fields.
      *
+     * PHASE 1 SECURITY: Fail-safe parsing with input validation.
+     * - Checks stanza length against MAX_STANZA_LENGTH
+     * - Checks body length against MAX_BODY_LENGTH
+     * - Silently drops oversized or malformed payloads (log WARN, return null)
+     *
      * @param xml Raw XML string containing a &lt;message&gt; stanza
-     * @return ParsedMessage with extracted fields, or null if parsing fails
+     * @return ParsedMessage with extracted fields, or null if parsing fails or payload exceeds limits
      */
     public static ParsedMessage parseMessage(String xml) {
+        // === PHASE 1 SECURITY: Null/Empty check ===
         if (xml == null || xml.isEmpty()) {
+            return null;
+        }
+
+        // === PHASE 1 SECURITY: Stanza length cap ===
+        if (xml.length() > MAX_STANZA_LENGTH) {
+            logger.warn("[SECURITY] Dropping oversized stanza: length={} exceeds max={}",
+                       xml.length(), MAX_STANZA_LENGTH);
             return null;
         }
 
@@ -118,7 +153,15 @@ public class XmppStreamParser {
                     case XMLStreamConstants.CHARACTERS:
                     case XMLStreamConstants.CDATA:
                         if (inBody && bodyBuilder != null) {
-                            bodyBuilder.append(reader.getText());
+                            // === PHASE 1 SECURITY: Body length cap (streaming check) ===
+                            String text = reader.getText();
+                            if (bodyBuilder.length() + text.length() > MAX_BODY_LENGTH) {
+                                logger.warn("[SECURITY] Dropping message with oversized body: length would exceed max={}",
+                                           MAX_BODY_LENGTH);
+                                reader.close();
+                                return null;
+                            }
+                            bodyBuilder.append(text);
                         }
                         break;
 
@@ -147,11 +190,11 @@ public class XmppStreamParser {
 
         } catch (XMLStreamException e) {
             // XML parsing failed - log and return null (never crash)
-            logger.debug("[StAX] XML parsing failed: {}", e.getMessage());
+            logger.debug("[StAX] XML parsing failed (malformed payload dropped): {}", e.getMessage());
             return null;
         } catch (Exception e) {
-            // Catch-all for unexpected errors
-            logger.debug("[StAX] Unexpected error parsing XML: {}", e.getMessage());
+            // Catch-all for unexpected errors - VN-parity: fail-safe, never crash
+            logger.debug("[StAX] Unexpected error parsing XML (payload dropped): {}", e.getMessage());
             return null;
         }
     }
@@ -160,13 +203,23 @@ public class XmppStreamParser {
      * Parse multiple message stanzas from a single XML string.
      * Handles cases where MITM sends multiple messages concatenated.
      *
+     * PHASE 1 SECURITY: Input validation with length caps.
+     *
      * @param xml Raw XML string potentially containing multiple &lt;message&gt; stanzas
      * @return List of ParsedMessage objects (may be empty, never null)
      */
     public static List<ParsedMessage> parseMessages(String xml) {
         List<ParsedMessage> messages = new ArrayList<>();
 
+        // === PHASE 1 SECURITY: Null/Empty check ===
         if (xml == null || xml.isEmpty()) {
+            return messages;
+        }
+
+        // === PHASE 1 SECURITY: Stanza length cap ===
+        if (xml.length() > MAX_STANZA_LENGTH) {
+            logger.warn("[SECURITY] Dropping oversized multi-message stanza: length={} exceeds max={}",
+                       xml.length(), MAX_STANZA_LENGTH);
             return messages;
         }
 
@@ -276,15 +329,25 @@ public class XmppStreamParser {
      * Extract the &lt;p&gt; (presence payload) element content from a presence stanza.
      * The &lt;p&gt; element contains Base64-encoded JSON with game state info.
      *
+     * PHASE 1 SECURITY: Input validation with length caps.
+     *
      * This method uses a two-phase approach:
      * 1. First attempts StAX parsing for proper XML handling
      * 2. Falls back to simple string extraction if StAX fails (handles malformed XML)
      *
      * @param xml Raw XML string containing a presence stanza
-     * @return The Base64-encoded payload string, or null if not found
+     * @return The Base64-encoded payload string, or null if not found or exceeds limits
      */
     public static String extractPresencePayload(String xml) {
+        // === PHASE 1 SECURITY: Null/Empty check ===
         if (xml == null || xml.isEmpty()) {
+            return null;
+        }
+
+        // === PHASE 1 SECURITY: Stanza length cap ===
+        if (xml.length() > MAX_STANZA_LENGTH) {
+            logger.warn("[SECURITY] Dropping oversized presence stanza: length={} exceeds max={}",
+                       xml.length(), MAX_STANZA_LENGTH);
             return null;
         }
 
@@ -294,11 +357,26 @@ public class XmppStreamParser {
         // Phase 1: Try StAX parsing (proper XML handling)
         String staxResult = extractPresencePayloadViaStax(cleanedXml);
         if (staxResult != null) {
+            // === PHASE 1 SECURITY: Presence payload length cap ===
+            if (staxResult.length() > MAX_PRESENCE_PAYLOAD_LENGTH) {
+                logger.warn("[SECURITY] Dropping oversized presence payload: length={} exceeds max={}",
+                           staxResult.length(), MAX_PRESENCE_PAYLOAD_LENGTH);
+                return null;
+            }
             return staxResult;
         }
 
         // Phase 2: Fallback to simple string extraction (handles malformed XML)
-        return extractPresencePayloadViaRegex(xml);
+        String regexResult = extractPresencePayloadViaRegex(xml);
+        if (regexResult != null) {
+            // === PHASE 1 SECURITY: Presence payload length cap ===
+            if (regexResult.length() > MAX_PRESENCE_PAYLOAD_LENGTH) {
+                logger.warn("[SECURITY] Dropping oversized presence payload (regex): length={} exceeds max={}",
+                           regexResult.length(), MAX_PRESENCE_PAYLOAD_LENGTH);
+                return null;
+            }
+        }
+        return regexResult;
     }
 
     /**

@@ -207,6 +207,25 @@ public class Main {
     }
 
     /**
+     * Save user config to %APPDATA%/ValVoice/config.properties.
+     * VN-parity: Called immediately when default values need to be persisted (e.g., fresh install).
+     * Non-blocking (async) to avoid blocking startup.
+     */
+    private static void saveConfig() {
+        new Thread(() -> {
+            try {
+                Files.createDirectories(Paths.get(CONFIG_DIR));
+                try (OutputStream out = new FileOutputStream(getConfigPath())) {
+                    userProperties.store(out, "ValVoice User Configuration");
+                }
+                logger.debug("[Config] Config saved to: {}", getConfigPath());
+            } catch (Exception e) {
+                logger.warn("[Config] Could not save config: {}", e.getMessage());
+            }
+        }, "config-saver-startup").start();
+    }
+
+    /**
      * Load user config from %APPDATA%/ValVoice/config.properties.
      * VN-parity: If file missing or corrupt, use defaults (no crash).
      * Also applies persisted source (channel filters) to Chat runtime model.
