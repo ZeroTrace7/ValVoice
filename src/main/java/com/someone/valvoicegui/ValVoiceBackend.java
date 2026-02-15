@@ -36,10 +36,19 @@ import com.google.gson.JsonParser;
  * - History filtering
  * - Duplicate message filtering
  *
+ * PHASE 3 SECURITY (VN-Parity):
+ * - Logs MITM localhost binding confirmation messages
+ * - Defensive logging: truncates large payloads to prevent log explosion
+ * - Never dumps full base64 presence blobs or large XML stanzas
+ *
  * This class is started by ValVoiceController.initialize() after the UI is ready.
  */
 public class ValVoiceBackend {
     private static final Logger logger = LoggerFactory.getLogger(ValVoiceBackend.class);
+
+    // === PHASE 3 SECURITY: Defensive logging constants ===
+    /** Maximum length for raw XML/payload logging (truncate beyond this) */
+    private static final int MAX_LOG_PAYLOAD_LENGTH = 500;
 
     // Singleton instance
     private static ValVoiceBackend instance;
@@ -342,11 +351,21 @@ public class ValVoiceBackend {
                     try {
                         parsed = JsonParser.parseString(line);
                         if (!parsed.isJsonObject()) {
-                            logger.debug("[MITM raw] {}", line);
+                            // PHASE 3 SECURITY: Truncate non-JSON output for defensive logging
+                            logger.debug("[MITM raw] {}", truncateForLog(line));
                             continue;
                         }
                         JsonObject obj = parsed.getAsJsonObject();
                         String type = obj.has("type") && !obj.get("type").isJsonNull() ? obj.get("type").getAsString() : "";
+
+                        // PHASE 3 SECURITY: Handle security confirmation messages from MITM
+                        if ("security".equals(type)) {
+                            String message = obj.has("message") && !obj.get("message").isJsonNull()
+                                ? obj.get("message").getAsString()
+                                : "Security event";
+                            logger.info("[MITM:security] {}", message);
+                            continue;
+                        }
 
                         // Check for fatal error events during startup
                         if ("error".equals(type)) {
@@ -363,11 +382,13 @@ public class ValVoiceBackend {
                         }
                     } catch (Exception ex) {
                         // Non-JSON bridge output
+                        // PHASE 3 SECURITY: Truncate for defensive logging
+                        String truncated = truncateForLog(line);
                         String lower = line.toLowerCase();
                         if (lower.contains("presence")) {
-                            logger.debug("[MITM presence] {}", line);
+                            logger.debug("[MITM presence] {}", truncated);
                         } else {
-                            logger.info("[MITM log] {}", line);
+                            logger.info("[MITM log] {}", truncated);
                         }
                     }
                 }
@@ -495,7 +516,8 @@ public class ValVoiceBackend {
                 // Raw XML sent to Riot server - check for RSO-PAS auth to capture identity
                 if (obj.has("data") && !obj.get("data").isJsonNull()) {
                     String data = obj.get("data").getAsString();
-                    logger.info("[MITM:outgoing] {}", data);
+                    // PHASE 3 SECURITY: Truncate outgoing data for defensive logging
+                    logger.info("[MITM:outgoing] {}", truncateForLog(data));
 
                     // === PHASE 1: PUUID Identity Capture ===
                     // Detect RSO-PAS authentication mechanism and extract PUUID from JWT
@@ -981,6 +1003,23 @@ public class ValVoiceBackend {
     }
 
     // ========== Utility Methods ==========
+
+    /**
+     * PHASE 3 SECURITY: Truncate payload for defensive logging.
+     * Prevents log explosion from large XML stanzas, base64 presence blobs, etc.
+     *
+     * @param payload The raw payload string
+     * @return Truncated string safe for logging (max MAX_LOG_PAYLOAD_LENGTH chars)
+     */
+    private String truncateForLog(String payload) {
+        if (payload == null) {
+            return "(null)";
+        }
+        if (payload.length() <= MAX_LOG_PAYLOAD_LENGTH) {
+            return payload;
+        }
+        return payload.substring(0, MAX_LOG_PAYLOAD_LENGTH) + "... [truncated, total=" + payload.length() + "]";
+    }
 
     /**
      * Parse XMPP stamp attribute to epoch milliseconds.

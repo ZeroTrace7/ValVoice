@@ -133,11 +133,20 @@ public class Roster {
         // Try primary pattern: jid before name
         Matcher matcher = ROSTER_ITEM_PATTERN.matcher(xml);
         while (matcher.find()) {
-            String puuid = matcher.group(1);
-            String name = matcher.group(2);
+            // PHASE 1 SECURITY: Defensive null checks before accessing groups
+            String puuid = null;
+            String name = null;
+            String itemXml = null;
+            try {
+                puuid = matcher.group(1);
+                name = matcher.group(2);
+                itemXml = matcher.group(0);
+            } catch (Exception e) {
+                logger.debug("[Roster] Regex group extraction failed (malformed item dropped): {}", e.getMessage());
+                continue;
+            }
 
             // Try to get game_name for more accurate display name
-            String itemXml = matcher.group(0);
             String displayName = extractBestDisplayName(itemXml, name);
 
             if (puuid != null && !puuid.isEmpty() && displayName != null && !displayName.isEmpty()) {
@@ -154,11 +163,20 @@ public class Roster {
         // Try alternative pattern: name before jid
         matcher = ROSTER_ITEM_PATTERN_ALT.matcher(xml);
         while (matcher.find()) {
-            String name = matcher.group(1);
-            String puuid = matcher.group(2);
+            // PHASE 1 SECURITY: Defensive null checks before accessing groups
+            String name = null;
+            String puuid = null;
+            String itemXml = null;
+            try {
+                name = matcher.group(1);
+                puuid = matcher.group(2);
+                itemXml = matcher.group(0);
+            } catch (Exception e) {
+                logger.debug("[Roster] Alt regex group extraction failed (malformed item dropped): {}", e.getMessage());
+                continue;
+            }
 
             // Try to get game_name for more accurate display name
-            String itemXml = matcher.group(0);
             String displayName = extractBestDisplayName(itemXml, name);
 
             if (puuid != null && !puuid.isEmpty() && displayName != null && !displayName.isEmpty()) {
@@ -203,45 +221,59 @@ public class Roster {
     /**
      * Fallback parser for roster items using individual attribute extraction.
      * Used when primary regex patterns fail due to unexpected attribute ordering.
+     *
+     * PHASE 1 SECURITY: Entire method wrapped in defensive try/catch.
+     * Malformed items are silently dropped (logged at DEBUG).
      */
     private int parseRosterItemsFallback(String xml) {
         int count = 0;
 
-        // Simple pattern to find <item ...> or <item ... /> tags
-        Pattern itemPattern = Pattern.compile("<item\\s+([^>]*?)/?>");
-        Matcher itemMatcher = itemPattern.matcher(xml);
+        try {
+            // Simple pattern to find <item ...> or <item ... /> tags
+            Pattern itemPattern = Pattern.compile("<item\\s+([^>]*?)/?>");
+            Matcher itemMatcher = itemPattern.matcher(xml);
 
-        while (itemMatcher.find()) {
-            String attrs = itemMatcher.group(1);
+            while (itemMatcher.find()) {
+                try {
+                    String attrs = itemMatcher.group(1);
+                    if (attrs == null) continue;
 
-            // Extract jid (PUUID@domain)
-            Pattern jidPattern = Pattern.compile("jid=['\"]([^'\"@]+)@[^'\"]*['\"]");
-            Matcher jidMatcher = jidPattern.matcher(attrs);
-            String puuid = jidMatcher.find() ? jidMatcher.group(1) : null;
+                    // Extract jid (PUUID@domain)
+                    Pattern jidPattern = Pattern.compile("jid=['\"]([^'\"@]+)@[^'\"]*['\"]");
+                    Matcher jidMatcher = jidPattern.matcher(attrs);
+                    String puuid = jidMatcher.find() ? jidMatcher.group(1) : null;
 
-            if (puuid == null || puuid.isEmpty()) continue;
+                    if (puuid == null || puuid.isEmpty()) continue;
 
-            // Extract game_name first (preferred)
-            String displayName = null;
-            Matcher gameNameMatcher = GAME_NAME_PATTERN.matcher(attrs);
-            if (gameNameMatcher.find()) {
-                displayName = gameNameMatcher.group(1);
-            }
+                    // Extract game_name first (preferred)
+                    String displayName = null;
+                    Matcher gameNameMatcher = GAME_NAME_PATTERN.matcher(attrs);
+                    if (gameNameMatcher.find()) {
+                        displayName = gameNameMatcher.group(1);
+                    }
 
-            // Fallback to name attribute
-            if (displayName == null || displayName.isEmpty()) {
-                Pattern namePattern = Pattern.compile("(?<!game_)name=['\"]([^'\"]+)['\"]");
-                Matcher nameMatcher = namePattern.matcher(attrs);
-                if (nameMatcher.find()) {
-                    displayName = nameMatcher.group(1);
+                    // Fallback to name attribute
+                    if (displayName == null || displayName.isEmpty()) {
+                        Pattern namePattern = Pattern.compile("(?<!game_)name=['\"]([^'\"]+)['\"]");
+                        Matcher nameMatcher = namePattern.matcher(attrs);
+                        if (nameMatcher.find()) {
+                            displayName = nameMatcher.group(1);
+                        }
+                    }
+
+                    if (displayName != null && !displayName.isEmpty() && !puuidToName.containsKey(puuid)) {
+                        puuidToName.put(puuid, displayName);
+                        logger.info("│ [+] NEW (fallback): {} → '{}'", abbreviatePuuid(puuid), displayName);
+                        count++;
+                    }
+                } catch (Exception e) {
+                    // PHASE 1 SECURITY: Malformed item dropped, continue to next
+                    logger.debug("[Roster] Fallback item extraction failed (dropped): {}", e.getMessage());
                 }
             }
-
-            if (displayName != null && !displayName.isEmpty() && !puuidToName.containsKey(puuid)) {
-                puuidToName.put(puuid, displayName);
-                logger.info("│ [+] NEW (fallback): {} → '{}'", abbreviatePuuid(puuid), displayName);
-                count++;
-            }
+        } catch (Exception e) {
+            // PHASE 1 SECURITY: Fail-safe on any parsing error
+            logger.debug("[Roster] Fallback parser failed (dropped): {}", e.getMessage());
         }
 
         return count;
@@ -251,28 +283,40 @@ public class Roster {
      * Extract the best display name from a roster item.
      * Prefers game_name over the standard name attribute.
      *
+     * PHASE 1 SECURITY: Wrapped in defensive try/catch. Returns fallbackName on error.
+     *
      * @param itemXml The <item .../> XML fragment
      * @param fallbackName The name attribute value as fallback
      * @return The best display name to use
      */
     private String extractBestDisplayName(String itemXml, String fallbackName) {
-        // Try to extract game_name (preferred - this is the in-game display name)
-        Matcher gameNameMatcher = GAME_NAME_PATTERN.matcher(itemXml);
-        if (gameNameMatcher.find()) {
-            String gameName = gameNameMatcher.group(1);
-            if (gameName != null && !gameName.isEmpty()) {
-                // Optionally append game_tag if present
-                Matcher gameTagMatcher = GAME_TAG_PATTERN.matcher(itemXml);
-                if (gameTagMatcher.find()) {
-                    String gameTag = gameTagMatcher.group(1);
-                    if (gameTag != null && !gameTag.isEmpty()) {
-                        // Return "Name#TAG" format for full identification
-                        // But for TTS, just the name is cleaner
-                        logger.debug("[Roster] Found game_name='{}' game_tag='{}'", gameName, gameTag);
+        // PHASE 1 SECURITY: Guard against null input
+        if (itemXml == null || itemXml.isEmpty()) {
+            return fallbackName;
+        }
+
+        try {
+            // Try to extract game_name (preferred - this is the in-game display name)
+            Matcher gameNameMatcher = GAME_NAME_PATTERN.matcher(itemXml);
+            if (gameNameMatcher.find()) {
+                String gameName = gameNameMatcher.group(1);
+                if (gameName != null && !gameName.isEmpty()) {
+                    // Optionally append game_tag if present
+                    Matcher gameTagMatcher = GAME_TAG_PATTERN.matcher(itemXml);
+                    if (gameTagMatcher.find()) {
+                        String gameTag = gameTagMatcher.group(1);
+                        if (gameTag != null && !gameTag.isEmpty()) {
+                            // Return "Name#TAG" format for full identification
+                            // But for TTS, just the name is cleaner
+                            logger.debug("[Roster] Found game_name='{}' game_tag='{}'", gameName, gameTag);
+                        }
                     }
+                    return gameName;
                 }
-                return gameName;
             }
+        } catch (Exception e) {
+            // PHASE 1 SECURITY: Fail-safe, return fallback
+            logger.debug("[Roster] extractBestDisplayName failed: {}", e.getMessage());
         }
 
         // Fallback to standard name attribute
