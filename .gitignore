@@ -109,6 +109,10 @@ PowerShell/
 # Exclude the complete mitm folder
 mitm/
 
+# ==================== TTS Engine ====================
+# Exclude the engine folder (valorantNarrator-agentVoices.exe + Python runtime)
+engine/
+
 # ==================== Executable Files ====================
 # Exclude .exe files - users should build from source or download from releases
 *.exe

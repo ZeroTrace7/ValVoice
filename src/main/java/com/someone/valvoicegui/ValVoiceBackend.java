@@ -124,6 +124,43 @@ public class ValVoiceBackend {
     private volatile boolean running = false;
     private volatile boolean started = false;
 
+    // ===== VN TTS ENGINE LIFECYCLE (INJECTED) =====
+    /**
+     * TTS Engine lifecycle states for ValorantNarrator-agentVoices.exe backend.
+     * Used to track engine readiness and enable graceful degradation to SAPI.
+     */
+    public enum EngineState {
+        STOPPED,
+        STARTING,
+        READY,
+        DEGRADED,
+        STOPPING
+    }
+
+    // ===== VN TTS ENGINE LIFECYCLE (INJECTED) =====
+    /** Current TTS engine state. Volatile for cross-thread visibility. */
+    private volatile EngineState engineState = EngineState.STOPPED;
+    /** Guard to prevent double-start of TTS engine process. */
+    private final java.util.concurrent.atomic.AtomicBoolean engineRunning =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    // ─────────────────────────────────────────────
+    // TTS ENGINE PROCESS (VN-Parity)
+    // ─────────────────────────────────────────────
+    /** The external TTS engine process (valorantNarrator-agentVoices.exe). */
+    private Process ttsProcess;
+    /** Thread that consumes TTS engine stdout/stderr to prevent buffer blocking. */
+    private Thread engineLogThread;
+
+    /** Name of the TTS engine executable. */
+    private static final String ENGINE_EXE_NAME = "valorantNarrator-agentVoices.exe";
+    /** Port the TTS engine listens on for HTTP requests. */
+    private static final int ENGINE_PORT = 5005;
+    /** Maximum time to wait for engine to become ready (socket poll). */
+    private static final int STARTUP_TIMEOUT_MS = 15_000;
+    /** Interval between socket poll attempts during startup. */
+    private static final int POLL_INTERVAL_MS = 500;
+
     /**
      * Private constructor - use getInstance() or start()
      */
@@ -272,6 +309,206 @@ public class ValVoiceBackend {
      */
     public long getAppStartTime() {
         return appStartTime;
+    }
+
+    // ===== VN TTS ENGINE LIFECYCLE (INJECTED) =====
+
+    /**
+     * Get the current TTS engine state.
+     * @return Current EngineState (STOPPED, STARTING, READY, DEGRADED, STOPPING)
+     */
+    public EngineState getEngineState() {
+        return engineState;
+    }
+
+    /**
+     * Check if the TTS engine is ready to accept requests.
+     * @return true if engine is in READY state, false otherwise
+     */
+    public boolean isEngineReady() {
+        return engineState == EngineState.READY;
+    }
+
+    /**
+     * Mark the TTS engine as degraded (e.g., after HTTP failure or crash).
+     * Called externally by HTTP client layer to trigger SAPI fallback.
+     * Logs a warning when state transitions to DEGRADED.
+     */
+    public void markDegraded() {
+        if (engineState != EngineState.DEGRADED) {
+            engineState = EngineState.DEGRADED;
+            org.slf4j.LoggerFactory.getLogger(ValVoiceBackend.class)
+                    .warn("TTS Engine marked as DEGRADED. Falling back to SAPI.");
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // TTS ENGINE LIFECYCLE METHODS (VN-Parity)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Start the TTS engine (valorantNarrator-agentVoices.exe).
+     * VN-Parity: Hidden console, 15s socket polling, log gobbler.
+     *
+     * @return true if engine started and is ready, false if startup failed/timed out
+     */
+    public synchronized boolean startEngine() {
+        // Guard: Already running
+        if (engineRunning.get()) {
+            logger.debug("[TTS Engine] Already running, skipping start");
+            return true;
+        }
+
+        // Guard: Already starting (prevent double-start race)
+        if (engineState == EngineState.STARTING) {
+            logger.warn("[TTS Engine] Already in STARTING state, ignoring duplicate startEngine() call");
+            return false;
+        }
+
+        engineState = EngineState.STARTING;
+        logger.info("[TTS Engine] Starting {} ...", ENGINE_EXE_NAME);
+
+        // Step 1: Kill any stale process (VN-parity: clean slate)
+        try {
+            logger.debug("[TTS Engine] Killing stale {} processes...", ENGINE_EXE_NAME);
+            ProcessBuilder killPb = new ProcessBuilder("taskkill", "/F", "/IM", ENGINE_EXE_NAME);
+            killPb.redirectErrorStream(true);
+            Process killProc = killPb.start();
+            // Consume output to prevent blocking
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(killProc.getInputStream()))) {
+                while (reader.readLine() != null) { /* discard */ }
+            }
+            killProc.waitFor(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            logger.debug("[TTS Engine] taskkill completed (may not have been running): {}", e.getMessage());
+        }
+
+        // Step 2: Brief pause after kill (VN-parity)
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            engineState = EngineState.STOPPED;
+            return false;
+        }
+
+        // Step 3: Resolve engine path (working directory: ./engine/)
+        Path workingDir = Paths.get(System.getProperty("user.dir")).resolve("engine");
+        Path exePath = workingDir.resolve(ENGINE_EXE_NAME);
+
+        if (!Files.isRegularFile(exePath) || !Files.isReadable(exePath)) {
+            logger.error("[TTS Engine] FATAL: {} not found at: {}", ENGINE_EXE_NAME, exePath.toAbsolutePath());
+            engineState = EngineState.DEGRADED;
+            return false;
+        }
+
+        // Step 4: Launch process (hidden console, no inheritIO)
+        try {
+            ProcessBuilder pb = new ProcessBuilder(exePath.toAbsolutePath().toString());
+            pb.directory(workingDir.toFile());
+            pb.redirectErrorStream(true);
+            // DO NOT use inheritIO() - we capture stdout ourselves
+
+            ttsProcess = pb.start();
+            logger.info("[TTS Engine] Process launched, PID={}", ttsProcess.pid());
+
+            // Step 5: Start log gobbler thread (prevents stdout buffer blocking)
+            engineLogThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(ttsProcess.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        logger.debug("[TTS] {}", line);
+                    }
+                } catch (IOException e) {
+                    if (engineRunning.get()) {
+                        logger.warn("[TTS Engine] Log reader terminated: {}", e.getMessage());
+                    }
+                }
+            }, "tts-log-gobbler");
+            engineLogThread.setDaemon(true);
+            engineLogThread.start();
+
+        } catch (IOException e) {
+            logger.error("[TTS Engine] Failed to launch process: {}", e.getMessage());
+            engineState = EngineState.DEGRADED;
+            return false;
+        }
+
+        // Step 6: Socket polling loop (VN-parity: 15s timeout, 500ms interval)
+        long startTime = System.currentTimeMillis();
+        long deadline = startTime + STARTUP_TIMEOUT_MS;
+
+        logger.info("[TTS Engine] Polling port {} for readiness (max {}ms)...", ENGINE_PORT, STARTUP_TIMEOUT_MS);
+
+        while (System.currentTimeMillis() < deadline) {
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress("127.0.0.1", ENGINE_PORT), 200);
+                // Connection succeeded - engine is ready
+                long elapsed = System.currentTimeMillis() - startTime;
+                logger.info("[TTS Engine] READY after {}ms", elapsed);
+                engineState = EngineState.READY;
+                engineRunning.set(true);
+                return true;
+            } catch (IOException e) {
+                // Not ready yet, wait and retry
+                try {
+                    Thread.sleep(POLL_INTERVAL_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    engineState = EngineState.DEGRADED;
+                    return false;
+                }
+            }
+        }
+
+        // Timeout reached - engine failed to start
+        long elapsed = System.currentTimeMillis() - startTime;
+        logger.error("[TTS Engine] TIMEOUT after {}ms - port {} never responded", elapsed, ENGINE_PORT);
+        engineState = EngineState.DEGRADED;
+        return false;
+    }
+
+    /**
+     * Stop the TTS engine process.
+     * VN-Parity: Escalation kill (destroy → wait 500ms → destroyForcibly).
+     */
+    public synchronized void stopEngine() {
+        // Guard: Not running
+        if (!engineRunning.get()) {
+            logger.debug("[TTS Engine] Not running, skipping stop");
+            return;
+        }
+
+        engineState = EngineState.STOPPING;
+        logger.info("[TTS Engine] Stopping...");
+
+        if (ttsProcess != null) {
+            // Step 1: Graceful destroy
+            ttsProcess.destroy();
+            logger.debug("[TTS Engine] destroy() called, waiting 500ms for graceful exit...");
+
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // Step 2: Escalation kill if still alive
+            if (ttsProcess.isAlive()) {
+                logger.warn("[TTS Engine] Still alive after 500ms, using destroyForcibly()");
+                ttsProcess.destroyForcibly();
+            }
+
+            ttsProcess = null;
+        }
+
+        // Cleanup log thread (will terminate naturally when process dies)
+        engineLogThread = null;
+
+        engineRunning.set(false);
+        engineState = EngineState.STOPPED;
+        logger.info("[TTS Engine] Stopped");
     }
 
     // ========== MITM Process Management ==========
