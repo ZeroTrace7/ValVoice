@@ -150,6 +150,33 @@ public class InbuiltVoiceSynthesizer {
     /** Lazy-initialized HttpClient for TTS API requests */
     private volatile HttpClient ttsHttpClient;
 
+    // ─────────────────────────────────────────────
+    // ENGINE RECOVERY PROBE (Phase 6 Step 3)
+    // ─────────────────────────────────────────────
+
+    /** Minimum interval between engine recovery probes (ms) */
+    private static final long PROBE_COOLDOWN_MS = 10_000; // 10 seconds
+
+    /** Timestamp of last recovery probe attempt */
+    private long lastProbeTime = 0;
+
+    /**
+     * Probe the XTTS backend to check if it has come back online.
+     * Used for opportunistic recovery from DEGRADED state.
+     *
+     * Phase 6 Step 3: Non-blocking socket probe with 500ms timeout.
+     *
+     * @return true if backend is responding on port 5005, false otherwise
+     */
+    private boolean probeEngine() {
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress("127.0.0.1", 5005), 500);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * Exception thrown when a required dependency is missing.
      */
@@ -865,6 +892,7 @@ public class InbuiltVoiceSynthesizer {
      * VN-Parity: No retries, no reconnect, permanent degrade on ConnectException.
      * Phase 5: Integrated MediaPlayer playback - blocks until audio finishes.
      * Phase 6: Routes to SAPI fallback when engine is DEGRADED.
+     * Phase 6 Step 3: Opportunistic recovery with probe cooldown.
      */
     private void processQueue() {
         while (true) {
@@ -876,6 +904,26 @@ public class InbuiltVoiceSynthesizer {
                     // Phase 6: Route to appropriate engine based on current state
                     ValVoiceBackend.EngineState state = ValVoiceBackend.getInstance().getEngineState();
                     Path audioFile = null;
+
+                    // ═══════════════════════════════════════════════════════
+                    // PHASE 6 STEP 3: Opportunistic Recovery (Cooldown Protected)
+                    // Probe backend at most once every 10 seconds to avoid latency
+                    // ═══════════════════════════════════════════════════════
+                    if (state == ValVoiceBackend.EngineState.DEGRADED) {
+                        long now = System.currentTimeMillis();
+
+                        if (now - lastProbeTime > PROBE_COOLDOWN_MS) {
+                            lastProbeTime = now;
+
+                            if (probeEngine()) {
+                                logger.info("[Recovery] XTTS backend detected on port 5005 — restoring READY state");
+                                ValVoiceBackend.getInstance().setEngineReady();
+                                state = ValVoiceBackend.EngineState.READY;
+                            } else {
+                                logger.debug("[Recovery] Probe failed, backend still offline. Remaining in DEGRADED state.");
+                            }
+                        }
+                    }
 
                     if (state == ValVoiceBackend.EngineState.READY) {
                         // Primary path: XTTS backend
@@ -897,12 +945,16 @@ public class InbuiltVoiceSynthesizer {
                         continue;
                     }
 
-                    // Play audio if generation succeeded
-                    if (audioFile != null) {
-                        playAudio(audioFile);
-                    } else {
-                        logger.warn("[TTS Queue] Audio generation returned null, skipping playback");
+                    // ═══════════════════════════════════════════════════════
+                    // PHASE 6 STEP 2: Queue Stability - Never freeze on null
+                    // ═══════════════════════════════════════════════════════
+                    if (audioFile == null) {
+                        logger.debug("[TTS Queue] Audio generation returned null, skipping playback");
+                        continue;  // Critical: ensure queue always continues
                     }
+
+                    // Play audio - blocks until playback finishes
+                    playAudio(audioFile);
 
                 } catch (ConnectException e) {
                     // STRICT VN PARITY: Permanent degrade for session

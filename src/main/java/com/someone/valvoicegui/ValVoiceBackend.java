@@ -351,6 +351,21 @@ public class ValVoiceBackend {
         }
     }
 
+    /**
+     * Restore the TTS engine to READY state after successful recovery probe.
+     * Phase 6 Step 3: Opportunistic recovery from DEGRADED state.
+     *
+     * Only transitions DEGRADED → READY.
+     * Does not start or stop any processes - only updates state.
+     */
+    public synchronized void setEngineReady() {
+        if (engineState == EngineState.DEGRADED) {
+            engineState = EngineState.READY;
+            org.slf4j.LoggerFactory.getLogger(ValVoiceBackend.class)
+                    .info("[Engine] XTTS backend recovered — switching back to primary engine");
+        }
+    }
+
     // ─────────────────────────────────────────────
     // TTS ENGINE LIFECYCLE METHODS (VN-Parity)
     // ─────────────────────────────────────────────
