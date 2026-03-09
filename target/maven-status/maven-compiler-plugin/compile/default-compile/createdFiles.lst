@@ -5,6 +5,7 @@ com\someone\valvoicegui\ValVoiceController$ToastType.class
 com\someone\valvoicebackend\AudioRouterUtility.class
 com\someone\valvoicebackend\Source.class
 com\someone\valvoicebackend\InbuiltVoiceSynthesizer$TtsRequest.class
+com\someone\valvoicebackend\SapiVoiceEngine.class
 com\someone\valvoicegui\ValVoiceController.class
 com\someone\valvoicegui\ValVoiceBackend$1.class
 com\someone\valvoicebackend\Message.class

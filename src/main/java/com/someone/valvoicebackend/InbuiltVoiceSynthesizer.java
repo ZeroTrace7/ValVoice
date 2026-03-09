@@ -864,6 +864,7 @@ public class InbuiltVoiceSynthesizer {
      * Background consumer thread that processes TTS requests sequentially.
      * VN-Parity: No retries, no reconnect, permanent degrade on ConnectException.
      * Phase 5: Integrated MediaPlayer playback - blocks until audio finishes.
+     * Phase 6: Routes to SAPI fallback when engine is DEGRADED.
      */
     private void processQueue() {
         while (true) {
@@ -872,19 +873,42 @@ public class InbuiltVoiceSynthesizer {
                 TtsRequest req = ttsQueue.take();
 
                 try {
-                    // Generate or retrieve cached MP3
-                    Path mp3File = requestTts(req.agent, req.text);
-                    logger.debug("[TTS Queue] Processed: agent={} text='{}'",
-                            req.agent, req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
+                    // Phase 6: Route to appropriate engine based on current state
+                    ValVoiceBackend.EngineState state = ValVoiceBackend.getInstance().getEngineState();
+                    Path audioFile = null;
 
-                    // Play audio - blocks until playback finishes (sequential VN parity)
-                    playAudio(mp3File);
+                    if (state == ValVoiceBackend.EngineState.READY) {
+                        // Primary path: XTTS backend
+                        audioFile = requestTts(req.agent, req.text);
+                        logger.debug("[TTS Queue] XTTS processed: agent={} text='{}'",
+                                req.agent, req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
+
+                    } else if (state == ValVoiceBackend.EngineState.DEGRADED) {
+                        // Fallback path: Windows SAPI
+                        Path cacheDir = java.nio.file.Paths.get(
+                                System.getenv("LOCALAPPDATA"), "ValVoice", "cache");
+                        audioFile = SapiVoiceEngine.generateFallbackAudio(req.text, cacheDir);
+                        logger.debug("[TTS Queue] SAPI fallback processed: text='{}'",
+                                req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
+
+                    } else {
+                        // Engine in transition state - skip this request
+                        logger.debug("[TTS Queue] Engine not ready (state={}), skipping request", state);
+                        continue;
+                    }
+
+                    // Play audio if generation succeeded
+                    if (audioFile != null) {
+                        playAudio(audioFile);
+                    } else {
+                        logger.warn("[TTS Queue] Audio generation returned null, skipping playback");
+                    }
 
                 } catch (ConnectException e) {
                     // STRICT VN PARITY: Permanent degrade for session
                     logger.error("[TTS Queue] ConnectException - marking engine as DEGRADED");
                     ValVoiceBackend.getInstance().markDegraded();
-                    // Do NOT rethrow - continue consuming queue (requests will be dropped via enqueueTts)
+                    // Do NOT rethrow - continue consuming queue (will use SAPI fallback next iteration)
                 } catch (IllegalStateException e) {
                     // Engine not ready - expected during state transitions
                     logger.debug("[TTS Queue] Engine not ready: {}", e.getMessage());
@@ -1104,9 +1128,12 @@ public class InbuiltVoiceSynthesizer {
     /**
      * Enqueue a TTS request for sequential processing.
      * VN-Parity: Graceful routing based on engine state.
-     * - READY: Queue for processing
-     * - DEGRADED: Skip queue, log for SAPI fallback
+     * - READY: Queue for XTTS processing
+     * - DEGRADED: Queue for SAPI fallback processing
      * - STOPPED/STARTING: Drop silently
+     *
+     * Phase 6: Both READY and DEGRADED states now enter the queue.
+     * The consumer thread decides which engine to use based on current state.
      *
      * @param agent The agent voice to use
      * @param text The text to synthesize
@@ -1115,22 +1142,18 @@ public class InbuiltVoiceSynthesizer {
         ValVoiceBackend.EngineState state = ValVoiceBackend.getInstance().getEngineState();
 
         switch (state) {
-            case READY -> {
-                // Attempt to queue - use offer() which returns false if full
+            case READY, DEGRADED -> {
+                // Phase 6: Both READY and DEGRADED enter the queue
+                // Consumer thread will route to XTTS or SAPI based on state at processing time
                 boolean queued = ttsQueue.offer(new TtsRequest(agent, text));
                 if (!queued) {
                     logger.debug("[TTS Queue] Queue full, dropping newest request: '{}'",
                             text.length() > 30 ? text.substring(0, 27) + "..." : text);
                 } else {
-                    logger.debug("[TTS Queue] Enqueued: agent={} text='{}'",
-                            agent, text.length() > 20 ? text.substring(0, 17) + "..." : text);
+                    String engine = (state == ValVoiceBackend.EngineState.DEGRADED) ? "SAPI" : "XTTS";
+                    logger.debug("[TTS Queue] Enqueued for {}: agent={} text='{}'",
+                            engine, agent, text.length() > 20 ? text.substring(0, 17) + "..." : text);
                 }
-            }
-            case DEGRADED -> {
-                // Engine degraded - bypass queue for SAPI fallback
-                logger.debug("[TTS Queue] Engine degraded, bypassing queue for SAPI fallback: '{}'",
-                        text.length() > 30 ? text.substring(0, 27) + "..." : text);
-                // TODO Phase 6: Route to Windows SAPI fallback here
             }
             case STOPPED, STARTING, STOPPING -> {
                 // Engine not ready - drop silently

@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
  * SapiVoiceEngine - Windows SAPI Fallback for TTS Generation
  *
  * Phase 6 Step 1: VN-Parity Fallback Engine
+ * Phase 6 Step 2: Hardened Pipeline Protection
  *
  * This class generates WAV audio files using Windows Speech API (SAPI)
  * when the primary XTTS backend is unavailable (DEGRADED state).
@@ -24,6 +25,8 @@ import java.util.concurrent.TimeUnit;
  * - Generate WAV files via PowerShell + System.Speech
  * - Cache generated files using MD5 hash
  * - Sanitize text for PowerShell execution
+ * - Rate limit PowerShell spawning to prevent storms
+ * - Truncate long text to prevent blocking
  *
  * This class does NOT handle:
  * - Audio playback (delegated to playAudio())
@@ -46,6 +49,20 @@ public final class SapiVoiceEngine {
     /** Maximum time to wait for PowerShell generation (seconds) */
     private static final int GENERATION_TIMEOUT_SECONDS = 10;
 
+    /** Maximum text length for SAPI generation (Phase 6 Step 2) */
+    private static final int MAX_TEXT_LENGTH = 300;
+
+    // ─────────────────────────────────────────────
+    // RATE LIMITER (Phase 6 Step 2)
+    // Prevents PowerShell spawning storms during spam events
+    // ─────────────────────────────────────────────
+
+    /** Minimum interval between PowerShell executions (ms) */
+    private static final long MIN_GENERATION_INTERVAL_MS = 250;
+
+    /** Timestamp of last PowerShell generation */
+    private static volatile long lastGenerationTime = 0;
+
     /** Prevent instantiation - utility class */
     private SapiVoiceEngine() {
         throw new UnsupportedOperationException("Utility class - do not instantiate");
@@ -54,20 +71,22 @@ public final class SapiVoiceEngine {
     /**
      * Generate fallback audio using Windows SAPI.
      *
-     * This method:
-     * 1. Sanitizes the input text
-     * 2. Computes MD5 hash for cache filename
-     * 3. Checks if cached WAV exists (returns immediately if so)
-     * 4. Generates WAV via PowerShell if not cached
-     * 5. Returns path to WAV file (or null on failure)
+     * Phase 6 Step 2: Hardened pipeline with:
+     * - Text validation and truncation (max 300 chars)
+     * - Cache fast-path (no rate limit for cached files)
+     * - Rate limiting for PowerShell spawning (250ms minimum interval)
+     * - File existence verification after generation
      *
      * @param text The text to synthesize
      * @param cacheDir The cache directory (typically %LOCALAPPDATA%\ValVoice\cache)
      * @return Path to the generated WAV file, or null if generation failed
      */
     public static Path generateFallbackAudio(String text, Path cacheDir) {
+        // ═══════════════════════════════════════════════════════
+        // PHASE 6 STEP 2: Text Validation
+        // ═══════════════════════════════════════════════════════
         if (text == null || text.isBlank()) {
-            logger.warn("[Fallback] Empty text provided, skipping SAPI generation");
+            logger.debug("[Fallback] Empty text provided, skipping SAPI generation");
             return null;
         }
 
@@ -76,37 +95,67 @@ public final class SapiVoiceEngine {
             return null;
         }
 
+        // Phase 6 Step 2: Truncate long text BEFORE hashing
+        String processedText = text;
+        if (processedText.length() > MAX_TEXT_LENGTH) {
+            processedText = processedText.substring(0, MAX_TEXT_LENGTH);
+            logger.debug("[Fallback] Text truncated to {} characters", MAX_TEXT_LENGTH);
+        }
+
         try {
             // Ensure cache directory exists
             Files.createDirectories(cacheDir);
 
-            // Step 1: Sanitize text for PowerShell
-            String sanitizedText = sanitizeForPowerShell(text);
-
-            // Step 2: Generate deterministic filename using MD5
-            String hash = computeMd5Hash(text);
+            // Step 1: Generate deterministic filename using MD5 (of truncated text)
+            String hash = computeMd5Hash(processedText);
             String filename = SAPI_FILE_PREFIX + hash + WAV_EXTENSION;
             Path wavFile = cacheDir.resolve(filename);
 
-            // Step 3: Check cache first
+            // ═══════════════════════════════════════════════════════
+            // PHASE 6 STEP 2: Cache Check (BEFORE rate limiter)
+            // Cached files play instantly without restriction
+            // ═══════════════════════════════════════════════════════
             if (Files.exists(wavFile)) {
                 logger.debug("[Fallback] Cache HIT: {}", wavFile.getFileName());
                 return wavFile;
             }
 
-            logger.info("[Fallback] XTTS engine degraded — generating SAPI voice");
-
-            // Step 4: Generate WAV using PowerShell
-            boolean success = generateWavWithPowerShell(sanitizedText, wavFile);
-
-            // Step 5: Return result
-            if (success && Files.exists(wavFile)) {
-                logger.debug("[Fallback] Generated SAPI audio: {}", wavFile.getFileName());
-                return wavFile;
-            } else {
-                logger.error("[Fallback] Failed to generate SAPI audio");
+            // ═══════════════════════════════════════════════════════
+            // PHASE 6 STEP 2: Rate Limiter (AFTER cache miss)
+            // Prevents PowerShell spawning storms during spam
+            // ═══════════════════════════════════════════════════════
+            long now = System.currentTimeMillis();
+            if (now - lastGenerationTime < MIN_GENERATION_INTERVAL_MS) {
+                logger.debug("[Fallback] Rate limited PowerShell spawning ({}ms since last)",
+                        now - lastGenerationTime);
                 return null;
             }
+            lastGenerationTime = now;
+
+            // Log fallback activation with warning level for visibility
+            logger.warn("[Fallback] XTTS engine degraded — using Windows SAPI fallback");
+
+            // Step 2: Sanitize text for PowerShell
+            String sanitizedText = sanitizeForPowerShell(processedText);
+
+            // Step 3: Generate WAV using PowerShell
+            boolean success = generateWavWithPowerShell(sanitizedText, wavFile);
+
+            // ═══════════════════════════════════════════════════════
+            // PHASE 6 STEP 2: Verify file exists after generation
+            // ═══════════════════════════════════════════════════════
+            if (!success) {
+                logger.warn("[Fallback] SAPI generation failed");
+                return null;
+            }
+
+            if (!Files.exists(wavFile)) {
+                logger.warn("[Fallback] SAPI generation failed, WAV not created");
+                return null;
+            }
+
+            logger.debug("[Fallback] Generated SAPI audio: {}", wavFile.getFileName());
+            return wavFile;
 
         } catch (Exception e) {
             logger.error("[Fallback] Error during SAPI generation: {}", e.getMessage());
@@ -117,9 +166,10 @@ public final class SapiVoiceEngine {
     /**
      * Sanitize text for safe PowerShell string injection.
      *
-     * Escapes characters that could break PowerShell single-quoted strings.
+     * Phase 6 Step 2: Enhanced sanitization for PowerShell single-quoted strings.
+     * Escapes characters that could break or exploit PowerShell commands.
      *
-     * @param text The raw input text
+     * @param text The raw input text (already truncated to MAX_TEXT_LENGTH)
      * @return Sanitized text safe for PowerShell
      */
     private static String sanitizeForPowerShell(String text) {
@@ -128,17 +178,14 @@ public final class SapiVoiceEngine {
         }
 
         // Escape single quotes (PowerShell uses '' to escape ' in single-quoted strings)
+        // Example: "Don't peek" becomes "Don''t peek"
         String sanitized = text.replace("'", "''");
 
-        // Remove or escape other potentially dangerous characters
-        sanitized = sanitized.replace("`", "``");  // Backtick escape
-        sanitized = sanitized.replace("$", "`$");  // Dollar sign (variable expansion)
+        // Escape backtick (PowerShell escape character)
+        sanitized = sanitized.replace("`", "``");
 
-        // Limit length to prevent extremely long speech
-        if (sanitized.length() > 500) {
-            sanitized = sanitized.substring(0, 500);
-            logger.debug("[Fallback] Text truncated to 500 characters");
-        }
+        // Escape dollar sign (prevents variable expansion)
+        sanitized = sanitized.replace("$", "`$");
 
         return sanitized;
     }
