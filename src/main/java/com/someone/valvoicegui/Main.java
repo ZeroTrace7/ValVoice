@@ -1,5 +1,6 @@
 package com.someone.valvoicegui;
 
+import com.someone.valvoicebackend.AudioRouterUtility;
 import com.someone.valvoicebackend.Chat;
 import com.someone.valvoicebackend.Source;
 import javafx.application.Application;
@@ -351,6 +352,10 @@ public class Main {
 
         // 3. Acquire single-instance lock
         lockInstance();
+
+        // Phase 5 Step 3: Route Java audio to VB-Cable for Valorant voice injection
+        // Must run BEFORE any TTS playback occurs
+        AudioRouterUtility.routeAudioToVirtualCable();
 
         // 4. Launch JavaFX (backend started by ValVoiceController.initialize())
         logger.info("Launching JavaFX Application");

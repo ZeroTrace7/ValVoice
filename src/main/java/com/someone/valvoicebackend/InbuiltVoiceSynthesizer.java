@@ -23,7 +23,14 @@ import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
+
+import com.sun.jna.Library;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
+import com.sun.jna.Structure;
+import com.sun.jna.Union;
 
 import javafx.application.Platform;
 import javafx.scene.media.Media;
@@ -46,6 +53,52 @@ import javafx.scene.media.MediaPlayer;
  */
 public class InbuiltVoiceSynthesizer {
     private static final Logger logger = LoggerFactory.getLogger(InbuiltVoiceSynthesizer.class);
+
+    // ─────────────────────────────────────────────
+    // JNA USER32 INTERFACE (VN-Parity Phase 5 Step 2)
+    // ─────────────────────────────────────────────
+    /**
+     * Native Windows user32.dll interface for SendInput API.
+     * VN-Parity: Direct native calls, no java.awt.Robot overhead.
+     */
+    private interface User32 extends Library {
+        User32 INSTANCE = Native.load("user32", User32.class);
+
+        int INPUT_KEYBOARD = 1;
+        int KEYEVENTF_KEYUP = 0x0002;
+
+        @Structure.FieldOrder({"type", "input"})
+        class INPUT extends Structure {
+            public int type;
+            public INPUT_UNION input;
+
+            public static class INPUT_UNION extends Union {
+                public KEYBDINPUT ki;
+            }
+        }
+
+        @Structure.FieldOrder({"wVk", "wScan", "dwFlags", "time", "dwExtraInfo"})
+        class KEYBDINPUT extends Structure {
+            public short wVk;
+            public short wScan;
+            public int dwFlags;
+            public int time;
+            public Pointer dwExtraInfo;
+        }
+
+        int SendInput(int nInputs, INPUT[] pInputs, int cbSize);
+    }
+
+    // ─────────────────────────────────────────────
+    // PTT STATE (VN-Parity Phase 5 Step 2)
+    // ─────────────────────────────────────────────
+    /** Default PTT key: 'V' (0x56) */
+    private static final short DEFAULT_PTT_KEY = 0x56;
+    /** Current PTT key state - prevents double press */
+    private final AtomicBoolean isPttPressed = new AtomicBoolean(false);
+    /** Configured PTT key (virtual key code) */
+    private short configuredPttKey = DEFAULT_PTT_KEY;
+
     private Process powershellProcess;
     private PrintWriter powershellWriter;
     private BufferedReader powershellReader;
@@ -849,6 +902,93 @@ public class InbuiltVoiceSynthesizer {
         }
     }
 
+    // ─────────────────────────────────────────────
+    // PTT METHODS (VN-Parity Phase 5 Step 2)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Press PTT key using native Windows SendInput API.
+     * VN-Parity: Direct native call, 50ms pre-open delay, thread-safe guard.
+     */
+    private void pressPtt() {
+        // Guard against double press
+        if (!isPttPressed.compareAndSet(false, true)) {
+            logger.debug("[PTT] Already pressed, skipping");
+            return;
+        }
+
+        try {
+            // Build INPUT structure for key DOWN
+            User32.INPUT input = new User32.INPUT();
+            input.type = User32.INPUT_KEYBOARD;
+            input.input = new User32.INPUT.INPUT_UNION();
+            input.input.ki = new User32.KEYBDINPUT();
+            input.input.ki.wVk = configuredPttKey;
+            input.input.ki.wScan = 0;
+            input.input.ki.dwFlags = 0; // 0 = key down
+            input.input.ki.time = 0;
+            input.input.ki.dwExtraInfo = null;
+            input.input.setType(User32.KEYBDINPUT.class);
+
+            // Send key down event
+            int result = User32.INSTANCE.SendInput(1, new User32.INPUT[]{input}, input.size());
+            if (result == 1) {
+                logger.debug("[PTT] Key DOWN sent (vk=0x{})", Integer.toHexString(configuredPttKey));
+            } else {
+                logger.warn("[PTT] SendInput failed for key DOWN");
+            }
+
+            // VN-Parity: 50ms pre-open mic delay
+            Thread.sleep(50);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.debug("[PTT] Pre-delay interrupted");
+        } catch (Exception e) {
+            logger.error("[PTT] Press error: {}", e.getMessage());
+            // Ensure state is reset on error
+            isPttPressed.set(false);
+        }
+    }
+
+    /**
+     * Release PTT key using native Windows SendInput API.
+     * VN-Parity: Always safe to call, idempotent, never throws.
+     */
+    private void releasePtt() {
+        // Only release if actually pressed
+        if (!isPttPressed.compareAndSet(true, false)) {
+            logger.debug("[PTT] Not pressed, skipping release");
+            return;
+        }
+
+        try {
+            // Build INPUT structure for key UP
+            User32.INPUT input = new User32.INPUT();
+            input.type = User32.INPUT_KEYBOARD;
+            input.input = new User32.INPUT.INPUT_UNION();
+            input.input.ki = new User32.KEYBDINPUT();
+            input.input.ki.wVk = configuredPttKey;
+            input.input.ki.wScan = 0;
+            input.input.ki.dwFlags = User32.KEYEVENTF_KEYUP; // 0x0002 = key up
+            input.input.ki.time = 0;
+            input.input.ki.dwExtraInfo = null;
+            input.input.setType(User32.KEYBDINPUT.class);
+
+            // Send key up event
+            int result = User32.INSTANCE.SendInput(1, new User32.INPUT[]{input}, input.size());
+            if (result == 1) {
+                logger.debug("[PTT] Key UP sent (vk=0x{})", Integer.toHexString(configuredPttKey));
+            } else {
+                logger.warn("[PTT] SendInput failed for key UP");
+            }
+
+        } catch (Exception e) {
+            logger.error("[PTT] Release error: {}", e.getMessage());
+            // Never throw - this is a cleanup operation
+        }
+    }
+
     /**
      * Play MP3 audio file using JavaFX MediaPlayer.
      * Blocks until playback completes (sequential VN parity).
@@ -874,6 +1014,11 @@ public class InbuiltVoiceSynthesizer {
         final boolean[] scheduled = {false};
 
         try {
+            // ═══════════════════════════════════════════════════════
+            // PHASE 5 STEP 2: PTT KEY DOWN BEFORE PLAYBACK
+            // ═══════════════════════════════════════════════════════
+            pressPtt();
+
             Platform.runLater(() -> {
                 scheduled[0] = true;
                 MediaPlayer mediaPlayer = null;
@@ -941,6 +1086,18 @@ public class InbuiltVoiceSynthesizer {
             logger.debug("[TTS Audio] Playback interrupted");
         } catch (Exception e) {
             logger.error("[TTS Audio] Unexpected error: {}", e.getMessage());
+        } finally {
+            // ═══════════════════════════════════════════════════════
+            // PHASE 5 STEP 2: PTT KEY UP AFTER PLAYBACK (FAILSAFE)
+            // VN-Parity: 100ms tail delay, always executes
+            // ═══════════════════════════════════════════════════════
+            try {
+                Thread.sleep(100); // VN strict tail delay
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+
+            releasePtt(); // Always releases, even if playback failed
         }
     }
 
@@ -986,6 +1143,15 @@ public class InbuiltVoiceSynthesizer {
 
     public void shutdown() {
         try {
+            // ═══════════════════════════════════════════════════════
+            // PHASE 5 STEP 2: PTT FAILSAFE ON SHUTDOWN
+            // Ensure PTT key is never left stuck down
+            // ═══════════════════════════════════════════════════════
+            if (isPttPressed.get()) {
+                logger.warn("[PTT] Failsafe: Releasing stuck PTT key during shutdown");
+                releasePtt();
+            }
+
             if (powershellWriter != null) {
                 powershellWriter.println("exit");
                 powershellWriter.close();
