@@ -1,11 +1,33 @@
 package com.someone.valvoicebackend;
 
+import com.someone.valvoicegui.ValVoiceBackend;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.net.ConnectException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.stream.Stream;
+
+import javafx.application.Platform;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
 
 /**
  * Persistent PowerShell-based Windows voice synthesizer using System.Speech.
@@ -30,6 +52,50 @@ public class InbuiltVoiceSynthesizer {
     private final List<String> voices = new ArrayList<>();
     private String soundVolumeViewPath;
     private boolean audioRoutingConfigured = false;
+
+    // ─────────────────────────────────────────────
+    // TTS API CLIENT (VN-Parity Phase 4)
+    // ─────────────────────────────────────────────
+    /** TTS engine endpoint URL */
+    private static final String TTS_API_URL = "http://127.0.0.1:5005/speak";
+    /** HTTP connect timeout (VN-parity: fail fast) */
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    /** HTTP request timeout (VN-parity: 15s strict) */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    /** Default language for TTS requests */
+    private static final String DEFAULT_LANGUAGE = "en";
+    /** Temp directory for TTS audio files */
+    private static final String TTS_TEMP_DIR = "ValVoice/tmp";
+
+    // === CACHE LAYER START ===
+    /** Cache directory name under %LOCALAPPDATA% */
+    private static final String CACHE_DIR_NAME = "ValVoice/cache";
+    /** Maximum cache size in bytes (100MB) */
+    private static final long MAX_CACHE_SIZE_BYTES = 100L * 1024 * 1024;
+    // === CACHE LAYER END ===
+
+    // ─────────────────────────────────────────────
+    // TTS QUEUE (VN-Parity Phase 4 Step 3)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Internal request model for the TTS queue.
+     */
+    private static class TtsRequest {
+        final String agent;
+        final String text;
+
+        TtsRequest(String agent, String text) {
+            this.agent = agent;
+            this.text = text;
+        }
+    }
+
+    /** Sequential processing queue. Capacity = 10, drop newest if full. */
+    private final BlockingQueue<TtsRequest> ttsQueue = new LinkedBlockingQueue<>(10);
+
+    /** Lazy-initialized HttpClient for TTS API requests */
+    private volatile HttpClient ttsHttpClient;
 
     /**
      * Exception thrown when a required dependency is missing.
@@ -63,6 +129,14 @@ public class InbuiltVoiceSynthesizer {
         }
 
         routeAudioToVbCable();
+
+        // ─────────────────────────────────────────────
+        // TTS QUEUE CONSUMER (VN-Parity Phase 4 Step 3)
+        // ─────────────────────────────────────────────
+        Thread consumer = new Thread(this::processQueue, "TTS-Consumer");
+        consumer.setDaemon(true);
+        consumer.start();
+        logger.debug("[TTS Queue] Consumer thread started");
     }
 
     public InbuiltVoiceSynthesizer() {
@@ -375,6 +449,539 @@ public class InbuiltVoiceSynthesizer {
         } catch (Exception e) {
             logger.debug("Error waiting for TTS: {}", e.getMessage());
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // TTS API CLIENT METHODS (VN-Parity Phase 4)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Request TTS audio from the ValorantNarrator-agentVoices engine.
+     * VN-Parity: 15s strict timeout, fail-fast on engine not ready, ConnectException → DEGRADED.
+     * Phase 4 Step 2: Integrated cache layer with MD5 hashing.
+     *
+     * @param agent The agent voice to use (e.g., "jett", "sage", "phoenix")
+     * @param text The text to synthesize
+     * @return Path to the generated MP3 file (cached or freshly generated)
+     * @throws IllegalStateException if TTS engine is not in READY state
+     * @throws IOException if HTTP request fails or file write fails
+     * @throws InterruptedException if request is interrupted
+     */
+    public Path requestTts(String agent, String text) throws IOException, InterruptedException {
+        // === CACHE LAYER START ===
+        // Step 1: Check cache first (before engine state check for cached responses)
+        Path cachedFile = getCachedFile(agent, text);
+        if (cachedFile != null) {
+            logger.debug("[TTS Cache] HIT: {}", cachedFile.getFileName());
+            return cachedFile;
+        }
+        // === CACHE LAYER END ===
+
+        // Step 2: Engine state check - fail fast if not ready
+        ValVoiceBackend.EngineState state = ValVoiceBackend.getInstance().getEngineState();
+        if (state != ValVoiceBackend.EngineState.READY) {
+            throw new IllegalStateException("TTS engine not ready (state=" + state + ")");
+        }
+
+        // Step 3: Initialize HttpClient lazily (thread-safe)
+        HttpClient client = getOrCreateHttpClient();
+
+        // Step 4: Build JSON payload safely (no string concatenation injection)
+        String jsonPayload = buildJsonPayload(agent, text, DEFAULT_LANGUAGE);
+
+        // Step 5: Build HTTP request
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(TTS_API_URL))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .header("Accept", "audio/mpeg")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                .build();
+
+        logger.debug("[TTS API] POST /speak agent={} text='{}'",
+                agent, text.length() > 30 ? text.substring(0, 27) + "..." : text);
+
+        // Step 6: Execute request with ConnectException handling
+        HttpResponse<byte[]> response;
+        try {
+            response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (ConnectException e) {
+            // VN-Parity: ConnectException = engine crashed/unreachable → permanent DEGRADED
+            logger.error("[TTS API] ConnectException - marking engine as DEGRADED");
+            ValVoiceBackend.getInstance().markDegraded();
+            throw e; // Rethrow after marking degraded
+        }
+
+        // Step 7: Validate response status
+        int statusCode = response.statusCode();
+        if (statusCode != 200) {
+            throw new IOException("TTS request failed with status: " + statusCode);
+        }
+
+        byte[] mp3Bytes = response.body();
+        logger.debug("[TTS API] Received {} bytes", mp3Bytes.length);
+
+        // === CACHE LAYER START ===
+        // Step 8: Write to cache with atomic pattern
+        Path finalFile = writeToCacheFile(agent, text, mp3Bytes);
+
+        // Step 9: Evict old cache files if needed
+        evictCacheIfNeeded();
+
+        return finalFile;
+        // === CACHE LAYER END ===
+    }
+
+    /**
+     * Get or create the HttpClient instance (lazy, thread-safe).
+     * VN-Parity: HTTP/1.1, 5s connect timeout, no redirects.
+     */
+    private HttpClient getOrCreateHttpClient() {
+        if (ttsHttpClient == null) {
+            synchronized (this) {
+                if (ttsHttpClient == null) {
+                    ttsHttpClient = HttpClient.newBuilder()
+                            .version(HttpClient.Version.HTTP_1_1)
+                            .connectTimeout(CONNECT_TIMEOUT)
+                            .followRedirects(HttpClient.Redirect.NEVER)
+                            .build();
+                    logger.debug("[TTS API] HttpClient initialized (HTTP/1.1, 5s connect, 15s request timeout)");
+                }
+            }
+        }
+        return ttsHttpClient;
+    }
+
+    /**
+     * Build JSON payload safely without string concatenation injection risk.
+     * Uses simple escaping for JSON string values.
+     */
+    private String buildJsonPayload(String agent, String text, String language) {
+        // Escape special JSON characters in text
+        String escapedText = text
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+
+        String escapedAgent = agent
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"");
+
+        return String.format(
+                "{\"agent\":\"%s\",\"text\":\"%s\",\"language\":\"%s\"}",
+                escapedAgent, escapedText, language
+        );
+    }
+
+    // === CACHE LAYER START ===
+
+    /**
+     * Compute MD5 hash of agent + text for cache key.
+     * Thread-safe, deterministic.
+     *
+     * @param agent The agent name
+     * @param text The text to synthesize
+     * @return Lowercase hex string of MD5 hash
+     */
+    private String computeHash(String agent, String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            String input = agent + "|" + text;
+            byte[] hashBytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
+
+            // Convert to lowercase hex string
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // MD5 is guaranteed to be available in all JVMs
+            throw new RuntimeException("MD5 algorithm not available", e);
+        }
+    }
+
+    /**
+     * Get the cache directory path, creating it if needed.
+     *
+     * @return Path to %LOCALAPPDATA%\ValVoice\cache\
+     * @throws IOException if directory cannot be created
+     */
+    private Path getCacheDirectory() throws IOException {
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData == null || localAppData.isEmpty()) {
+            throw new IOException("LOCALAPPDATA environment variable not set");
+        }
+
+        Path cacheDir = Path.of(localAppData, CACHE_DIR_NAME);
+        Files.createDirectories(cacheDir);
+        return cacheDir;
+    }
+
+    /**
+     * Get cached file if it exists.
+     *
+     * @param agent The agent name
+     * @param text The text to synthesize
+     * @return Path to cached .mp3 file, or null if not cached
+     */
+    private Path getCachedFile(String agent, String text) {
+        try {
+            String hash = computeHash(agent, text);
+            Path cacheDir = getCacheDirectory();
+            Path cachedFile = cacheDir.resolve(hash + ".mp3");
+
+            if (Files.exists(cachedFile) && Files.isRegularFile(cachedFile)) {
+                return cachedFile;
+            }
+        } catch (IOException e) {
+            logger.debug("[TTS Cache] Error checking cache: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Write MP3 bytes to cache file using atomic pattern.
+     *
+     * @param agent The agent name
+     * @param text The text to synthesize
+     * @param mp3Bytes The MP3 audio data
+     * @return Path to the final cached .mp3 file
+     * @throws IOException if file operations fail
+     */
+    private Path writeToCacheFile(String agent, String text, byte[] mp3Bytes) throws IOException {
+        String hash = computeHash(agent, text);
+        Path cacheDir = getCacheDirectory();
+
+        // Create temp file in cache directory
+        Path tempFile = cacheDir.resolve(hash + ".tmp");
+        Path finalFile = cacheDir.resolve(hash + ".mp3");
+
+        try {
+            // Write bytes to temp file
+            Files.write(tempFile, mp3Bytes);
+
+            // Atomic rename to .mp3
+            try {
+                Files.move(tempFile, finalFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (UnsupportedOperationException e) {
+                // Fallback to regular move if atomic not supported
+                Files.move(tempFile, finalFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            logger.debug("[TTS Cache] WRITE: {} ({} bytes)", finalFile.getFileName(), mp3Bytes.length);
+            return finalFile;
+
+        } catch (IOException e) {
+            // Cleanup temp file on failure
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Evict oldest cache files if total size exceeds 100MB.
+     * Deletes by lastModified (oldest first).
+     * Fails silently if deletion fails (file may be in use).
+     */
+    private void evictCacheIfNeeded() {
+        try {
+            Path cacheDir = getCacheDirectory();
+
+            // List all .mp3 files (ignore .tmp)
+            List<Path> mp3Files;
+            try (Stream<Path> stream = Files.list(cacheDir)) {
+                mp3Files = stream
+                        .filter(p -> p.toString().endsWith(".mp3"))
+                        .filter(Files::isRegularFile)
+                        .toList();
+            }
+
+            // Calculate total size
+            long totalSize = 0;
+            for (Path file : mp3Files) {
+                try {
+                    totalSize += Files.size(file);
+                } catch (IOException ignored) {
+                }
+            }
+
+            // If under limit, nothing to do
+            if (totalSize <= MAX_CACHE_SIZE_BYTES) {
+                return;
+            }
+
+            logger.debug("[TTS Cache] Evicting: total size {}MB exceeds 100MB limit",
+                    totalSize / (1024 * 1024));
+
+            // Sort by lastModified ascending (oldest first)
+            List<Path> sortedFiles = new ArrayList<>(mp3Files);
+            sortedFiles.sort(Comparator.comparingLong(p -> {
+                try {
+                    return Files.getLastModifiedTime(p).toMillis();
+                } catch (IOException e) {
+                    return 0L;
+                }
+            }));
+
+            // Delete oldest until under limit
+            for (Path file : sortedFiles) {
+                if (totalSize <= MAX_CACHE_SIZE_BYTES) {
+                    break;
+                }
+
+                try {
+                    long fileSize = Files.size(file);
+                    Files.delete(file);
+                    totalSize -= fileSize;
+                    logger.debug("[TTS Cache] Evicted: {} ({} bytes)", file.getFileName(), fileSize);
+                } catch (IOException e) {
+                    // File may be locked by MediaPlayer - skip silently
+                    logger.debug("[TTS Cache] Could not delete {} (may be in use)", file.getFileName());
+                }
+            }
+
+        } catch (IOException e) {
+            // Eviction is best-effort - log and continue
+            logger.debug("[TTS Cache] Eviction error: {}", e.getMessage());
+        }
+    }
+
+    // === CACHE LAYER END ===
+
+    /**
+     * Write MP3 bytes to temp file using atomic move pattern.
+     * VN-Parity: Prevents partial MP3 corruption on crash/interrupt.
+     *
+     * @param mp3Bytes The MP3 audio data
+     * @return Path to the final .mp3 file
+     * @throws IOException if file operations fail
+     */
+    private Path writeToTempFile(byte[] mp3Bytes) throws IOException {
+        // Create temp directory if needed: %TEMP%/ValVoice/tmp/
+        Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), TTS_TEMP_DIR);
+        Files.createDirectories(tempDir);
+
+        // Create temp file with .tmp extension
+        Path tempFile = Files.createTempFile(tempDir, "tts_", ".tmp");
+
+        try {
+            // Write bytes to temp file
+            Files.write(tempFile, mp3Bytes);
+
+            // Atomic rename to .mp3 (prevents partial file if crash during write)
+            Path mp3File = tempFile.resolveSibling(
+                    tempFile.getFileName().toString().replace(".tmp", ".mp3"));
+
+            try {
+                // Try atomic move first (preferred)
+                Files.move(tempFile, mp3File, StandardCopyOption.ATOMIC_MOVE);
+            } catch (UnsupportedOperationException e) {
+                // Fallback to regular move if atomic not supported
+                Files.move(tempFile, mp3File, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            logger.debug("[TTS API] Wrote {} bytes to {}", mp3Bytes.length, mp3File.getFileName());
+            return mp3File;
+
+        } catch (IOException e) {
+            // Cleanup temp file on failure
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // TTS QUEUE METHODS (VN-Parity Phase 4 Step 3)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Background consumer thread that processes TTS requests sequentially.
+     * VN-Parity: No retries, no reconnect, permanent degrade on ConnectException.
+     * Phase 5: Integrated MediaPlayer playback - blocks until audio finishes.
+     */
+    private void processQueue() {
+        while (true) {
+            try {
+                // Blocking take - waits for next request
+                TtsRequest req = ttsQueue.take();
+
+                try {
+                    // Generate or retrieve cached MP3
+                    Path mp3File = requestTts(req.agent, req.text);
+                    logger.debug("[TTS Queue] Processed: agent={} text='{}'",
+                            req.agent, req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
+
+                    // Play audio - blocks until playback finishes (sequential VN parity)
+                    playAudio(mp3File);
+
+                } catch (ConnectException e) {
+                    // STRICT VN PARITY: Permanent degrade for session
+                    logger.error("[TTS Queue] ConnectException - marking engine as DEGRADED");
+                    ValVoiceBackend.getInstance().markDegraded();
+                    // Do NOT rethrow - continue consuming queue (requests will be dropped via enqueueTts)
+                } catch (IllegalStateException e) {
+                    // Engine not ready - expected during state transitions
+                    logger.debug("[TTS Queue] Engine not ready: {}", e.getMessage());
+                } catch (Exception e) {
+                    // Log and continue - never crash the consumer
+                    logger.warn("[TTS Queue] Processing error: {}", e.getMessage());
+                }
+
+            } catch (InterruptedException e) {
+                // Graceful shutdown
+                Thread.currentThread().interrupt();
+                logger.debug("[TTS Queue] Consumer thread interrupted, exiting");
+                break;
+            }
+        }
+    }
+
+    /**
+     * Play MP3 audio file using JavaFX MediaPlayer.
+     * Blocks until playback completes (sequential VN parity).
+     * Phase 5: Always creates new MediaPlayer, always disposes after playback.
+     *
+     * Hardened for production:
+     * - Handles JavaFX not initialized
+     * - Handles all MediaPlayer terminal states (end, error, stopped, halted)
+     * - Timeout safety (max 60s per clip)
+     * - Guaranteed dispose in all paths
+     *
+     * @param mp3File Path to the MP3 file to play
+     */
+    private void playAudio(Path mp3File) {
+        if (mp3File == null || !Files.exists(mp3File)) {
+            logger.warn("[TTS Audio] MP3 file not found: {}", mp3File);
+            return;
+        }
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        // Flag to track if latch was counted down inside Platform.runLater
+        final boolean[] scheduled = {false};
+
+        try {
+            Platform.runLater(() -> {
+                scheduled[0] = true;
+                MediaPlayer mediaPlayer = null;
+                try {
+                    String mediaUri = mp3File.toUri().toString();
+                    Media media = new Media(mediaUri);
+                    mediaPlayer = new MediaPlayer(media);
+
+                    final MediaPlayer player = mediaPlayer;
+
+                    // Success handler
+                    player.setOnEndOfMedia(() -> {
+                        logger.debug("[TTS Audio] Playback finished: {}", mp3File.getFileName());
+                        player.dispose();
+                        latch.countDown();
+                    });
+
+                    // Error handler
+                    player.setOnError(() -> {
+                        logger.error("[TTS Audio] Playback error: {}",
+                                player.getError() != null ? player.getError().getMessage() : "unknown");
+                        player.dispose();
+                        latch.countDown();
+                    });
+
+                    // Stopped handler (external stop or very short clips)
+                    player.setOnStopped(() -> {
+                        logger.debug("[TTS Audio] Playback stopped: {}", mp3File.getFileName());
+                        player.dispose();
+                        latch.countDown();
+                    });
+
+                    // Halted handler (unrecoverable error state)
+                    player.setOnHalted(() -> {
+                        logger.warn("[TTS Audio] Playback halted: {}", mp3File.getFileName());
+                        player.dispose();
+                        latch.countDown();
+                    });
+
+                    logger.debug("[TTS Audio] Playing: {}", mp3File.getFileName());
+                    player.play();
+
+                } catch (Exception e) {
+                    logger.error("[TTS Audio] Failed to create MediaPlayer: {}", e.getMessage());
+                    if (mediaPlayer != null) {
+                        mediaPlayer.dispose();
+                    }
+                    latch.countDown();
+                }
+            });
+
+            // Block until playback finishes (or error occurs)
+            // Timeout safety: max 60 seconds per clip to prevent permanent blocking
+            boolean completed = latch.await(60, java.util.concurrent.TimeUnit.SECONDS);
+            if (!completed) {
+                logger.warn("[TTS Audio] Playback timeout (60s) for: {}", mp3File.getFileName());
+            }
+
+        } catch (IllegalStateException e) {
+            // JavaFX toolkit not initialized - cannot play audio
+            logger.error("[TTS Audio] JavaFX not initialized, cannot play audio: {}", e.getMessage());
+            // Latch was never scheduled, no need to countdown
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.debug("[TTS Audio] Playback interrupted");
+        } catch (Exception e) {
+            logger.error("[TTS Audio] Unexpected error: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Enqueue a TTS request for sequential processing.
+     * VN-Parity: Graceful routing based on engine state.
+     * - READY: Queue for processing
+     * - DEGRADED: Skip queue, log for SAPI fallback
+     * - STOPPED/STARTING: Drop silently
+     *
+     * @param agent The agent voice to use
+     * @param text The text to synthesize
+     */
+    public void enqueueTts(String agent, String text) {
+        ValVoiceBackend.EngineState state = ValVoiceBackend.getInstance().getEngineState();
+
+        switch (state) {
+            case READY -> {
+                // Attempt to queue - use offer() which returns false if full
+                boolean queued = ttsQueue.offer(new TtsRequest(agent, text));
+                if (!queued) {
+                    logger.debug("[TTS Queue] Queue full, dropping newest request: '{}'",
+                            text.length() > 30 ? text.substring(0, 27) + "..." : text);
+                } else {
+                    logger.debug("[TTS Queue] Enqueued: agent={} text='{}'",
+                            agent, text.length() > 20 ? text.substring(0, 17) + "..." : text);
+                }
+            }
+            case DEGRADED -> {
+                // Engine degraded - bypass queue for SAPI fallback
+                logger.debug("[TTS Queue] Engine degraded, bypassing queue for SAPI fallback: '{}'",
+                        text.length() > 30 ? text.substring(0, 27) + "..." : text);
+                // TODO Phase 6: Route to Windows SAPI fallback here
+            }
+            case STOPPED, STARTING, STOPPING -> {
+                // Engine not ready - drop silently
+                logger.debug("[TTS Queue] Engine not ready (state={}), dropping request: '{}'",
+                        state, text.length() > 30 ? text.substring(0, 27) + "..." : text);
+            }
+        }
+        // CRITICAL: Never throw, never block, never crash caller
     }
 
     public void shutdown() {

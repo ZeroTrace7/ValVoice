@@ -200,6 +200,10 @@ public class ValVoiceBackend {
 
         logger.info("[ValVoiceBackend] Starting backend services...");
 
+        // ===== VN TTS ENGINE LIFECYCLE (INJECTED) =====
+        // Register shutdown hook for TTS engine cleanup (once per app lifecycle)
+        registerShutdownHook();
+
         // === STARTUP WARM-UP DELAY ===
         // Small delay to let Riot Client networking stack initialize.
         // This reduces early ECONNRESET events (socketID=1,2,3...) that occur
@@ -268,7 +272,12 @@ public class ValVoiceBackend {
     private void runShutdownReaper() {
         logger.info("[Reaper] Running Shutdown Reaper (backend)...");
 
-        String[] processesToKill = {"valvoice-mitm.exe"};
+        // ===== VN TTS ENGINE LIFECYCLE (INJECTED) =====
+        // Added valorantNarrator-agentVoices.exe to ensure no zombie Python processes
+        String[] processesToKill = {
+            "valvoice-mitm.exe",
+            "valorantNarrator-agentVoices.exe"  // TTS engine (VN-parity)
+        };
 
         for (String processName : processesToKill) {
             try {
@@ -472,43 +481,93 @@ public class ValVoiceBackend {
     /**
      * Stop the TTS engine process.
      * VN-Parity: Escalation kill (destroy → wait 500ms → destroyForcibly).
+     *
+     * Hardened for Phase 3:
+     * - Idempotent (safe to call multiple times)
+     * - No exceptions thrown outward
+     * - Safe log thread interrupt
+     * - No infinite waits
      */
     public synchronized void stopEngine() {
-        // Guard: Not running
-        if (!engineRunning.get()) {
-            logger.debug("[TTS Engine] Not running, skipping stop");
+        // Guard: Already stopped or never started (idempotent)
+        if (engineState == EngineState.STOPPED) {
+            logger.debug("[TTS Engine] Already STOPPED, skipping stopEngine()");
+            return;
+        }
+
+        // Guard: Not running (double-check AtomicBoolean)
+        if (!engineRunning.get() && ttsProcess == null) {
+            logger.debug("[TTS Engine] Not running and no process, skipping stop");
+            engineState = EngineState.STOPPED;
             return;
         }
 
         engineState = EngineState.STOPPING;
         logger.info("[TTS Engine] Stopping...");
 
-        if (ttsProcess != null) {
-            // Step 1: Graceful destroy
-            ttsProcess.destroy();
-            logger.debug("[TTS Engine] destroy() called, waiting 500ms for graceful exit...");
-
+        // Step 1: Interrupt log gobbler thread safely (before killing process)
+        if (engineLogThread != null && engineLogThread.isAlive()) {
             try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                logger.debug("[TTS Engine] Interrupting log gobbler thread...");
+                engineLogThread.interrupt();
+                // Brief wait for thread to notice interrupt (non-blocking)
+                engineLogThread.join(200);
+            } catch (Exception e) {
+                // Never let thread cleanup crash stopEngine()
+                logger.debug("[TTS Engine] Log thread interrupt error (non-fatal): {}", e.getMessage());
             }
+        }
+        engineLogThread = null;
 
-            // Step 2: Escalation kill if still alive
-            if (ttsProcess.isAlive()) {
-                logger.warn("[TTS Engine] Still alive after 500ms, using destroyForcibly()");
-                ttsProcess.destroyForcibly();
+        // Step 2: Kill process with escalation
+        if (ttsProcess != null) {
+            try {
+                // Graceful destroy
+                ttsProcess.destroy();
+                logger.debug("[TTS Engine] destroy() called, waiting 500ms for graceful exit...");
+
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+
+                // Escalation kill if still alive
+                if (ttsProcess.isAlive()) {
+                    logger.warn("[TTS Engine] Still alive after 500ms, using destroyForcibly()");
+                    ttsProcess.destroyForcibly();
+                }
+            } catch (Exception e) {
+                // Never let process cleanup crash stopEngine()
+                logger.debug("[TTS Engine] Process cleanup error (non-fatal): {}", e.getMessage());
             }
-
             ttsProcess = null;
         }
 
-        // Cleanup log thread (will terminate naturally when process dies)
-        engineLogThread = null;
-
+        // Step 3: Reset state (always, even if cleanup had errors)
         engineRunning.set(false);
         engineState = EngineState.STOPPED;
         logger.info("[TTS Engine] Stopped");
+    }
+
+    /**
+     * Register JVM shutdown hook for TTS engine cleanup.
+     * VN-Parity: Aggressive cleanup on JVM exit, no zombie processes.
+     * Called once during backend initialization.
+     */
+    private void registerShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                logger.info("[TTS Engine] JVM shutdown detected, cleaning up...");
+                if (engineState != EngineState.STOPPED) {
+                    stopEngine();
+                }
+            } catch (Exception e) {
+                // Never let shutdown hook crash the JVM
+                logger.error("[TTS Engine] Error during shutdown cleanup: {}", e.getMessage());
+            }
+        }, "tts-shutdown-hook"));
+        logger.debug("[TTS Engine] Shutdown hook registered");
     }
 
     // ========== MITM Process Management ==========

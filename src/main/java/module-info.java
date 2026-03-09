@@ -4,6 +4,7 @@ module com.someone.valvoice {
     requires javafx.controls;
     requires javafx.fxml;
     requires javafx.graphics;
+    requires javafx.media;
 
     // JFoenix for Material Design components
     requires com.jfoenix;
