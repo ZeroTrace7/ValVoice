@@ -1,6 +1,7 @@
 package com.someone.valvoicebackend;
 
 import com.someone.valvoicegui.ValVoiceBackend;
+import com.someone.valvoicebackend.config.ConfigManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,6 +99,21 @@ public class InbuiltVoiceSynthesizer {
     private final AtomicBoolean isPttPressed = new AtomicBoolean(false);
     /** Configured PTT key (virtual key code) */
     private short configuredPttKey = DEFAULT_PTT_KEY;
+
+    /**
+     * Phase 7: Resolve PTT virtual key code from config string.
+     * For letters and digits, Windows VK codes match uppercase ASCII values.
+     * No AWT dependency required.
+     *
+     * @param key The key string from config (e.g. "V", "U", "B")
+     * @return Windows Virtual Key code
+     */
+    private short resolveVirtualKey(String key) {
+        if (key == null || key.isEmpty()) {
+            return DEFAULT_PTT_KEY;
+        }
+        return (short) Character.toUpperCase(key.charAt(0));
+    }
 
     private Process powershellProcess;
     private PrintWriter powershellWriter;
@@ -567,7 +583,12 @@ public class InbuiltVoiceSynthesizer {
         HttpClient client = getOrCreateHttpClient();
 
         // Step 4: Build JSON payload safely (no string concatenation injection)
-        String jsonPayload = buildJsonPayload(agent, text, DEFAULT_LANGUAGE);
+        // Phase 7: Language read from config.json for runtime configurability
+        String language = ConfigManager.get().language;
+        if (language == null || language.isBlank()) {
+            language = DEFAULT_LANGUAGE;
+        }
+        String jsonPayload = buildJsonPayload(agent, text, language);
 
         // Step 5: Build HTTP request
         HttpRequest request = HttpRequest.newBuilder()
@@ -668,7 +689,10 @@ public class InbuiltVoiceSynthesizer {
     private String computeHash(String agent, String text) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            String input = agent + "|" + text;
+            // Phase 7: Include language in hash so different languages produce different cache files
+            String lang = ConfigManager.get().language;
+            if (lang == null || lang.isBlank()) lang = DEFAULT_LANGUAGE;
+            String input = agent + "|" + text + "|" + lang;
             byte[] hashBytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
 
             // Convert to lowercase hex string
@@ -908,6 +932,7 @@ public class InbuiltVoiceSynthesizer {
                     // ═══════════════════════════════════════════════════════
                     // PHASE 6 STEP 3: Opportunistic Recovery (Cooldown Protected)
                     // Probe backend at most once every 10 seconds to avoid latency
+                    // Must execute BEFORE useXtts is computed so recovery takes effect immediately
                     // ═══════════════════════════════════════════════════════
                     if (state == ValVoiceBackend.EngineState.DEGRADED) {
                         long now = System.currentTimeMillis();
@@ -925,14 +950,20 @@ public class InbuiltVoiceSynthesizer {
                         }
                     }
 
-                    if (state == ValVoiceBackend.EngineState.READY) {
+                    // ═══════════════════════════════════════════════════════
+                    // PHASE 7: Config-driven engine routing
+                    // Computed AFTER recovery probe so restored state is reflected
+                    // ═══════════════════════════════════════════════════════
+                    boolean useXtts = ConfigManager.get().xttsEnabled && state == ValVoiceBackend.EngineState.READY;
+
+                    if (useXtts) {
                         // Primary path: XTTS backend
                         audioFile = requestTts(req.agent, req.text);
                         logger.debug("[TTS Queue] XTTS processed: agent={} text='{}'",
                                 req.agent, req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
 
-                    } else if (state == ValVoiceBackend.EngineState.DEGRADED) {
-                        // Fallback path: Windows SAPI
+                    } else if (ConfigManager.get().sapiFallbackEnabled) {
+                        // Fallback path: Windows SAPI (only if enabled in config)
                         Path cacheDir = java.nio.file.Paths.get(
                                 System.getenv("LOCALAPPDATA"), "ValVoice", "cache");
                         audioFile = SapiVoiceEngine.generateFallbackAudio(req.text, cacheDir);
@@ -940,8 +971,8 @@ public class InbuiltVoiceSynthesizer {
                                 req.text.length() > 20 ? req.text.substring(0, 17) + "..." : req.text);
 
                     } else {
-                        // Engine in transition state - skip this request
-                        logger.debug("[TTS Queue] Engine not ready (state={}), skipping request", state);
+                        // Phase 7: Both XTTS and SAPI disabled/unavailable — drop request
+                        logger.warn("[TTS] XTTS disabled and SAPI fallback disabled. Dropping request.");
                         continue;
                     }
 
@@ -987,6 +1018,9 @@ public class InbuiltVoiceSynthesizer {
      * VN-Parity: Direct native call, 50ms pre-open delay, thread-safe guard.
      */
     private void pressPtt() {
+        // Phase 7: Apply configured PTT key from config.json
+        configuredPttKey = resolveVirtualKey(ConfigManager.get().pttKey);
+
         // Guard against double press
         if (!isPttPressed.compareAndSet(false, true)) {
             logger.debug("[PTT] Already pressed, skipping");
@@ -1102,6 +1136,9 @@ public class InbuiltVoiceSynthesizer {
                     String mediaUri = mp3File.toUri().toString();
                     Media media = new Media(mediaUri);
                     mediaPlayer = new MediaPlayer(media);
+
+                    // Phase 7: Apply configured playback volume
+                    mediaPlayer.setVolume(ConfigManager.get().playbackVolume);
 
                     final MediaPlayer player = mediaPlayer;
 

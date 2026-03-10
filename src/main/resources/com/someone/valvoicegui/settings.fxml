@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.text.Font?>
+
+<VBox spacing="20" prefWidth="420.0" style="-fx-background-color: #1e1e2e; -fx-padding: 25;"
+     xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+     fx:controller="com.someone.valvoicegui.SettingsController">
+
+    <!-- Title -->
+    <Label text="⚙ ValVoice Settings" style="-fx-text-fill: #cdd6f4; -fx-font-weight: bold;">
+        <font><Font size="20.0" /></font>
+    </Label>
+
+    <Separator style="-fx-background-color: #45475a;" />
+
+    <!-- PTT Key -->
+    <VBox spacing="5">
+        <Label text="Push-to-Talk Key" style="-fx-text-fill: #bac2de; -fx-font-weight: bold;" />
+        <TextField fx:id="pttKeyField" maxWidth="80.0" promptText="V"
+                   style="-fx-background-color: #313244; -fx-text-fill: #cdd6f4; -fx-border-color: #45475a; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 16; -fx-alignment: CENTER;" />
+        <Label text="Single letter or number (matches Valorant PTT key)"
+               style="-fx-text-fill: #6c7086; -fx-font-size: 11;" />
+    </VBox>
+
+    <!-- XTTS Enable -->
+    <CheckBox fx:id="xttsEnabledCheckBox" text="Enable XTTS Agent Voices"
+              style="-fx-text-fill: #bac2de;" />
+
+    <!-- SAPI Fallback -->
+    <CheckBox fx:id="sapiFallbackCheckBox" text="Enable SAPI Fallback (when XTTS unavailable)"
+              style="-fx-text-fill: #bac2de;" />
+
+    <!-- Volume -->
+    <VBox spacing="5">
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <Label text="Playback Volume" style="-fx-text-fill: #bac2de; -fx-font-weight: bold;" />
+            <Label fx:id="volumeValueLabel" text="100%" style="-fx-text-fill: #a6adc8;" />
+        </HBox>
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <Label text="🔈" style="-fx-font-size: 14;" />
+            <Slider fx:id="volumeSlider" min="0.0" max="1.0" value="1.0" blockIncrement="0.05"
+                    showTickMarks="true" showTickLabels="false" majorTickUnit="0.25"
+                    HBox.hgrow="ALWAYS" style="-fx-control-inner-background: #313244;" />
+            <Label text="🔊" style="-fx-font-size: 14;" />
+        </HBox>
+    </VBox>
+
+    <!-- Language -->
+    <VBox spacing="5">
+        <Label text="TTS Language" style="-fx-text-fill: #bac2de; -fx-font-weight: bold;" />
+        <ChoiceBox fx:id="languageChoice" maxWidth="200.0"
+                   style="-fx-background-color: #313244; -fx-mark-color: #cdd6f4;" />
+        <Label text="Language used for XTTS voice generation"
+               style="-fx-text-fill: #6c7086; -fx-font-size: 11;" />
+    </VBox>
+
+    <Separator style="-fx-background-color: #45475a;" />
+
+    <!-- Save Button -->
+    <HBox alignment="CENTER_RIGHT">
+        <Button fx:id="saveButton" text="Save &amp; Close" onAction="#handleSave"
+                prefWidth="140.0" prefHeight="36.0"
+                style="-fx-background-color: #89b4fa; -fx-text-fill: #1e1e2e; -fx-font-weight: bold; -fx-background-radius: 6; -fx-cursor: hand;" />
+    </HBox>
+</VBox>
+

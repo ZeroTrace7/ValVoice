@@ -27,9 +27,11 @@ module com.someone.valvoice {
     // Open packages to JavaFX for FXML reflection
     opens com.someone.valvoicegui to javafx.fxml, javafx.graphics;
     opens com.someone.valvoicebackend to javafx.fxml, javafx.graphics, com.google.gson;
+    opens com.someone.valvoicebackend.config to com.google.gson;
 
     // Export packages
     exports com.someone.valvoicegui;
     exports com.someone.valvoicebackend;
+    exports com.someone.valvoicebackend.config;
 }
 

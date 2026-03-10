@@ -928,6 +928,22 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     }
 
     /**
+     * Phase 7 Step 2: Open the Settings window for runtime configuration editing.
+     * Loads settings.fxml as a separate Stage. Config changes apply immediately.
+     */
+    @FXML
+    private void handleOpenSettings() throws IOException {
+        javafx.fxml.FXMLLoader loader = new javafx.fxml.FXMLLoader(getClass().getResource("settings.fxml"));
+        javafx.scene.Parent root = loader.load();
+
+        javafx.stage.Stage stage = new javafx.stage.Stage();
+        stage.setTitle("ValVoice Settings");
+        stage.setScene(new javafx.scene.Scene(root));
+        stage.setResizable(false);
+        stage.show();
+    }
+
+    /**
      * Handles navigation button clicks
      */
     @FXML
