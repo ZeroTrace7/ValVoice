@@ -1,0 +1,186 @@
+package com.someone.valvoicebackend;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Mixer;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * EnvironmentValidator - Phase 8 Step 1: Startup Environment Diagnostics.
+ *
+ * Performs read-only checks for required external dependencies:
+ *   - SoundVolumeView.exe (audio routing tool)
+ *   - PowerShell (SAPI fallback engine)
+ *   - VB-Audio Virtual Cable (audio injection device)
+ *
+ * This is a pure diagnostic utility — it never modifies application state,
+ * throws exceptions, creates threads, or blocks startup.
+ *
+ * Called once at startup before AudioRouterUtility and JavaFX launch.
+ */
+public final class EnvironmentValidator {
+
+    private static final Logger logger = LoggerFactory.getLogger(EnvironmentValidator.class);
+
+    /** SoundVolumeView executable name */
+    private static final String SVV_EXECUTABLE = "SoundVolumeView.exe";
+
+    /** PowerShell validation timeout (seconds) */
+    private static final int POWERSHELL_TIMEOUT_SECONDS = 2;
+
+    /** Prevent instantiation — utility class */
+    private EnvironmentValidator() {
+        throw new UnsupportedOperationException("Utility class - do not instantiate");
+    }
+
+    /**
+     * Run all environment validation checks and print a diagnostic report.
+     *
+     * Checks:
+     *   1. SoundVolumeView.exe presence
+     *   2. PowerShell availability
+     *   3. VB-Audio Virtual Cable detection
+     *
+     * This method is purely diagnostic — it never throws, never blocks indefinitely,
+     * and never modifies any application state.
+     */
+    public static void runAllChecks() {
+        logger.info("[Environment] Checking system dependencies...");
+
+        String svvStatus = checkSoundVolumeView();
+        String psStatus = checkPowerShell();
+        String vbStatus = checkVbCable();
+
+        // Print summary report
+        logger.info("[Environment] ═══════════════════════════════════════");
+        logger.info("[Environment] Validation Report");
+        logger.info("[Environment]   SoundVolumeView: {}", svvStatus);
+        logger.info("[Environment]   PowerShell:      {}", psStatus);
+        logger.info("[Environment]   VB-Cable:        {}", vbStatus);
+        logger.info("[Environment] ═══════════════════════════════════════");
+    }
+
+    /**
+     * Check whether SoundVolumeView.exe is available.
+     *
+     * Search locations:
+     *   1. Current working directory
+     *   2. Directory containing the running JAR
+     *
+     * Mirrors AudioRouterUtility.resolveSoundVolumeViewPath() logic.
+     *
+     * @return "OK" if found, "MISSING" if not found
+     */
+    private static String checkSoundVolumeView() {
+        // Primary: working directory
+        Path workingDir = Paths.get(System.getProperty("user.dir"), SVV_EXECUTABLE);
+        if (Files.exists(workingDir)) {
+            logger.info("[Environment] SoundVolumeView: OK ({})", workingDir);
+            return "OK";
+        }
+
+        // Fallback: JAR directory
+        try {
+            Path jarDir = Paths.get(
+                    EnvironmentValidator.class.getProtectionDomain()
+                            .getCodeSource()
+                            .getLocation()
+                            .toURI()
+            ).getParent();
+
+            Path jarDirPath = jarDir.resolve(SVV_EXECUTABLE);
+            if (Files.exists(jarDirPath)) {
+                logger.info("[Environment] SoundVolumeView: OK ({})", jarDirPath);
+                return "OK";
+            }
+        } catch (Exception e) {
+            logger.debug("[Environment] Could not resolve JAR directory: {}", e.getMessage());
+        }
+
+        logger.warn("[Environment] SoundVolumeView.exe not found — audio routing will be skipped.");
+        return "MISSING";
+    }
+
+    /**
+     * Check whether Windows PowerShell is available.
+     *
+     * Executes a simple echo command with a 2-second timeout.
+     * PowerShell is required for the SAPI fallback engine.
+     *
+     * @return "OK" if available, "NOT AVAILABLE" if missing or timed out
+     */
+    private static String checkPowerShell() {
+        try {
+            ProcessBuilder builder = new ProcessBuilder("powershell", "-Command", "echo test");
+            builder.redirectErrorStream(true);
+
+            Process process = builder.start();
+
+            // Consume output to prevent pipe blocking
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                while (reader.readLine() != null) {
+                    // Drain output
+                }
+            }
+
+            boolean completed = process.waitFor(POWERSHELL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            if (!completed) {
+                process.destroyForcibly();
+                logger.warn("[Environment] PowerShell: NOT AVAILABLE (timed out)");
+                return "NOT AVAILABLE";
+            }
+
+            if (process.exitValue() == 0) {
+                logger.info("[Environment] PowerShell: OK");
+                return "OK";
+            } else {
+                logger.warn("[Environment] PowerShell: NOT AVAILABLE (exit code {})", process.exitValue());
+                return "NOT AVAILABLE";
+            }
+
+        } catch (Exception e) {
+            logger.warn("[Environment] PowerShell: NOT AVAILABLE ({})", e.getMessage());
+            return "NOT AVAILABLE";
+        }
+    }
+
+    /**
+     * Detect VB-Audio Virtual Cable using Java's native audio API.
+     *
+     * Scans all available audio mixer devices for names containing "CABLE".
+     * This matches both "CABLE Input" and "CABLE Output" device names.
+     *
+     * @return "OK" if detected, "NOT DETECTED" if no VB-Cable device found
+     */
+    private static String checkVbCable() {
+        try {
+            Mixer.Info[] mixers = AudioSystem.getMixerInfo();
+
+            for (Mixer.Info info : mixers) {
+                String name = info.getName();
+                String description = info.getDescription();
+
+                if ((name != null && name.toUpperCase().contains("CABLE"))
+                        || (description != null && description.toUpperCase().contains("CABLE"))) {
+                    logger.info("[Environment] VB-Cable: OK (detected: {})", name);
+                    return "OK";
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("[Environment] Error scanning audio devices: {}", e.getMessage());
+        }
+
+        logger.warn("[Environment] VB-Cable not detected — install VB-Audio Virtual Cable for voice injection.");
+        return "NOT DETECTED";
+    }
+}
+

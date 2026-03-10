@@ -2,6 +2,7 @@ package com.someone.valvoicegui;
 
 import com.someone.valvoicebackend.AudioRouterUtility;
 import com.someone.valvoicebackend.Chat;
+import com.someone.valvoicebackend.EnvironmentValidator;
 import com.someone.valvoicebackend.Source;
 import com.someone.valvoicebackend.config.ConfigManager;
 import javafx.application.Application;
@@ -353,6 +354,10 @@ public class Main {
 
         // 3. Acquire single-instance lock
         lockInstance();
+
+        // Phase 8: Startup environment validation (read-only diagnostics)
+        // Checks SoundVolumeView, PowerShell, and VB-Cable before any audio operations
+        EnvironmentValidator.runAllChecks();
 
         // Phase 5 Step 3: Route Java audio to VB-Cable for Valorant voice injection
         // Must run BEFORE any TTS playback occurs

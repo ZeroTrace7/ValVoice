@@ -35,6 +35,7 @@ com\someone\valvoicebackend\ParsedMessage$Builder.class
 com\someone\valvoicebackend\RiotUtilityHandler.class
 com\someone\valvoicebackend\VoiceGenerator.class
 module-info.class
+com\someone\valvoicebackend\EnvironmentValidator.class
 com\someone\valvoicebackend\PlayerAccount.class
 com\someone\valvoicebackend\InbuiltVoiceSynthesizer$User32$KEYBDINPUT.class
 com\someone\valvoicebackend\InbuiltVoiceSynthesizer.class
