@@ -45,9 +45,10 @@
         </fileSet>
 
         <!-- ===== valvoice-mitm.exe (XMPP TLS proxy) ===== -->
+        <!-- Must be at /mitm/ to match ValVoiceBackend path: workingDir.resolve("mitm").resolve("valvoice-mitm.exe") -->
         <fileSet>
             <directory>${project.basedir}/mitm</directory>
-            <outputDirectory>/</outputDirectory>
+            <outputDirectory>/mitm</outputDirectory>
             <includes>
                 <include>valvoice-mitm.exe</include>
             </includes>

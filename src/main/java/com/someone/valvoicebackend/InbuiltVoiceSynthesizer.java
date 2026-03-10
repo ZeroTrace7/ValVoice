@@ -801,18 +801,18 @@ public class InbuiltVoiceSynthesizer {
         try {
             Path cacheDir = getCacheDirectory();
 
-            // List all .mp3 files (ignore .tmp)
-            List<Path> mp3Files;
+            // List all audio files in cache (.mp3 from XTTS, .wav from SAPI — ignore .tmp)
+            List<Path> audioFiles;
             try (Stream<Path> stream = Files.list(cacheDir)) {
-                mp3Files = stream
-                        .filter(p -> p.toString().endsWith(".mp3"))
+                audioFiles = stream
+                        .filter(p -> p.toString().endsWith(".mp3") || p.toString().endsWith(".wav"))
                         .filter(Files::isRegularFile)
                         .toList();
             }
 
             // Calculate total size
             long totalSize = 0;
-            for (Path file : mp3Files) {
+            for (Path file : audioFiles) {
                 try {
                     totalSize += Files.size(file);
                 } catch (IOException ignored) {
@@ -828,7 +828,7 @@ public class InbuiltVoiceSynthesizer {
                     totalSize / (1024 * 1024));
 
             // Sort by lastModified ascending (oldest first)
-            List<Path> sortedFiles = new ArrayList<>(mp3Files);
+            List<Path> sortedFiles = new ArrayList<>(audioFiles);
             sortedFiles.sort(Comparator.comparingLong(p -> {
                 try {
                     return Files.getLastModifiedTime(p).toMillis();
