@@ -44,6 +44,7 @@ com\someone\valvoicebackend\ChatDataHandler.class
 com\someone\valvoicebackend\ParsedMessage.class
 com\someone\valvoicebackend\LockFileHandler.class
 com\someone\valvoicebackend\HtmlEscape.class
+com\someone\valvoicegui\SetupWizardController.class
 com\someone\valvoicebackend\APIHandler.class
 com\someone\valvoicegui\ValVoiceApplication.class
 com\someone\valvoicebackend\Roster.class

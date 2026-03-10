@@ -183,6 +183,7 @@ ValVoice/
     │           ├── Main.java
     │           ├── MessageType.java
     │           ├── SettingsController.java       # [Phase 7] Settings window controller
+    │           ├── SetupWizardController.java    # [Phase 8] First-run setup wizard
     │           ├── ValVoiceApplication.java
     │           ├── ValVoiceBackend.java
     │           └── ValVoiceController.java
@@ -190,6 +191,7 @@ ValVoice/
         └── com/someone/valvoicegui/
             ├── mainApplication.fxml              # Primary UI layout
             ├── settings.fxml                     # [Phase 7] Settings window layout
+            ├── setup-wizard.fxml                 # [Phase 8] First-run wizard layout
             ├── config.properties                 # Build-time metadata
             ├── style.css                         # CSS theme
             └── icons/                            # UI icons

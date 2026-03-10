@@ -207,7 +207,8 @@ public class SetupWizardController {
 
     /**
      * Close the wizard and open the main application window.
-     * Replicates the exact startup logic from ValVoiceApplication.start().
+     * Creates a new Stage with the main FXML, theme, and tray icon.
+     * Matches ValVoiceApplication.launchMainApp() behavior.
      */
     private void launchMainApplication(Stage wizardStage) throws IOException, java.awt.AWTException {
         logger.info("[Wizard] Launching main application...");
@@ -223,7 +224,7 @@ public class SetupWizardController {
         String valorantTheme = getClass().getResource("/css/valorant-theme.css").toExternalForm();
         scene.getStylesheets().add(valorantTheme);
 
-        // Configure new stage (same as ValVoiceApplication.start)
+        // Configure new stage (same as ValVoiceApplication.launchMainApp)
         Stage mainStage = new Stage();
         mainStage.initStyle(StageStyle.TRANSPARENT);
         mainStage.setTitle("ValVoice");
@@ -232,15 +233,9 @@ public class SetupWizardController {
         mainStage.setScene(scene);
         mainStage.setResizable(false);
 
-        // Create tray icon via application instance
-        try {
-            ValVoiceApplication app = (ValVoiceApplication) ValVoiceApplication.class
-                    .getDeclaredConstructor().newInstance();
-            app.createTrayIcon(mainStage);
-        } catch (Exception e) {
-            logger.warn("[Wizard] Could not create tray icon: {}", e.getMessage());
-            // Non-fatal — continue without tray icon
-        }
+        // Create tray icon
+        ValVoiceApplication app = new ValVoiceApplication();
+        app.createTrayIcon(mainStage);
 
         // Register shutdown hook for controller cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
