@@ -392,6 +392,10 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Depended on by:** `InbuiltVoiceSynthesizer`, `SettingsController`, `Main.java`
 - **Pattern:** Singleton, Utility, Atomic Write
 
+---
+
+## FILE REFERENCE — GUI (`com.someone.valvoicegui`)
+
 ### `Main.java`
 - **Role:** Application entry point and startup orchestrator.
 - **Behavior:** (1) Checks for running Riot Client / Valorant processes — blocks if found. (2) Runs process reaper for orphaned `valvoice-mitm.exe`. (3) Registers shutdown reaper hook. (4) Bootstraps config directory. (5) Loads user config (`loadUserConfig()`). (6) Loads `config.properties`. (7) Acquires single-instance file lock. (8) **[Phase 8]** Runs `EnvironmentValidator.runAllChecks()` — diagnostic report. (9) **[Phase 5]** Runs `AudioRouterUtility.routeAudioToVirtualCable()` — routes JVM audio to VB-Cable. (10) **[Phase 7]** Runs `ConfigManager.load()` — loads persistent JSON config. (11) Calls `Application.launch(ValVoiceApplication.class)`.
