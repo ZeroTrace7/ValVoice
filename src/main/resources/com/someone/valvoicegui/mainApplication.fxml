@@ -212,28 +212,6 @@
                             </HBox>
                         </VBox>
                     </VBox>
-
-                    <!-- ==================== ENGINE CONFIG CARD (Phase 7) ==================== -->
-                    <!-- Opens the runtime configuration editor for XTTS/SAPI/PTT/Volume/Language -->
-                    <VBox styleClass="card" spacing="20">
-                        <padding>
-                            <Insets top="20" left="25" right="25" bottom="20" />
-                        </padding>
-
-                        <HBox alignment="CENTER_LEFT" spacing="10">
-                            <Label text="⚙" style="-fx-font-size: 20px;" />
-                            <Label text="Engine Configuration" styleClass="card-title">
-                                <font><Font name="System Bold" size="18.0" /></font>
-                            </Label>
-                        </HBox>
-
-                        <VBox spacing="10">
-                            <Label text="Configure XTTS engine, SAPI fallback, PTT key, playback volume, and language settings."
-                                   styleClass="hint-label" wrapText="true" />
-                            <Button text="Open Engine Settings" onAction="#handleOpenSettings"
-                                    styleClass="secondary-button" prefWidth="200.0" />
-                        </VBox>
-                    </VBox>
                 </VBox>
             </AnchorPane>
         </ScrollPane>

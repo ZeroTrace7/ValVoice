@@ -106,9 +106,15 @@ public class SettingsController {
         // Step 3: Persist to disk
         ConfigManager.save();
 
-        logger.info("[Config] Settings updated and saved.");
+        logger.info("[Config] Runtime configuration updated");
 
-        // Step 4: Close the window
+        // Step 4: Show confirmation dialog
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setHeaderText("Settings Saved");
+        alert.setContentText("Configuration updated successfully.");
+        alert.showAndWait();
+
+        // Step 5: Close the window
         saveButton.getScene().getWindow().hide();
     }
 

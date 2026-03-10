@@ -939,6 +939,8 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         javafx.stage.Stage stage = new javafx.stage.Stage();
         stage.setTitle("ValVoice Settings");
         stage.setScene(new javafx.scene.Scene(root));
+        stage.setWidth(420);
+        stage.setHeight(520);
         stage.setResizable(false);
         stage.show();
     }
