@@ -25,5 +25,8 @@ public class ValVoiceConfig {
 
     /** TTS language code (e.g. "en") */
     public String language = "en";
+
+    /** Whether the first-run setup wizard has been completed */
+    public boolean firstRunCompleted = false;
 }
 

@@ -10,6 +10,8 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -65,6 +67,38 @@ public final class EnvironmentValidator {
         logger.info("[Environment]   PowerShell:      {}", psStatus);
         logger.info("[Environment]   VB-Cable:        {}", vbStatus);
         logger.info("[Environment] ═══════════════════════════════════════");
+    }
+
+    /**
+     * Run all environment checks and return results as a Map.
+     * Phase 8 Step 3: Used by the Setup Wizard to display dependency status in the UI.
+     *
+     * Keys: "VBCable", "SoundVolumeView", "PowerShell"
+     * Values: true if dependency exists, false if missing.
+     *
+     * This method also logs results via the existing check methods.
+     *
+     * @return Map of dependency name → availability boolean
+     */
+    public static Map<String, Boolean> runChecksWithResults() {
+        logger.info("[Environment] Checking system dependencies (wizard mode)...");
+
+        Map<String, Boolean> results = new LinkedHashMap<>();
+
+        String svvStatus = checkSoundVolumeView();
+        results.put("SoundVolumeView", "OK".equals(svvStatus));
+
+        String psStatus = checkPowerShell();
+        results.put("PowerShell", "OK".equals(psStatus));
+
+        String vbStatus = checkVbCable();
+        results.put("VBCable", "OK".equals(vbStatus));
+
+        // Log summary
+        logger.info("[Environment] Wizard validation: SoundVolumeView={}, PowerShell={}, VBCable={}",
+                results.get("SoundVolumeView"), results.get("PowerShell"), results.get("VBCable"));
+
+        return results;
     }
 
     /**
