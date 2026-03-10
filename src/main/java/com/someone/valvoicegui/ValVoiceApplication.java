@@ -1,6 +1,7 @@
 package com.someone.valvoicegui;
 
 import com.someone.valvoicebackend.*;
+import com.someone.valvoicebackend.config.ConfigManager;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -90,6 +91,46 @@ public class ValVoiceApplication extends Application {
     public void start(Stage stage) throws IOException, AWTException {
         logger.info("Initializing JavaFX Application");
 
+        // Phase 8 Step 3: First-run wizard routing
+        // If setup has not been completed, show the wizard instead of the main UI
+        if (!ConfigManager.get().firstRunCompleted) {
+            logger.info("[Wizard] First run detected — launching Setup Wizard");
+            launchSetupWizard(stage);
+            return;
+        }
+
+        // Normal startup — load main application
+        launchMainApp(stage);
+    }
+
+    /**
+     * Phase 8 Step 3: Launch the first-run Setup Wizard.
+     * The wizard will launch the main application after completion.
+     */
+    private void launchSetupWizard(Stage stage) throws IOException {
+        FXMLLoader fxmlLoader = new FXMLLoader(
+                ValVoiceApplication.class.getResource("/com/someone/valvoicegui/setup-wizard.fxml")
+        );
+        Scene scene = new Scene(fxmlLoader.load());
+        scene.setFill(Color.TRANSPARENT);
+
+        stage.initStyle(StageStyle.TRANSPARENT);
+        stage.setTitle("ValVoice Setup");
+        stage.setScene(scene);
+        stage.setResizable(false);
+        stage.show();
+
+        Platform.setImplicitExit(false);
+
+        logger.info("[Wizard] Setup Wizard displayed");
+    }
+
+    /**
+     * Launch the main ValVoice application window.
+     * Called directly on normal startup (firstRunCompleted = true)
+     * or by the wizard after completion.
+     */
+    private void launchMainApp(Stage stage) throws IOException, AWTException {
         // Load FXML
         FXMLLoader fxmlLoader = new FXMLLoader(
                 ValVoiceApplication.class.getResource("/com/someone/valvoicegui/mainApplication.fxml")
