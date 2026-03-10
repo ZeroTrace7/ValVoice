@@ -1,15 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Phase 8 Step 2: ValVoice Release Distribution Descriptor
+
+    Produces a fully portable release bundle containing all runtime components:
+      - ValVoice.jar (shaded fat JAR)
+      - SoundVolumeView.exe (audio routing)
+      - valvoice-mitm.exe (XMPP TLS proxy)
+      - engine/ (XTTS backend runtime — recursive)
+      - MITM certs (TLS certificates)
+      - run-valvoice.bat (silent launcher)
+      - README.txt + LICENSE.txt
+
+    Generated during: mvn package
+    Output: target/valvoice-1.0.0.zip → ValVoice/ directory inside
+-->
 <assembly xmlns="http://maven.apache.org/ASSEMBLY/2.1.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.1.0 http://maven.apache.org/xsd/assembly-2.1.0.xsd">
-    <id>dist</id>
+    <id>release</id>
     <formats>
         <format>zip</format>
+        <format>dir</format>
     </formats>
-    <includeBaseDirectory>false</includeBaseDirectory>
+    <includeBaseDirectory>true</includeBaseDirectory>
+    <baseDirectory>ValVoice</baseDirectory>
 
     <fileSets>
-        <!-- Include the shaded JAR -->
+        <!-- ===== Shaded Fat JAR ===== -->
         <fileSet>
             <directory>${project.build.directory}</directory>
             <outputDirectory>/</outputDirectory>
@@ -18,7 +35,7 @@
             </includes>
         </fileSet>
 
-        <!-- Include SoundVolumeView.exe and valvoice-mitm.exe -->
+        <!-- ===== SoundVolumeView.exe (project root) ===== -->
         <fileSet>
             <directory>${project.basedir}</directory>
             <outputDirectory>/</outputDirectory>
@@ -27,7 +44,7 @@
             </includes>
         </fileSet>
 
-        <!-- Include valvoice-mitm.exe from mitm folder -->
+        <!-- ===== valvoice-mitm.exe (XMPP TLS proxy) ===== -->
         <fileSet>
             <directory>${project.basedir}/mitm</directory>
             <outputDirectory>/</outputDirectory>
@@ -36,12 +53,51 @@
             </includes>
         </fileSet>
 
-        <!-- Include README -->
+        <!-- ===== MITM TLS Certificates ===== -->
+        <fileSet>
+            <directory>${project.basedir}/mitm/certs</directory>
+            <outputDirectory>/mitm/certs</outputDirectory>
+            <includes>
+                <include>**/*</include>
+            </includes>
+        </fileSet>
+
+        <!-- ===== XTTS Engine Directory (recursive) ===== -->
+        <!-- Includes: valorantNarrator-agentVoices.exe, Python runtime, DLLs, agents -->
+        <fileSet>
+            <directory>${project.basedir}/engine</directory>
+            <outputDirectory>/engine</outputDirectory>
+            <includes>
+                <include>**/*</include>
+            </includes>
+            <!-- Exclude dev-only artifacts -->
+            <excludes>
+                <exclude>pyinstxtractor.py</exclude>
+                <exclude>valorantNarrator-agentVoices.exe_extracted/**</exclude>
+                <exclude>Doc/**</exclude>
+                <exclude>Tools/**</exclude>
+                <exclude>**/__pycache__/**</exclude>
+                <exclude>**/*.pyc</exclude>
+            </excludes>
+        </fileSet>
+
+        <!-- ===== Launcher Script ===== -->
         <fileSet>
             <directory>${project.basedir}</directory>
             <outputDirectory>/</outputDirectory>
             <includes>
-                <include>README.md</include>
+                <include>run-valvoice.bat</include>
+            </includes>
+            <lineEnding>dos</lineEnding>
+        </fileSet>
+
+        <!-- ===== Documentation ===== -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.txt</include>
+                <include>LICENSE</include>
             </includes>
         </fileSet>
     </fileSets>
