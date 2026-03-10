@@ -133,6 +133,10 @@ ValVoice/
 │   └── README.md
 │
 ├── engine/                           # Local XTTS engine runtime (Python-based)
+│   ├── valorantNarrator-agentVoices.exe  # XTTS backend server (FastAPI on port 5005)
+│   ├── agents/                       # Agent voice reference MP3s (e.g. jett.mp3)
+│   └── ...                           # Python runtime, DLLs, libs
+│
 ├── installer/                        # Inno Setup installer assets
 ├── PowerShell/                       # Helper PowerShell scripts (incl. SAPI fallback)
 │
@@ -142,14 +146,16 @@ ValVoice/
     │   └── com/someone/
     │       ├── valvoicebackend/      # Core backend logic
     │       │   ├── APIHandler.java
+    │       │   ├── AudioRouterUtility.java    # [Phase 5] SoundVolumeView audio routing
     │       │   ├── Chat.java
     │       │   ├── ChatDataHandler.java
     │       │   ├── ChatUtilityHandler.java
     │       │   ├── ConnectionHandler.java
     │       │   ├── EntitlementsTokenResponse.java
+    │       │   ├── EnvironmentValidator.java   # [Phase 8] Startup dependency diagnostics
     │       │   ├── GameStateManager.java
     │       │   ├── HtmlEscape.java
-    │       │   ├── InbuiltVoiceSynthesizer.java
+    │       │   ├── InbuiltVoiceSynthesizer.java  # HTTP + Cache + Queue + Playback + PTT
     │       │   ├── LockFileHandler.java
     │       │   ├── Message.java
     │       │   ├── ParsedMessage.java
@@ -157,16 +163,27 @@ ValVoice/
     │       │   ├── RiotClientDetails.java
     │       │   ├── RiotUtilityHandler.java
     │       │   ├── Roster.java
+    │       │   ├── SapiVoiceEngine.java        # [Phase 6] Windows SAPI fallback engine
     │       │   ├── Source.java
     │       │   ├── VoiceGenerator.java
-    │       │   └── XmppStreamParser.java
+    │       │   ├── XmppStreamParser.java
+    │       │   └── config/                      # [Phase 7] Persistent configuration
+    │       │       ├── ConfigManager.java        # JSON config loader/saver (Gson)
+    │       │       └── ValVoiceConfig.java        # Config POJO (pttKey, volume, etc.)
     │       └── valvoicegui/          # JavaFX GUI layer
     │           ├── Main.java
     │           ├── MessageType.java
+    │           ├── SettingsController.java       # [Phase 7] Settings window controller
     │           ├── ValVoiceApplication.java
     │           ├── ValVoiceBackend.java
     │           └── ValVoiceController.java
-    └── resources/                    # FXML layouts, CSS themes, fonts
+    └── resources/
+        └── com/someone/valvoicegui/
+            ├── mainApplication.fxml              # Primary UI layout
+            ├── settings.fxml                     # [Phase 7] Settings window layout
+            ├── config.properties                 # Build-time metadata
+            ├── style.css                         # CSS theme
+            └── icons/                            # UI icons
 ```
 
 ---
@@ -236,11 +253,18 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Pattern:** Producer-Consumer, Command Queue
 
 ### `InbuiltVoiceSynthesizer.java`
-- **Role:** Local TTS HTTP client with MD5 audio cache and OS audio routing.
-- **Behavior:** HTTP POST to local XTTS engine (`engine/`) → downloads audio file → caches with MD5-hashed filename → LRU eviction on cache size limit → invokes `SoundVolumeView.exe` to route audio to VB Cable → plays via JavaFX `MediaPlayer` (instantiated in `Platform.runLater`).
-- **Depends on:** `SoundVolumeView.exe`, JavaFX `MediaPlayer`, local XTTS engine
+- **Role:** Local TTS HTTP client with MD5 audio cache, sequential queue, playback, and PTT injection.
+- **Behavior:**
+  - **HTTP Layer (Phase 4):** HTTP POST to local XTTS engine on `http://127.0.0.1:5005/speak` with 15s timeout. Sends JSON payload: `{agent, text, language}`. ConnectException triggers permanent `DEGRADED` state via `ValVoiceBackend.markDegraded()`.
+  - **Cache Layer (Phase 4):** MD5 hash of `agent|text|language` → `.mp3` file in `%LOCALAPPDATA%\ValVoice\cache\`. Atomic `.tmp → .mp3` rename. 100MB eviction by `lastModified` (oldest first).
+  - **Queue Layer (Phase 4):** `LinkedBlockingQueue(10)`, drop newest on full. Daemon consumer thread. DEGRADED state routes to SAPI fallback.
+  - **Playback (Phase 5):** JavaFX `MediaPlayer` created inside `Platform.runLater()` with `CountDownLatch` sync. Fresh MediaPlayer per clip, always disposed. 60s latch timeout prevents permanent blocking.
+  - **PTT Injection (Phase 5):** JNA `SendInput` via `user32.dll`. Key DOWN before playback (50ms pre-delay), key UP after playback (100ms tail delay) in `finally` block. `AtomicBoolean isPttPressed` prevents stuck keys.
+  - **Recovery Probe (Phase 6):** Every 10s during DEGRADED, probes port 5005 via TCP socket (500ms timeout). On success, restores READY state.
+  - **Config Integration (Phase 7):** Reads `ConfigManager.get()` for PTT key, playback volume, language, XTTS/SAPI toggles. No config writes.
+- **Depends on:** `ValVoiceBackend` (engine state), `SapiVoiceEngine` (fallback), `ConfigManager` (settings), `SoundVolumeView.exe`, JavaFX `MediaPlayer`, JNA
 - **Depended on by:** `VoiceGenerator`
-- **Pattern:** Service Client, Cache-Aside
+- **Pattern:** Service Client, Cache-Aside, Producer-Consumer, JNA Bridge
 
 ### `LockFileHandler.java`
 - **Role:** Riot Client lockfile reader.
@@ -319,15 +343,51 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Depended on by:** `ParsedMessage`, `ChatDataHandler`, `Chat`
 - **Pattern:** Enum
 
+### `SapiVoiceEngine.java` *(Phase 6)*
+- **Role:** Windows SAPI fallback — generates `.wav` audio files when XTTS backend is unavailable.
+- **Behavior:** Pure utility class (`final`, private constructor, all static methods). Generates speech via PowerShell command: `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('path'); $s.Speak('text'); $s.Dispose();`. Text sanitized for PowerShell injection (`'` → `''`). Text truncated to 300 chars. MD5-hashed filenames (`sapi_<hash>.wav`). Cache in `%LOCALAPPDATA%\ValVoice\cache\` (shared with XTTS cache). Rate limiter: 250ms minimum between PowerShell spawns (only after cache miss). 10s process timeout with `destroyForcibly()`.
+- **Depends on:** PowerShell, filesystem
+- **Depended on by:** `InbuiltVoiceSynthesizer` (queue consumer routes here when DEGRADED)
+- **Pattern:** Utility, Fallback Strategy
+
+### `AudioRouterUtility.java` *(Phase 5 Step 3)*
+- **Role:** Routes Java audio output to VB-Cable using SoundVolumeView.exe.
+- **Behavior:** Utility class. Locates `SoundVolumeView.exe` in working dir or JAR dir. Executes two commands: `/SetAppDefault "java.exe" 0 "CABLE Input"` and `/SetAppDefault "javaw.exe" 0 "CABLE Input"`. Each command has 2s timeout. `redirectErrorStream(true)`, no `inheritIO()`. Fails gracefully if executable missing. Called once at startup.
+- **Depends on:** `SoundVolumeView.exe`
+- **Depended on by:** `Main.java` (startup call)
+- **Pattern:** Utility, Fire-and-Forget
+
+### `EnvironmentValidator.java` *(Phase 8)*
+- **Role:** Startup environment diagnostics — read-only dependency checker.
+- **Behavior:** Utility class. Three checks: (1) `SoundVolumeView.exe` presence — searches working dir and JAR dir, mirrors `AudioRouterUtility` path logic. (2) PowerShell availability — executes `powershell -Command "echo test"` with 2s timeout. (3) VB-Audio Virtual Cable detection — scans `AudioSystem.getMixerInfo()` for mixer names containing "CABLE". Prints formatted summary report to logger. Never throws, never blocks indefinitely, never modifies state.
+- **Depends on:** `javax.sound.sampled.AudioSystem`, PowerShell, filesystem
+- **Depended on by:** `Main.java` (startup call)
+- **Pattern:** Utility, Diagnostic
+
 ---
 
-## FILE REFERENCE — GUI (`com.someone.valvoicegui`)
+## FILE REFERENCE — Configuration (`com.someone.valvoicebackend.config`)
+
+### `ValVoiceConfig.java` *(Phase 7)*
+- **Role:** Plain configuration data model (POJO).
+- **Fields:** `pttKey` (String, default `"V"`), `xttsEnabled` (boolean, default `true`), `sapiFallbackEnabled` (boolean, default `true`), `playbackVolume` (double, default `1.0`), `language` (String, default `"en"`).
+- **Behavior:** No methods, no logic, no imports. All fields are `public`. Default values defined inline. Serialized/deserialized by Gson.
+- **Depends on:** nothing
+- **Depended on by:** `ConfigManager`
+- **Pattern:** POJO, DTO
+
+### `ConfigManager.java` *(Phase 7)*
+- **Role:** Persistent JSON configuration manager. Singleton access pattern.
+- **Behavior:** Loads/saves `ValVoiceConfig` to `%LOCALAPPDATA%\ValVoice\config.json`. Uses Gson for serialization (pretty-printed). `load()` — reads from disk, creates default if missing, catches all exceptions. `save()` — atomic write pattern: writes to `config.json.tmp`, then `Files.move()` with `ATOMIC_MOVE` + `REPLACE_EXISTING`. `reload()` — synchronized re-read from disk (called when Settings window opens). `get()` — returns singleton instance (never null, double-checked locking with default fallback). `getConfigPath()` — resolves to `%LOCALAPPDATA%\ValVoice\config.json` with `user.home` fallback.
+- **Depends on:** `ValVoiceConfig`, Gson
+- **Depended on by:** `InbuiltVoiceSynthesizer`, `SettingsController`, `Main.java`
+- **Pattern:** Singleton, Utility, Atomic Write
 
 ### `Main.java`
-- **Role:** Application entry point.
-- **Behavior:** (1) Checks for running Riot Client / Valorant processes. (2) Runs process reaper for orphaned `valvoice-mitm.exe`. (3) Loads persisted config. (4) Calls `Application.launch(ValVoiceApplication.class)`.
-- **Depends on:** `ValVoiceApplication`
-- **Pattern:** Entry Point
+- **Role:** Application entry point and startup orchestrator.
+- **Behavior:** (1) Checks for running Riot Client / Valorant processes — blocks if found. (2) Runs process reaper for orphaned `valvoice-mitm.exe`. (3) Registers shutdown reaper hook. (4) Bootstraps config directory. (5) Loads user config (`loadUserConfig()`). (6) Loads `config.properties`. (7) Acquires single-instance file lock. (8) **[Phase 8]** Runs `EnvironmentValidator.runAllChecks()` — diagnostic report. (9) **[Phase 5]** Runs `AudioRouterUtility.routeAudioToVirtualCable()` — routes JVM audio to VB-Cable. (10) **[Phase 7]** Runs `ConfigManager.load()` — loads persistent JSON config. (11) Calls `Application.launch(ValVoiceApplication.class)`.
+- **Depends on:** `ValVoiceApplication`, `AudioRouterUtility`, `EnvironmentValidator`, `ConfigManager`, `Chat`, `Source`
+- **Pattern:** Entry Point, Startup Orchestrator
 
 ### `ValVoiceApplication.java`
 - **Role:** JavaFX bootstrap.
@@ -342,11 +402,13 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Pattern:** MVC Controller, Event Handler
 
 ### `ValVoiceBackend.java` *(GUI package)*
-- **Role:** Facade bridging UI controller to core backend.
+- **Role:** Facade bridging UI controller to core backend + TTS engine lifecycle manager.
 - **Behavior:** Exposes start/stop commands, status queries, error propagation. Delegates to `com.someone.valvoicebackend` classes.
-- **Depends on:** all `valvoicebackend` classes
-- **Depended on by:** `ValVoiceController`
-- **Pattern:** Facade
+  - **Engine Lifecycle (Phases 1–3):** Manages `EngineState` enum: `STOPPED → STARTING → READY → DEGRADED → STOPPING`. Launches `engine/valorantNarrator-agentVoices.exe` via hidden `ProcessBuilder` (no `inheritIO`, `redirectErrorStream(true)`). Polls TCP socket on `127.0.0.1:5005` every 500ms with 15s timeout. Log gobbler thread drains stdout. `stopEngine()` — escalation kill: `destroy()` → 500ms wait → `destroyForcibly()`. Idempotent. Shutdown hook calls `stopEngine()` and kills stale EXE via `taskkill /F /IM`. `markDegraded()` — called by HTTP layer on ConnectException. `setEngineReady()` — called by recovery probe on successful port 5005 reconnect.
+  - **Guards:** `AtomicBoolean engineRunning` prevents double-start. `volatile EngineState` for cross-thread visibility.
+- **Depends on:** all `valvoicebackend` classes, `engine/valorantNarrator-agentVoices.exe`
+- **Depended on by:** `ValVoiceController`, `InbuiltVoiceSynthesizer` (engine state checks)
+- **Pattern:** Facade, State Machine, Process Manager
 
 ### `MessageType.java`
 - **Role:** Enum for console log categories.
@@ -354,6 +416,14 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Depends on:** nothing
 - **Depended on by:** `ValVoiceController`
 - **Pattern:** Enum
+
+### `SettingsController.java` *(Phase 7 Step 2)*
+- **Role:** JavaFX controller for the runtime Settings window.
+- **Behavior:** Binds to `settings.fxml`. On open: calls `ConfigManager.reload()` to refresh from disk → populates UI from `ConfigManager.get()` with null protection (defaults: PTT=`"V"`, language=`"en"`, volume=`0.75`). Volume slider: 0.0–1.0, step 0.05, live `%` label. PTT field: auto-uppercase, single character only. `handleSave()`: validates PTT key (single letter/digit), writes all fields to config, calls `ConfigManager.save()` (atomic), shows success `Alert`, closes window. Changes apply immediately — backend reads `ConfigManager.get()` dynamically.
+- **FXML fields:** `pttKeyField` (TextField), `xttsEnabledCheckBox` (CheckBox), `sapiFallbackCheckBox` (CheckBox), `volumeSlider` (Slider), `languageChoice` (ChoiceBox — 16 languages), `saveButton` (Button), `volumeValueLabel` (Label).
+- **Depends on:** `ConfigManager`, `ValVoiceConfig`
+- **Depended on by:** `settings.fxml` (via `fx:controller`)
+- **Pattern:** MVC Controller
 
 ---
 
