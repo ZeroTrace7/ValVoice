@@ -435,13 +435,26 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 
 ### `module-info.java`
 - **Role:** JPMS module descriptor.
-- **Exports:** `com.someone.valvoicebackend`, `com.someone.valvoicegui`
-- **Requires:** `javafx.controls`, `javafx.media`, `javafx.fxml`, `java.logging`, `com.sun.jna`
+- **Exports:** `com.someone.valvoicebackend`, `com.someone.valvoicegui`, `com.someone.valvoicebackend.config`
+- **Requires:** `javafx.base`, `javafx.controls`, `javafx.fxml`, `javafx.graphics`, `javafx.media`, `com.jfoenix`, `org.slf4j`, `ch.qos.logback.classic`, `ch.qos.logback.core`, `com.google.gson`, `java.desktop`, `java.net.http`, `com.sun.jna`
+- **Opens:** `com.someone.valvoicegui` → `javafx.fxml, javafx.graphics`; `com.someone.valvoicebackend` → `javafx.fxml, javafx.graphics, com.google.gson`; `com.someone.valvoicebackend.config` → `com.google.gson`
 
 ### `SoundVolumeView.exe`
 - **Role:** Windows CLI for per-process audio device routing.
-- **Called by:** `InbuiltVoiceSynthesizer.java` via `ProcessBuilder`
+- **Called by:** `AudioRouterUtility.java` via `ProcessBuilder`
 - **Must be present** in project root at runtime.
+
+### `settings.fxml` *(Phase 7 Step 2)*
+- **Role:** FXML layout for the Settings window.
+- **Location:** `src/main/resources/com/someone/valvoicegui/settings.fxml`
+- **Controller:** `com.someone.valvoicegui.SettingsController`
+- **Contains:** PTT key TextField, XTTS/SAPI CheckBoxes, volume Slider with `%` label, language ChoiceBox, Save button. Dark theme inline styles matching Catppuccin palette.
+
+### `config.json` *(Phase 7 — runtime file)*
+- **Role:** Persistent user configuration. Created automatically on first launch.
+- **Location:** `%LOCALAPPDATA%\ValVoice\config.json`
+- **Managed by:** `ConfigManager.java`
+- **Fields:** `pttKey`, `xttsEnabled`, `sapiFallbackEnabled`, `playbackVolume`, `language`
 
 ---
 
@@ -462,17 +475,35 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 
 ## DATA FLOW (Numbered Steps)
 
+### Startup Sequence
+```
+Step 0a: Main.java checks for running Riot Client / Valorant → blocks if found.
+Step 0b: Main.java runs process reaper (kills orphaned mitm/engine processes).
+Step 0c: Main.java acquires single-instance file lock.
+Step 0d: EnvironmentValidator.runAllChecks() → logs SoundVolumeView, PowerShell, VB-Cable status.
+Step 0e: AudioRouterUtility.routeAudioToVirtualCable() → routes java.exe + javaw.exe to CABLE Input.
+Step 0f: ConfigManager.load() → reads/creates %LOCALAPPDATA%\ValVoice\config.json.
+Step 0g: Application.launch() → ValVoiceApplication → ValVoiceController.initialize().
+Step 0h: ValVoiceController starts ValVoiceBackend → launches MITM proxy + XTTS engine.
+```
+
+### Runtime TTS Pipeline
 ```
 Step 1: Riot Client sends encrypted XMPP to Riot servers.
 Step 2: valvoice-mitm.exe intercepts via local TLS proxy → outputs JSON to stdout.
 Step 3: ValVoiceBackend.java reads stdout stream → extracts raw XML string.
 Step 4: XmppStreamParser.java parses XML → produces ParsedMessage DTO.
 Step 5: ChatDataHandler.java validates message → checks channel flags + game state → produces Message.
-Step 6: VoiceGenerator.java dequeues Message → presses PTT key (JNA SendInput).
-Step 7: InbuiltVoiceSynthesizer.java sends HTTP POST to local XTTS engine → receives audio file.
-        (Fallback: SapiVoiceEngine.java generates .wav via PowerShell SAPI if engine is DEGRADED.)
-Step 8: SoundVolumeView.exe routes JVM audio output → VB Cable virtual device.
-Step 9: JavaFX MediaPlayer plays audio → heard in Valorant voice chat as microphone input.
+Step 6: VoiceGenerator.java dequeues Message → calls InbuiltVoiceSynthesizer.enqueueTts().
+Step 7: InbuiltVoiceSynthesizer queue consumer:
+        [if READY]  → HTTP POST to XTTS engine → receives MP3 → caches with MD5 hash.
+        [if DEGRADED] → SapiVoiceEngine generates .wav via PowerShell SAPI.
+        [if DEGRADED + probe cooldown] → probes port 5005, restores READY on success.
+Step 8: playAudio() → pressPtt() (JNA SendInput KEY_DOWN, 50ms delay)
+        → MediaPlayer.play() (Platform.runLater, CountDownLatch)
+        → [wait for clip end] → sleep 100ms → releasePtt() (KEY_UP, in finally block).
+Step 9: Audio flows: JavaFX MediaPlayer → CABLE Input → CABLE Output → Valorant Mic Input.
+Step 10: Teammates hear TTS in Valorant voice chat.
 ```
 
 ---
@@ -481,28 +512,37 @@ Step 9: JavaFX MediaPlayer plays audio → heard in Valorant voice chat as micro
 
 ```
 Main.java
+  ├─► EnvironmentValidator.runAllChecks()     ← Phase 8 diagnostics
+  ├─► AudioRouterUtility.routeAudioToVirtualCable()  ← Phase 5 audio routing
+  ├─► ConfigManager.load()                    ← Phase 7 config
   └─► ValVoiceApplication.java
         └─► ValVoiceController.java
-              ├─► ValVoiceBackend.java (GUI facade)
-              │     └─► ValVoiceBackend.java (backend orchestrator)
-              │           ├─► valvoice-mitm.exe (child process)
-              │           ├─► XmppStreamParser.java → ParsedMessage.java
-              │           ├─► ChatDataHandler.java
-              │           │     ├─► Chat.java (channel flags)
-              │           │     ├─► GameStateManager.java
-              │           │     ├─► ChatUtilityHandler.java
-              │           │     └─► VoiceGenerator.java
-              │           │           ├─► InbuiltVoiceSynthesizer.java
-              │           │           │     ├─► SoundVolumeView.exe
-              │           │           │     └─► JavaFX MediaPlayer
-              │           │           └─► SapiVoiceEngine.java (SAPI fallback)
-              │           ├─► APIHandler.java
-              │           │     ├─► ConnectionHandler.java
-              │           │     ├─► LockFileHandler.java → RiotClientDetails.java
-              │           │     ├─► RiotUtilityHandler.java
-              │           │     ├─► EntitlementsTokenResponse.java
-              │           │     └─► PlayerAccount.java
-              │           └─► Roster.java
+              ├─► SettingsController.java      ← Phase 7 settings window
+              │     └─► ConfigManager.java → ValVoiceConfig.java
+              ├─► ValVoiceBackend.java (GUI facade + engine lifecycle)
+              │     ├─► engine/valorantNarrator-agentVoices.exe (XTTS backend)
+              │     ├─► valvoice-mitm.exe (child process)
+              │     ├─► XmppStreamParser.java → ParsedMessage.java
+              │     ├─► ChatDataHandler.java
+              │     │     ├─► Chat.java (channel flags)
+              │     │     ├─► GameStateManager.java
+              │     │     ├─► ChatUtilityHandler.java
+              │     │     └─► VoiceGenerator.java
+              │     │           └─► InbuiltVoiceSynthesizer.java
+              │     │                 ├─► HTTP POST → 127.0.0.1:5005/speak
+              │     │                 ├─► MD5 cache (%LOCALAPPDATA%\ValVoice\cache\)
+              │     │                 ├─► SapiVoiceEngine.java (SAPI fallback)
+              │     │                 ├─► JavaFX MediaPlayer (playback)
+              │     │                 ├─► JNA SendInput (PTT injection)
+              │     │                 ├─► ConfigManager.java (runtime config reads)
+              │     │                 └─► SoundVolumeView.exe (via AudioRouterUtility)
+              │     ├─► APIHandler.java
+              │     │     ├─► ConnectionHandler.java
+              │     │     ├─► LockFileHandler.java → RiotClientDetails.java
+              │     │     ├─► RiotUtilityHandler.java
+              │     │     ├─► EntitlementsTokenResponse.java
+              │     │     └─► PlayerAccount.java
+              │     └─► Roster.java
               ├─► Chat.java
               ├─► VoiceGenerator.java
               └─► MessageType.java
