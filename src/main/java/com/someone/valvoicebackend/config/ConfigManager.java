@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 
 /**
  * ConfigManager - Persistent JSON configuration manager.
@@ -108,7 +109,9 @@ public final class ConfigManager {
     }
 
     /**
-     * Save current configuration to disk.
+     * Save current configuration to disk using atomic write pattern.
+     * Phase 7 Step 3: Writes to config.tmp then atomically renames to config.json.
+     * Prevents corrupted config files if the application crashes mid-write.
      * Thread-safe. Fails silently on error.
      */
     public static void save() {
@@ -122,10 +125,49 @@ public final class ConfigManager {
         try {
             Files.createDirectories(configPath.getParent());
             String json = GSON.toJson(config);
-            Files.writeString(configPath, json, StandardCharsets.UTF_8);
+
+            // Atomic write: write to .tmp first, then rename
+            Path tmpPath = configPath.resolveSibling(CONFIG_FILE_NAME + ".tmp");
+            Files.writeString(tmpPath, json, StandardCharsets.UTF_8);
+
+            try {
+                Files.move(tmpPath, configPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (UnsupportedOperationException e) {
+                // Fallback to regular move if atomic not supported
+                Files.move(tmpPath, configPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
             logger.debug("[Config] Config saved to: {}", configPath);
         } catch (IOException e) {
             logger.warn("[Config] Failed to save config: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Reload configuration from disk.
+     * Phase 7 Step 3: Re-reads config.json and replaces the in-memory instance.
+     * If the file does not exist or is corrupt, the existing config is retained.
+     * Never throws exceptions.
+     */
+    public static synchronized void reload() {
+        Path configPath = getConfigPath();
+
+        try {
+            if (Files.exists(configPath)) {
+                String json = Files.readString(configPath, StandardCharsets.UTF_8);
+                ValVoiceConfig loaded = GSON.fromJson(json, ValVoiceConfig.class);
+
+                if (loaded != null) {
+                    config = loaded;
+                    logger.info("[Config] Configuration reloaded from disk");
+                } else {
+                    logger.warn("[Config] Reload returned null, keeping existing config");
+                }
+            } else {
+                logger.debug("[Config] Config file not found during reload, keeping existing config");
+            }
+        } catch (Exception e) {
+            logger.warn("[Config] Failed to reload config (keeping existing): {}", e.getMessage());
         }
     }
 

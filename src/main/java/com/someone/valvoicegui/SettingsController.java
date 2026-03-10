@@ -36,6 +36,9 @@ public class SettingsController {
      */
     @FXML
     public void initialize() {
+        // Phase 7 Step 3: Reload config from disk to ensure UI reflects latest state
+        ConfigManager.reload();
+
         // Populate language options
         languageChoice.getItems().addAll("en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko");
 
@@ -44,14 +47,19 @@ public class SettingsController {
         volumeSlider.setMax(1.0);
         volumeSlider.setBlockIncrement(0.05);
 
-        // Load current config into UI
+        // Load current config into UI with null protection
         ValVoiceConfig config = ConfigManager.get();
 
-        pttKeyField.setText(config.pttKey);
+        // Phase 7 Step 3: Null config protection — safe defaults
+        String safePttKey = (config.pttKey != null && !config.pttKey.isEmpty()) ? config.pttKey : "V";
+        String safeLanguage = (config.language != null && !config.language.isEmpty()) ? config.language : "en";
+        double safeVolume = (config.playbackVolume > 0) ? config.playbackVolume : 0.75;
+
+        pttKeyField.setText(safePttKey);
         xttsEnabledCheckBox.setSelected(config.xttsEnabled);
         sapiFallbackCheckBox.setSelected(config.sapiFallbackEnabled);
-        volumeSlider.setValue(config.playbackVolume);
-        languageChoice.setValue(config.language);
+        volumeSlider.setValue(safeVolume);
+        languageChoice.setValue(safeLanguage);
 
         // Live volume label update
         if (volumeValueLabel != null) {
