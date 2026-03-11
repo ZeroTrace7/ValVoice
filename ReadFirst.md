@@ -750,6 +750,7 @@ java -jar ValVoice.jar
 | Env Validation       | 🟢 Stable       | 8.1   |
 | Release Packaging    | 🟢 Stable       | 8.2   |
 | Setup Wizard         | 🟢 Stable       | 8.3   |
+| Crash Logging        | 🟢 Stable       | —     |
 | Java Backend         | 🟢 Stable       | —     |
 | JavaFX UI            | 🟢 Stable       | —     |
 | Security Audit       | 🟢 Verified     | —     |

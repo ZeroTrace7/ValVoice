@@ -382,8 +382,47 @@ public class Main {
         // Must execute before JavaFX launch so config values are available to all systems
         ConfigManager.load();
 
+        // Cache safety: clean up stale .tmp files left by interrupted audio generation
+        cleanupTempCacheFiles();
+
         // 4. Launch JavaFX (backend started by ValVoiceController.initialize())
         logger.info("Launching JavaFX Application");
         Application.launch(ValVoiceApplication.class, args);
+    }
+
+    /**
+     * Clean up stale temporary files (.tmp) in the audio cache directory.
+     * These files are left behind when audio generation is interrupted (crash, kill, etc.).
+     * Runs once at startup. Only removes .tmp files — never touches .mp3 or .wav.
+     */
+    private static void cleanupTempCacheFiles() {
+        try {
+            Path cacheDir = Paths.get(System.getenv("LOCALAPPDATA"), "ValVoice", "cache");
+            if (!Files.exists(cacheDir) || !Files.isDirectory(cacheDir)) {
+                return;
+            }
+
+            File[] tmpFiles = cacheDir.toFile().listFiles((dir, name) -> name.endsWith(".tmp"));
+            if (tmpFiles == null || tmpFiles.length == 0) {
+                return;
+            }
+
+            int removed = 0;
+            for (File tmpFile : tmpFiles) {
+                try {
+                    if (tmpFile.delete()) {
+                        removed++;
+                    }
+                } catch (Exception e) {
+                    logger.debug("[Cache] Could not delete temp file {}: {}", tmpFile.getName(), e.getMessage());
+                }
+            }
+
+            if (removed > 0) {
+                logger.info("[Cache] Removed {} stale temporary audio file{}", removed, removed == 1 ? "" : "s");
+            }
+        } catch (Exception e) {
+            logger.debug("[Cache] Temp file cleanup failed (non-fatal): {}", e.getMessage());
+        }
     }
 }

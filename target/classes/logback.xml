@@ -41,23 +41,42 @@
         </encoder>
     </appender>
 
+    <!-- ===== GLOBAL CRASH LOG (Architecture-Agnostic) ===== -->
+    <!-- Captures all logs including uncaught exceptions to %LOCALAPPDATA%\ValVoice\logs\ -->
+    <appender name="CRASH_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOCALAPPDATA}/ValVoice/logs/valvoice.log</file>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- Daily rotation, 7 days retention -->
+            <fileNamePattern>${LOCALAPPDATA}/ValVoice/logs/valvoice.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>50MB</totalSizeCap>
+        </rollingPolicy>
+
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
     <!-- Root logger configuration -->
     <root level="debug">
         <!--
             Debug level shows ALL logs: DEBUG, INFO, WARN, ERROR
-            Both appenders active: logs go to console AND file
+            All appenders active: logs go to console, debug file, AND crash log
 
             Benefits:
             ✅ Console output for real-time monitoring
             ✅ File output for troubleshooting after crashes
+            ✅ Crash log at %LOCALAPPDATA%\ValVoice\logs\valvoice.log
             ✅ Persists across sessions
-            ✅ Automatic log rotation (max 10MB per file, 7 days history)
+            ✅ Automatic log rotation (daily, 7 days history)
 
             Change to "info" for less verbose output:
             <root level="info">
         -->
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
+        <appender-ref ref="CRASH_LOG"/>
     </root>
 
     <!-- Optional: Reduce verbosity for specific packages -->
