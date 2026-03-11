@@ -1,8 +1,5 @@
 package com.someone.valvoicebackend;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /**
  * Minimal HTML entity un-escape (and now escape) utility.
  *
@@ -21,30 +18,88 @@ import java.util.regex.Pattern;
  * 2. HtmlEscape.unescapeHtml() called ONCE → produces "<hello>"
  * 3. Content flows through ChatDataHandler → VoiceGenerator → TTS
  * 4. NO additional unescaping anywhere in the pipeline
+ *
+ * PERFORMANCE: Single-pass StringBuilder decoder. No intermediate String
+ * allocations. Handles named entities (&amp; &lt; &gt; &quot; &#39; &apos;)
+ * and numeric entities (&#65; &#x41;) in one pass.
  * ════════════════════════════════════════════════════════════════════════════════
  */
 public final class HtmlEscape {
     private HtmlEscape() {}
 
-    private static final Pattern DEC_ENTITY = Pattern.compile("&#(\\d+);");
-    private static final Pattern HEX_ENTITY = Pattern.compile("&#x([0-9a-fA-F]+);");
-
     public static String unescapeHtml(String input) {
         if (input == null || input.isEmpty()) return input;
-        String s = input;
-        // Basic named entities (HTML4 + HTML5)
-        s = s.replace("&amp;", "&");
-        s = s.replace("&lt;", "<");
-        s = s.replace("&gt;", ">");
-        s = s.replace("&quot;", "\"");
-        s = s.replace("&#39;", "'");
-        s = s.replace("&apos;", "'");  // HTML5 apostrophe entity
 
-        // Numeric decimal entities (e.g., &#65;)
-        s = replaceNumericEntities(s, DEC_ENTITY, 10);
-        // Numeric hex entities (e.g., &#x41;)
-        s = replaceNumericEntities(s, HEX_ENTITY, 16);
-        return s;
+        // Fast path: if no '&' present, no entities to decode
+        if (input.indexOf('&') == -1) {
+            return input;
+        }
+
+        StringBuilder result = new StringBuilder(input.length());
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+
+            if (c == '&') {
+                // Named entities (HTML4 + HTML5)
+                if (input.startsWith("&amp;", i)) {
+                    result.append('&');
+                    i += 4;
+                    continue;
+                }
+                if (input.startsWith("&lt;", i)) {
+                    result.append('<');
+                    i += 3;
+                    continue;
+                }
+                if (input.startsWith("&gt;", i)) {
+                    result.append('>');
+                    i += 3;
+                    continue;
+                }
+                if (input.startsWith("&quot;", i)) {
+                    result.append('"');
+                    i += 5;
+                    continue;
+                }
+                if (input.startsWith("&#39;", i)) {
+                    result.append('\'');
+                    i += 4;
+                    continue;
+                }
+                if (input.startsWith("&apos;", i)) {
+                    result.append('\'');
+                    i += 5;
+                    continue;
+                }
+
+                // Numeric entities: &#digits; or &#xhex;
+                if (i + 2 < input.length() && input.charAt(i + 1) == '#') {
+                    int semicolon = input.indexOf(';', i + 2);
+                    if (semicolon > 0 && semicolon - i <= 10) { // reasonable max entity length
+                        String inner = input.substring(i + 2, semicolon);
+                        int codePoint = -1;
+                        try {
+                            if (inner.length() > 0 && (inner.charAt(0) == 'x' || inner.charAt(0) == 'X')) {
+                                codePoint = Integer.parseInt(inner.substring(1), 16);
+                            } else {
+                                codePoint = Integer.parseInt(inner, 10);
+                            }
+                        } catch (NumberFormatException ignored) {
+                        }
+                        if (codePoint >= 0 && Character.isValidCodePoint(codePoint)) {
+                            result.appendCodePoint(codePoint);
+                            i = semicolon; // loop increment handles +1
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            result.append(c);
+        }
+
+        return result.toString();
     }
 
     public static String escapeHtml(String input) {
@@ -61,27 +116,6 @@ public final class HtmlEscape {
                 default: sb.append(c); break;
             }
         }
-        return sb.toString();
-    }
-
-    private static String replaceNumericEntities(String input, Pattern pattern, int radix) {
-        Matcher m = pattern.matcher(input);
-        StringBuffer sb = new StringBuffer();
-        while (m.find()) {
-            String replacement;
-            try {
-                int codePoint = Integer.parseInt(m.group(1), radix);
-                if (!Character.isValidCodePoint(codePoint)) {
-                    replacement = m.group();
-                } else {
-                    replacement = new String(Character.toChars(codePoint));
-                }
-            } catch (NumberFormatException e) {
-                replacement = m.group();
-            }
-            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
-        }
-        m.appendTail(sb);
         return sb.toString();
     }
 }
