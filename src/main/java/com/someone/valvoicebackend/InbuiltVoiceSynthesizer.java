@@ -347,7 +347,9 @@ public class InbuiltVoiceSynthesizer {
 
     private void initializePowerShell() {
         try {
-            powershellProcess = new ProcessBuilder("powershell.exe", "-NoExit", "-Command", "-").start();
+            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoExit", "-Command", "-");
+            pb.redirectErrorStream(true);  // Merge stderr into stdout to prevent buffer deadlock
+            powershellProcess = pb.start();
             powershellWriter = new PrintWriter(new OutputStreamWriter(powershellProcess.getOutputStream()), true);
             powershellReader = new BufferedReader(new InputStreamReader(powershellProcess.getInputStream()));
         } catch (IOException e) {
@@ -471,7 +473,12 @@ public class InbuiltVoiceSynthesizer {
         try {
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
-            pb.start().waitFor();
+            Process proc = pb.start();
+            // Consume output to prevent OS buffer deadlock
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                while (reader.readLine() != null) { /* drain */ }
+            }
+            proc.waitFor();
         } catch (Exception e) {
             logger.debug("Command failed: {}", String.join(" ", command));
         }

@@ -368,6 +368,10 @@ public class Main {
                     ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", processName);
                     pb.redirectErrorStream(true);
                     Process proc = pb.start();
+                    // Consume output to prevent OS buffer deadlock
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                        while (reader.readLine() != null) { /* drain */ }
+                    }
                     proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
                 } catch (Exception e) {
                     // Best-effort, ignore failures
