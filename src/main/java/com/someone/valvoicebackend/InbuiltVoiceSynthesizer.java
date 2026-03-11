@@ -22,10 +22,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
+import java.nio.file.attribute.FileTime;
 
 import com.sun.jna.Library;
 import com.sun.jna.Native;
@@ -233,6 +235,13 @@ public class InbuiltVoiceSynthesizer {
         consumer.setDaemon(true);
         consumer.start();
         logger.debug("[TTS Queue] Consumer thread started");
+
+        // ─────────────────────────────────────────────
+        // STALE CACHE CLEANUP (Production Stability)
+        // ─────────────────────────────────────────────
+        // Async cleanup of orphaned .tmp files from interrupted atomic writes.
+        // Must not block constructor or delay UI startup.
+        CompletableFuture.runAsync(this::cleanupStaleTempFiles);
     }
 
     public InbuiltVoiceSynthesizer() {
@@ -726,6 +735,48 @@ public class InbuiltVoiceSynthesizer {
         Path cacheDir = Path.of(localAppData, CACHE_DIR_NAME);
         Files.createDirectories(cacheDir);
         return cacheDir;
+    }
+
+    // ─────────────────────────────────────────────
+    // STALE CACHE CLEANUP (Production Stability)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Remove orphaned .tmp files left behind by interrupted atomic writes.
+     * Only deletes .tmp files older than 3 minutes to avoid race conditions
+     * with active write operations. Best-effort: never throws.
+     *
+     * Called asynchronously at startup via CompletableFuture.runAsync().
+     */
+    private void cleanupStaleTempFiles() {
+        try {
+            Path cacheDir = getCacheDirectory();
+
+            if (!Files.exists(cacheDir)) {
+                return;
+            }
+
+            try (Stream<Path> files = Files.list(cacheDir)) {
+                files
+                    .filter(p -> p.toString().endsWith(".tmp"))
+                    .forEach(p -> {
+                        try {
+                            FileTime lastModified = Files.getLastModifiedTime(p);
+                            long ageMinutes =
+                                    (System.currentTimeMillis() - lastModified.toMillis()) / 60000;
+
+                            // Only delete files older than 3 minutes to avoid race conditions
+                            if (ageMinutes > 3) {
+                                Files.deleteIfExists(p);
+                                logger.debug("[Cache] Deleted stale tmp file {}", p.getFileName());
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    });
+            }
+        } catch (Exception e) {
+            logger.warn("[Cache] Failed to cleanup stale temp files", e);
+        }
     }
 
     /**
