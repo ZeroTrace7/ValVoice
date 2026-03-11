@@ -1038,7 +1038,7 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         logger.info("Voice selected: {}", selectedVoice);
         showInformation("Voice Selected", "You selected: " + selectedVoice);
 
-        // CRITICAL FIX: Store the selected voice in VoiceGenerator so all future TTS uses it
+        // Store the selected voice in VoiceGenerator for all future TTS calls
         if (VoiceGenerator.isInitialized()) {
             VoiceGenerator.getInstance().setCurrentVoice(selectedVoice);
             logger.debug("VoiceGenerator.currentVoice updated to: {}", selectedVoice);

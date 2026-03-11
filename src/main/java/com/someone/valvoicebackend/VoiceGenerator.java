@@ -84,7 +84,7 @@ public class VoiceGenerator {
      * PTT key is pressed before TTS starts and released after TTS completes.
      * Since speakInbuiltVoice() is blocking, PTT is held exactly during audio playback.
      */
-    public void speakVoice(String text, String voice, short rate) {
+    public void speakVoice(String voice, String text, short rate) {
         if (text == null || text.isEmpty() || !synthesizer.isReady()) return;
 
         logger.debug("Narrating: '{}' (voice={})",
@@ -128,7 +128,7 @@ public class VoiceGenerator {
     }
 
     public void speak(String text) {
-        speakVoice(text, currentVoice, currentVoiceRate);
+        speakVoice(currentVoice, text, currentVoiceRate);
     }
 
     /**
