@@ -2,6 +2,7 @@ package com.someone.valvoicebackend;
 
 import com.someone.valvoicegui.ValVoiceBackend;
 import com.someone.valvoicebackend.config.ConfigManager;
+import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -673,26 +674,15 @@ public class InbuiltVoiceSynthesizer {
     }
 
     /**
-     * Build JSON payload safely without string concatenation injection risk.
-     * Uses simple escaping for JSON string values.
+     * Build JSON payload safely using Gson serialization.
+     * Eliminates manual string escaping which is fragile with unexpected characters.
      */
     private String buildJsonPayload(String agent, String text, String language) {
-        // Escape special JSON characters in text
-        String escapedText = text
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-
-        String escapedAgent = agent
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"");
-
-        return String.format(
-                "{\"agent\":\"%s\",\"text\":\"%s\",\"language\":\"%s\"}",
-                escapedAgent, escapedText, language
-        );
+        java.util.Map<String, String> payload = new java.util.LinkedHashMap<>();
+        payload.put("agent", agent);
+        payload.put("text", text);
+        payload.put("language", language);
+        return new Gson().toJson(payload);
     }
 
     // === CACHE LAYER START ===
