@@ -290,6 +290,21 @@ public class Main {
      * Application entry point - pure launcher.
      */
     public static void main(String[] args) {
+        // ===== GLOBAL CRASH LOGGING (Architecture-Agnostic) =====
+        // Ensure logs directory exists before any logging occurs
+        try {
+            Path logsDir = Paths.get(System.getenv("LOCALAPPDATA"), "ValVoice", "logs");
+            Files.createDirectories(logsDir);
+        } catch (Exception e) {
+            // Best-effort: if directory creation fails, logback will still attempt to write
+            System.err.println("[ValVoice] Warning: Could not create logs directory: " + e.getMessage());
+        }
+
+        // Register global uncaught exception handler to capture fatal crashes
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            logger.error("Uncaught exception in thread: {}", thread.getName(), throwable);
+        });
+
         logger.info("Starting {} Application", APP_NAME);
 
         // Phase 1: Startup Guard (Cold Boot Check)
