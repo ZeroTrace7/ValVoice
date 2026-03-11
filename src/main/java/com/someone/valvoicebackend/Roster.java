@@ -75,6 +75,15 @@ public class Roster {
         Pattern.CASE_INSENSITIVE
     );
 
+    // Pattern to find <item ...> or <item ... /> tags (used by fallback parser)
+    private static final Pattern ITEM_TAG_PATTERN = Pattern.compile("<item\\s+([^>]*?)/?>");
+
+    // Pattern to extract jid (PUUID@domain) from item attributes (used by fallback parser)
+    private static final Pattern JID_PATTERN = Pattern.compile("jid=['\"]([^'\"@]+)@[^'\"]*['\"]");
+
+    // Pattern to extract name attribute excluding game_name (used by fallback parser)
+    private static final Pattern NAME_ATTR_PATTERN = Pattern.compile("(?<!game_)name=['\"]([^'\"]+)['\"]");
+
     private Roster() {
         logger.info("[Roster] Initialized - ready to track player names");
     }
@@ -229,18 +238,16 @@ public class Roster {
         int count = 0;
 
         try {
-            // Simple pattern to find <item ...> or <item ... /> tags
-            Pattern itemPattern = Pattern.compile("<item\\s+([^>]*?)/?>");
-            Matcher itemMatcher = itemPattern.matcher(xml);
+            // Reuse pre-compiled pattern for <item ...> tags (performance: no Pattern.compile in loop)
+            Matcher itemMatcher = ITEM_TAG_PATTERN.matcher(xml);
 
             while (itemMatcher.find()) {
                 try {
                     String attrs = itemMatcher.group(1);
                     if (attrs == null) continue;
 
-                    // Extract jid (PUUID@domain)
-                    Pattern jidPattern = Pattern.compile("jid=['\"]([^'\"@]+)@[^'\"]*['\"]");
-                    Matcher jidMatcher = jidPattern.matcher(attrs);
+                    // Extract jid (PUUID@domain) using pre-compiled pattern
+                    Matcher jidMatcher = JID_PATTERN.matcher(attrs);
                     String puuid = jidMatcher.find() ? jidMatcher.group(1) : null;
 
                     if (puuid == null || puuid.isEmpty()) continue;
@@ -252,10 +259,9 @@ public class Roster {
                         displayName = gameNameMatcher.group(1);
                     }
 
-                    // Fallback to name attribute
+                    // Fallback to name attribute using pre-compiled pattern
                     if (displayName == null || displayName.isEmpty()) {
-                        Pattern namePattern = Pattern.compile("(?<!game_)name=['\"]([^'\"]+)['\"]");
-                        Matcher nameMatcher = namePattern.matcher(attrs);
+                        Matcher nameMatcher = NAME_ATTR_PATTERN.matcher(attrs);
                         if (nameMatcher.find()) {
                             displayName = nameMatcher.group(1);
                         }
