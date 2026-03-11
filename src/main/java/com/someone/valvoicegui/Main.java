@@ -16,6 +16,7 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Properties;
@@ -303,6 +304,38 @@ public class Main {
         // Register global uncaught exception handler to capture fatal crashes
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             logger.error("Uncaught exception in thread: {}", thread.getName(), throwable);
+
+            try {
+                Path crashFile = Paths.get(
+                    System.getenv("LOCALAPPDATA"),
+                    "ValVoice",
+                    "logs",
+                    "crash.log"
+                );
+
+                // Extract full stack trace
+                java.io.StringWriter sw = new java.io.StringWriter();
+                throwable.printStackTrace(new java.io.PrintWriter(sw));
+
+                // Create timestamp
+                String time = java.time.LocalDateTime.now().toString();
+
+                // Build formatted crash entry
+                String logEntry = String.format(
+                    "\n\n--- CRASH at %s ---\nThread: %s\n%s",
+                    time,
+                    thread.getName(),
+                    sw.toString()
+                );
+
+                Files.writeString(
+                    crashFile,
+                    logEntry,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND
+                );
+            } catch (Exception ignored) {
+            }
         });
 
         logger.info("Starting {} Application", APP_NAME);
