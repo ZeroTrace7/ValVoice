@@ -1,5 +1,6 @@
 package com.someone.valvoicegui;
 
+import com.someone.valvoicebackend.VoiceGenerator;
 import com.someone.valvoicebackend.config.ConfigManager;
 import com.someone.valvoicebackend.config.ValVoiceConfig;
 import javafx.fxml.FXML;
@@ -116,6 +117,32 @@ public class SettingsController {
 
         // Step 5: Close the window
         saveButton.getScene().getWindow().hide();
+    }
+
+    /**
+     * Voice pipeline self-test.
+     * Routes through VoiceGenerator → Queue → PTT → Synthesizer → Playback → VB-Cable.
+     * Allows users to verify the entire broadcast pipeline without launching Valorant.
+     */
+    @FXML
+    private void handleTestVoice() {
+        try {
+            if (!VoiceGenerator.isInitialized()) {
+                showError("Voice system is not initialized yet. Please wait for startup to complete.");
+                return;
+            }
+
+            String testText = "ValVoice system test successful";
+
+            // Route through VoiceGenerator to ensure PTT is triggered
+            VoiceGenerator.getInstance().speak(testText);
+
+            logger.info("[SelfTest] Voice pipeline test queued via VoiceGenerator");
+
+        } catch (Exception e) {
+            logger.error("[SelfTest] Failed to run voice test", e);
+            showError("Voice test failed: " + e.getMessage());
+        }
     }
 
     /**

@@ -59,8 +59,11 @@
 
     <Separator style="-fx-background-color: #45475a;" />
 
-    <!-- Save Button -->
-    <HBox alignment="CENTER_RIGHT">
+    <!-- Action Buttons -->
+    <HBox alignment="CENTER_RIGHT" spacing="10">
+        <Button text="🔊 Test Voice" onAction="#handleTestVoice"
+                prefWidth="140.0" prefHeight="36.0"
+                style="-fx-background-color: #a6e3a1; -fx-text-fill: #1e1e2e; -fx-font-weight: bold; -fx-background-radius: 6; -fx-cursor: hand;" />
         <Button fx:id="saveButton" text="Save &amp; Close" onAction="#handleSave"
                 prefWidth="140.0" prefHeight="36.0"
                 style="-fx-background-color: #89b4fa; -fx-text-fill: #1e1e2e; -fx-font-weight: bold; -fx-background-radius: 6; -fx-cursor: hand;" />
