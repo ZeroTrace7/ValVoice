@@ -228,14 +228,18 @@ public class VoiceGenerator {
             if (speedStr != null) {
                 try {
                     currentVoiceRate = Short.parseShort(speedStr);
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid voice rate in config: {}", speedStr);
+                }
             }
 
             String keyStr = props.getProperty(Main.PROP_PTT_KEY);
             if (keyStr != null) {
                 try {
                     keyEvent = Integer.parseInt(keyStr);
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid PTT key in config: {}", keyStr);
+                }
             }
 
             String pttStr = props.getProperty(Main.PROP_PTT_ENABLED);

@@ -151,7 +151,9 @@ public class Main {
     private static void showStartupError(String title, String message) {
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.warn("Failed to set system LookAndFeel", e);
+        }
         Toolkit.getDefaultToolkit().beep();
         JOptionPane.showMessageDialog(null, message, title, JOptionPane.ERROR_MESSAGE);
     }
