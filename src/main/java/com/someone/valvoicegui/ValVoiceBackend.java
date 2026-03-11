@@ -161,6 +161,12 @@ public class ValVoiceBackend {
     /** Interval between socket poll attempts during startup. */
     private static final int POLL_INTERVAL_MS = 500;
 
+    // ===== RESTART GUARD (Production Stability) =====
+    /** Maximum automatic restart attempts before permanently entering DEGRADED. */
+    private static final int MAX_RESTART_ATTEMPTS = 1;
+    /** Current restart attempt counter. Resets to 0 on successful recovery. */
+    private int restartAttempts = 0;
+
     /**
      * Private constructor - use getInstance() or start()
      */
@@ -361,6 +367,7 @@ public class ValVoiceBackend {
     public synchronized void setEngineReady() {
         if (engineState == EngineState.DEGRADED) {
             engineState = EngineState.READY;
+            restartAttempts = 0;
             org.slf4j.LoggerFactory.getLogger(ValVoiceBackend.class)
                     .info("[Engine] XTTS backend recovered — switching back to primary engine");
         }
@@ -473,6 +480,27 @@ public class ValVoiceBackend {
                 logger.info("[TTS Engine] READY after {}ms", elapsed);
                 engineState = EngineState.READY;
                 engineRunning.set(true);
+
+                // ===== RESTART GUARD: TTS engine crash watcher =====
+                // Lightweight daemon thread monitors the TTS process for unexpected exits.
+                // Only triggers restart if exit is NOT caused by intentional shutdown.
+                final Process watchedProcess = ttsProcess;
+                Thread ttsWatcher = new Thread(() -> {
+                    try {
+                        int exitCode = watchedProcess.waitFor();
+                        if (exitCode != 0 &&
+                            engineState != EngineState.STOPPING &&
+                            engineState != EngineState.STOPPED) {
+                            logger.warn("[Backend] TTS engine process exited unexpectedly with code {}", exitCode);
+                            handleProcessCrash();
+                        }
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }, "tts-crash-watcher");
+                ttsWatcher.setDaemon(true);
+                ttsWatcher.start();
+
                 return true;
             } catch (IOException e) {
                 // Not ready yet, wait and retry
@@ -563,6 +591,41 @@ public class ValVoiceBackend {
         engineRunning.set(false);
         engineState = EngineState.STOPPED;
         logger.info("[TTS Engine] Stopped");
+    }
+
+    // ===== RESTART GUARD: Crash Recovery =====
+
+    /**
+     * Handle unexpected process crash by attempting automatic restart.
+     * Called by watcher threads when a child process exits with non-zero code
+     * outside of intentional shutdown.
+     *
+     * Behavior:
+     * - If restart limit reached → enter DEGRADED state permanently
+     * - Otherwise → attempt stopEngine() + startEngine() once
+     * - On restart failure → enter DEGRADED state
+     *
+     * Thread-safe: synchronized to prevent concurrent restart attempts.
+     */
+    private synchronized void handleProcessCrash() {
+        if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+            logger.error("[Backend] Restart limit reached ({}/{}). Engine entering DEGRADED state.",
+                    restartAttempts, MAX_RESTART_ATTEMPTS);
+            engineState = EngineState.DEGRADED;
+            return;
+        }
+
+        restartAttempts++;
+        logger.warn("[Backend] Attempting automatic backend restart (attempt {}/{})",
+                restartAttempts, MAX_RESTART_ATTEMPTS);
+
+        try {
+            stopEngine();
+            startEngine();
+        } catch (Exception e) {
+            logger.error("[Backend] Failed to restart backend", e);
+            engineState = EngineState.DEGRADED;
+        }
     }
 
     /**
