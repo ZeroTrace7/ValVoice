@@ -1525,14 +1525,13 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             // Get current Java process PID
             long pid = ProcessHandle.current().pid();
 
-            // VN-parity command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
-            String command = fileLocation + " /SetAppDefault \"CABLE Input\" all " + pid;
-            logger.debug("[AudioRouting] Executing: {}", command);
+            // SECURITY HARDENING: Use ProcessBuilder via centralized utility (CWE-78 mitigation)
+            logger.debug("[AudioRouting] Routing Java PID {} via AudioRouterUtility", pid);
 
-            Runtime.getRuntime().exec(command);
+            AudioRouterUtility.routeProcessToCable(fileLocation, pid);
             logger.info("[AudioRouting] ✓ Main Java process (PID {}) routed to CABLE Input", pid);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             // VN-parity: Wrap in try/catch - log and continue, do not propagate fatal exception
             logger.error("[AudioRouting] Failed to route main process audio: {}", e.getMessage());
             Platform.runLater(() -> {

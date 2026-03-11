@@ -439,19 +439,16 @@ public class InbuiltVoiceSynthesizer {
         try {
             long pid = powershellProcess.pid();
 
-            // PHASE 2 SECURITY: Execute using absolute path (soundVolumeViewPath already validated)
-            // Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
-            String command = soundVolumeViewPath + " /SetAppDefault \"CABLE Input\" all " + pid;
-            logger.debug("[AudioRouting] Executing (absolute path): {}", soundVolumeViewPath);
+            // SECURITY HARDENING: Use ProcessBuilder via centralized utility (CWE-78 mitigation)
+            logger.debug("[AudioRouting] Routing PowerShell PID {} via AudioRouterUtility", pid);
 
-            Process routeProcess = Runtime.getRuntime().exec(command);
-            int exitCode = routeProcess.waitFor();
+            boolean routed = AudioRouterUtility.routeProcessToCable(soundVolumeViewPath, pid);
 
-            if (exitCode == 0) {
+            if (routed) {
                 logger.info("[AudioRouting] ✓ PowerShell TTS (PID {}) routed to CABLE Input", pid);
                 audioRoutingConfigured = true;
             } else {
-                logger.warn("[AudioRouting] SoundVolumeView returned exit code {} - routing may have failed", exitCode);
+                logger.warn("[AudioRouting] SoundVolumeView routing failed for PID {} - routing may have failed", pid);
                 audioRoutingConfigured = false;
             }
 

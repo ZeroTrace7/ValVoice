@@ -179,5 +179,67 @@ public final class AudioRouterUtility {
             return false;
         }
     }
+
+    /**
+     * Route a specific process (by PID) to VB-Cable using SoundVolumeView.
+     *
+     * Security: Uses ProcessBuilder with separated arguments to prevent command injection (CWE-78).
+     * Handles paths containing spaces safely.
+     *
+     * Command: SoundVolumeView.exe /SetAppDefault "CABLE Input" all {PID}
+     *
+     * @param soundVolumeViewPath Absolute path to SoundVolumeView.exe
+     * @param pid Process ID to route
+     * @return true if routing succeeded, false otherwise
+     */
+    public static boolean routeProcessToCable(String soundVolumeViewPath, long pid) {
+        if (soundVolumeViewPath == null || soundVolumeViewPath.isEmpty()) {
+            logger.warn("[AudioRouter] Cannot route PID {}: SoundVolumeView path is null", pid);
+            return false;
+        }
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                soundVolumeViewPath,
+                "/SetAppDefault",
+                VB_CABLE_DEVICE,
+                "all",
+                String.valueOf(pid)
+            );
+            pb.redirectErrorStream(true);
+
+            Process routeProcess = pb.start();
+
+            // Consume output to prevent process blocking
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(routeProcess.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    logger.debug("[AudioRouter] {}", line);
+                }
+            }
+
+            boolean completed = routeProcess.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            if (!completed) {
+                routeProcess.destroyForcibly();
+                logger.warn("[AudioRouter] Timed out routing PID {}", pid);
+                return false;
+            }
+
+            int exitCode = routeProcess.exitValue();
+            if (exitCode == 0) {
+                logger.debug("[AudioRouter] Routed PID {} to VB-Cable", pid);
+                return true;
+            } else {
+                logger.debug("[AudioRouter] SoundVolumeView returned exit code {} for PID {}", exitCode, pid);
+                return false;
+            }
+
+        } catch (Exception e) {
+            logger.warn("[AudioRouter] Failed to route process {}", pid, e);
+            return false;
+        }
+    }
 }
 
