@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -135,11 +136,12 @@ public final class SapiVoiceEngine {
             // Log fallback activation with warning level for visibility
             logger.warn("[Fallback] XTTS engine degraded — using Windows SAPI fallback");
 
-            // Step 2: Sanitize text for PowerShell
-            String sanitizedText = sanitizeForPowerShell(processedText);
+            // SECURITY: Base64 encode text to prevent PowerShell injection (CWE-78)
+            String encodedText = Base64.getEncoder()
+                    .encodeToString(processedText.getBytes(StandardCharsets.UTF_8));
 
-            // Step 3: Generate WAV using PowerShell
-            boolean success = generateWavWithPowerShell(sanitizedText, wavFile);
+            // Step 3: Generate WAV using PowerShell with Base64-encoded text
+            boolean success = generateWavWithPowerShell(encodedText, wavFile);
 
             // ═══════════════════════════════════════════════════════
             // PHASE 6 STEP 2: Verify file exists after generation
@@ -161,33 +163,6 @@ public final class SapiVoiceEngine {
             logger.error("[Fallback] Error during SAPI generation: {}", e.getMessage());
             return null;
         }
-    }
-
-    /**
-     * Sanitize text for safe PowerShell string injection.
-     *
-     * Phase 6 Step 2: Enhanced sanitization for PowerShell single-quoted strings.
-     * Escapes characters that could break or exploit PowerShell commands.
-     *
-     * @param text The raw input text (already truncated to MAX_TEXT_LENGTH)
-     * @return Sanitized text safe for PowerShell
-     */
-    private static String sanitizeForPowerShell(String text) {
-        if (text == null) {
-            return "";
-        }
-
-        // Escape single quotes (PowerShell uses '' to escape ' in single-quoted strings)
-        // Example: "Don't peek" becomes "Don''t peek"
-        String sanitized = text.replace("'", "''");
-
-        // Escape backtick (PowerShell escape character)
-        sanitized = sanitized.replace("`", "``");
-
-        // Escape dollar sign (prevents variable expansion)
-        sanitized = sanitized.replace("$", "`$");
-
-        return sanitized;
     }
 
     /**
@@ -220,30 +195,28 @@ public final class SapiVoiceEngine {
     /**
      * Generate WAV file using PowerShell and Windows SAPI.
      *
-     * Executes:
-     * Add-Type -AssemblyName System.Speech;
-     * $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-     * $s.SetOutputToWaveFile('PATH');
-     * $s.Speak('TEXT');
-     * $s.Dispose();
+     * SECURITY: Text is received as Base64-encoded string.
+     * PowerShell decodes it internally before speaking.
+     * This eliminates command injection risk entirely.
      *
-     * @param sanitizedText The sanitized text to speak
+     * @param encodedText Base64-encoded text to speak
      * @param wavFile The output WAV file path
      * @return true if generation succeeded, false otherwise
      */
-    private static boolean generateWavWithPowerShell(String sanitizedText, Path wavFile) {
+    private static boolean generateWavWithPowerShell(String encodedText, Path wavFile) {
         try {
-            // Build PowerShell command
+            // Build PowerShell command with Base64-safe text
             String absolutePath = wavFile.toAbsolutePath().toString().replace("\\", "\\\\");
 
             String command = String.format(
                 "Add-Type -AssemblyName System.Speech; " +
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
                 "$s.SetOutputToWaveFile('%s'); " +
-                "$s.Speak('%s'); " +
+                "$decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%s')); " +
+                "$s.Speak($decoded); " +
                 "$s.Dispose();",
                 absolutePath,
-                sanitizedText
+                encodedText
             );
 
             // Create ProcessBuilder

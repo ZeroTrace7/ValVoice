@@ -19,6 +19,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -501,7 +502,11 @@ public class InbuiltVoiceSynthesizer {
         short sapiRate = (short) (rate / 10.0 - 10);
 
         try {
-            String escapedText = text.replace("'", "''");
+            // SECURITY: Base64 encode text to prevent PowerShell injection (CWE-78)
+            // Text never appears as a raw string in the PowerShell command.
+            // PowerShell decodes it internally, eliminating injection risk entirely.
+            String encodedText = Base64.getEncoder()
+                    .encodeToString(text.getBytes(StandardCharsets.UTF_8));
             String sentinel = "TTS_DONE_" + System.currentTimeMillis();
 
             String command = String.format(
@@ -510,9 +515,10 @@ public class InbuiltVoiceSynthesizer {
                 "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
                 "$speak.SelectVoice('%s'); " +
                 "$speak.Rate = %d; " +
-                "$speak.Speak('%s') " +
+                "$decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%s')); " +
+                "$speak.Speak($decoded) " +
                 "} catch { } finally { Write-Output '%s' }",
-                voice, sapiRate, escapedText, sentinel);
+                voice, sapiRate, encodedText, sentinel);
 
             powershellWriter.println(command);
             logger.debug("Speaking: '{}' (voice={}, rate={})",

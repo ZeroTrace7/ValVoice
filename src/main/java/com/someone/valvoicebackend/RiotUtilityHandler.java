@@ -73,22 +73,20 @@ public class RiotUtilityHandler {
 
             int responseCode = conn.getResponseCode();
             if (responseCode == 200) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = in.readLine()) != null) {
-                    response.append(line);
-                }
-                in.close();
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        response.append(line);
+                    }
 
-                // Parse JSON response to extract self player ID
-                JsonObject presences = gson.fromJson(response.toString(), JsonObject.class);
-                if (presences != null && presences.has("presences")) {
-                    // The presences endpoint returns your own presence data
-                    // Extract the puuid from the first presence entry
-                    String selfPuuid = extractSelfPuuid(presences);
-                    if (selfPuuid != null) {
-                        return selfPuuid;
+                    // Parse JSON response to extract self player ID
+                    JsonObject presences = gson.fromJson(response.toString(), JsonObject.class);
+                    if (presences != null && presences.has("presences")) {
+                        String selfPuuid = extractSelfPuuid(presences);
+                        if (selfPuuid != null) {
+                            return selfPuuid;
+                        }
                     }
                 }
             } else {
@@ -136,17 +134,17 @@ public class RiotUtilityHandler {
 
             int responseCode = conn.getResponseCode();
             if (responseCode == 200) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = in.readLine()) != null) {
-                    response.append(line);
-                }
-                in.close();
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        response.append(line);
+                    }
 
-                JsonObject session = gson.fromJson(response.toString(), JsonObject.class);
-                if (session != null && session.has("puuid")) {
-                    return session.get("puuid").getAsString();
+                    JsonObject session = gson.fromJson(response.toString(), JsonObject.class);
+                    if (session != null && session.has("puuid")) {
+                        return session.get("puuid").getAsString();
+                    }
                 }
             }
         } catch (Exception e) {
