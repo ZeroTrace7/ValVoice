@@ -19,11 +19,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.AWTException;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.EnumSet;
+import java.util.*;
 import java.util.concurrent.*;
 
 /**
@@ -66,7 +67,7 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     @FXML public Button voiceSettingsSync;
 
     // ComboBoxes
-    @FXML public ComboBox<String> voices;
+    @FXML public ComboBox<VoiceProfile> voices;
     @FXML public ComboBox<String> sources;
     @FXML public ComboBox<String> addIgnoredPlayer;
     @FXML public ComboBox<String> removeIgnoredPlayer;
@@ -114,7 +115,7 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     private volatile boolean shutdownRequested = false;
 
     // Cache for voice enumeration to avoid repeated PowerShell calls
-    private volatile java.util.List<String> cachedVoices = null;
+    private volatile java.util.List<VoiceProfile> cachedVoices = null;
     private volatile long voicesCacheTimestamp = 0;
     private static final long VOICES_CACHE_DURATION_MS = 300_000; // 5 minutes
 
@@ -126,6 +127,51 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
      * Audio Routing Tool (used for TTS routing and listen-through setup)
      */
     private static final String SOUND_VOLUME_VIEW_EXE = "SoundVolumeView.exe";
+
+    // ========== VoiceProfile: Separation of Presentation and State ==========
+
+    /**
+     * Alias dictionary for agent voice display names.
+     * Maps internal filename id → fun display name shown in ComboBox.
+     */
+    private static final Map<String, String> ALIASES = new HashMap<>();
+    static {
+        ALIASES.put("jett", "knifewifu");
+        // Add any future aliases here
+    }
+
+    /**
+     * Data model for ComboBox items.
+     * {@code id} is the internal filename (passed to VoiceGenerator / XTTS engine).
+     * {@code displayName} is the user-facing label rendered in the dropdown.
+     */
+    public static class VoiceProfile {
+        public final String id;
+        public final String displayName;
+
+        public VoiceProfile(String id, String displayName) {
+            this.id = id;
+            this.displayName = displayName;
+        }
+
+        @Override
+        public String toString() {
+            return displayName; // This is what the ComboBox renders
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            VoiceProfile that = (VoiceProfile) o;
+            return Objects.equals(id, that.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(id);
+        }
+    }
 
     // New: internal flags for robust status logic (don't rely on label text)
     private volatile boolean vbCableDetectedFlag = false;
@@ -217,9 +263,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                 // Ensure voice selection changes are always synced to VoiceGenerator
                 if (voices != null) {
                     voices.valueProperty().addListener((obs, oldVal, newVal) -> {
-                        if (newVal != null && !newVal.isBlank() && VoiceGenerator.isInitialized()) {
-                            VoiceGenerator.getInstance().setCurrentVoice(newVal);
-                            logger.debug("Voice synced to VoiceGenerator: {}", newVal);
+                        if (newVal != null && VoiceGenerator.isInitialized()) {
+                            VoiceGenerator.getInstance().setCurrentVoice(newVal.id);
+                            logger.debug("Voice synced to VoiceGenerator: {} (display: {})", newVal.id, newVal.displayName);
                         }
                     });
                 }
@@ -653,6 +699,47 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         loadVoicesAsync(false);
     }
 
+    /**
+     * STEP 3: Dynamic directory scanner for agent voice profiles.
+     * Scans the agents/ folder for .mp3/.wav files and builds VoiceProfile objects
+     * with alias display names from the ALIASES dictionary.
+     *
+     * @return list of VoiceProfile objects discovered in the agents directory
+     */
+    private List<VoiceProfile> loadAvailableVoices() {
+        File agentsDir = new File(System.getProperty("user.dir"), "engine" + File.separator + "agents");
+
+        if (!agentsDir.exists() || !agentsDir.isDirectory()) {
+            logger.warn("Agents directory not found at: {} — returning fallback", agentsDir.getAbsolutePath());
+            return Collections.singletonList(new VoiceProfile("default", "System Default"));
+        }
+
+        File[] audioFiles = agentsDir.listFiles((dir, name) -> {
+            String lower = name.toLowerCase(Locale.ROOT);
+            return lower.endsWith(".mp3") || lower.endsWith(".wav");
+        });
+
+        if (audioFiles == null || audioFiles.length == 0) {
+            logger.info("No .mp3/.wav files found in agents directory: {}", agentsDir.getAbsolutePath());
+            return Collections.singletonList(new VoiceProfile("default", "System Default"));
+        }
+
+        List<VoiceProfile> profiles = new ArrayList<>();
+        for (File f : audioFiles) {
+            String fileName = f.getName();
+            // Strip extension to get the id (e.g., "jett.mp3" → "jett")
+            String id = fileName.substring(0, fileName.lastIndexOf('.'));
+            // Look up alias; fallback to capitalized id
+            String display = ALIASES.getOrDefault(id, id.substring(0, 1).toUpperCase() + id.substring(1));
+            profiles.add(new VoiceProfile(id, display));
+        }
+
+        profiles.sort(Comparator.comparing(vp -> vp.displayName, String.CASE_INSENSITIVE_ORDER));
+        logger.info("Loaded {} agent voice profile(s) from {}: {}", profiles.size(), agentsDir.getAbsolutePath(),
+            profiles.stream().map(vp -> vp.id + " → " + vp.displayName).collect(java.util.stream.Collectors.joining(", ")));
+        return profiles;
+    }
+
     private void loadVoicesAsync(boolean isRefresh) {
         if (voices == null) return;
 
@@ -678,7 +765,21 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             }
         });
 
-        CompletableFuture.supplyAsync(this::enumerateWindowsVoices, scheduledExecutor)
+        CompletableFuture.supplyAsync(() -> {
+                // Combine agent voices (from directory scanner) + Windows SAPI voices
+                List<VoiceProfile> combined = new ArrayList<>();
+
+                // Agent voices with aliases from the filesystem scanner
+                combined.addAll(loadAvailableVoices());
+
+                // Windows SAPI/TTS voices (wrapped as VoiceProfile — id == displayName)
+                List<String> sapiVoices = enumerateWindowsVoices();
+                for (String sapi : sapiVoices) {
+                    combined.add(new VoiceProfile(sapi, sapi));
+                }
+
+                return combined;
+            }, scheduledExecutor)
             .thenAccept(list -> {
                 // Update cache
                 cachedVoices = list;
@@ -689,14 +790,22 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                     voices.setPromptText("Select a voice");
 
                     // Prefer the persisted voice from VoiceGenerator config, otherwise use first available
-                    String preferredVoice = null;
+                    String preferredVoiceId = null;
                     if (VoiceGenerator.isInitialized()) {
-                        preferredVoice = VoiceGenerator.getInstance().getCurrentVoice();
+                        preferredVoiceId = VoiceGenerator.getInstance().getCurrentVoice();
                     }
 
-                    if (preferredVoice != null && list.contains(preferredVoice)) {
-                        voices.setValue(preferredVoice);
-                        logger.info("Restored persisted voice selection: {}", preferredVoice);
+                    if (preferredVoiceId != null) {
+                        final String matchId = preferredVoiceId;
+                        VoiceProfile match = list.stream()
+                            .filter(vp -> vp.id.equals(matchId))
+                            .findFirst().orElse(null);
+                        if (match != null) {
+                            voices.setValue(match);
+                            logger.info("Restored persisted voice selection: {} (display: {})", match.id, match.displayName);
+                        } else if (voices.getValue() == null && !list.isEmpty()) {
+                            voices.setValue(list.get(0));
+                        }
                     } else if (voices.getValue() == null && !list.isEmpty()) {
                         voices.setValue(list.get(0));
                     }
@@ -1031,27 +1140,28 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
 
     @FXML
     public void selectVoice() {
-        String selectedVoice = voices.getValue();
-        if (selectedVoice == null || selectedVoice.isBlank()) {
+        VoiceProfile selected = voices.getValue();
+        if (selected == null) {
             return; // ignore spurious events during refresh
         }
-        logger.info("Voice selected: {}", selectedVoice);
-        showInformation("Voice Selected", "You selected: " + selectedVoice);
+        String selectedVoiceId = selected.id;
+        logger.info("Voice selected: {} (display: {})", selectedVoiceId, selected.displayName);
+        showInformation("Voice Selected", "You selected: " + selected.displayName);
 
-        // Store the selected voice in VoiceGenerator for all future TTS calls
+        // Store the selected voice id in VoiceGenerator for all future TTS calls
         if (VoiceGenerator.isInitialized()) {
-            VoiceGenerator.getInstance().setCurrentVoice(selectedVoice);
-            logger.debug("VoiceGenerator.currentVoice updated to: {}", selectedVoice);
+            VoiceGenerator.getInstance().setCurrentVoice(selectedVoiceId);
+            logger.debug("VoiceGenerator.currentVoice updated to: {}", selectedVoiceId);
         }
 
         // Play a brief sample using VoiceGenerator for proper coordination
         if (VoiceGenerator.isInitialized()) {
             int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
-            VoiceGenerator.getInstance().speakVoice(selectedVoice, "Sample voice confirmation", (short) uiRate);
+            VoiceGenerator.getInstance().speakVoice(selectedVoiceId, "Sample voice confirmation", (short) uiRate);
         } else if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             // Fallback to direct call if VoiceGenerator not initialized
             int uiRate = rateSlider != null ? (int) Math.round(rateSlider.getValue()) : 50;
-            inbuiltSynth.speakInbuiltVoice(selectedVoice, "Sample voice confirmation", (short) uiRate);
+            inbuiltSynth.speakInbuiltVoice(selectedVoiceId, "Sample voice confirmation", (short) uiRate);
         }
     }
 
