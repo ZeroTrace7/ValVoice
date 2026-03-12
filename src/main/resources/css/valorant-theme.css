@@ -77,8 +77,7 @@
 /* ========== VALORANT NAVIGATION BUTTONS ========== */
 .nav-button {
     -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+
 }
 
 .nav-button:hover {
@@ -104,10 +103,10 @@
 /* ========== VALORANT CARDS ========== */
 .card {
     -fx-background-color: linear-gradient(to bottom right, #1c252e, #0f1923);
-    -fx-background-radius: 8;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+
 }
 
 .card-title {
@@ -122,8 +121,7 @@
     -fx-text-fill: #ece8e1;
     -fx-font-weight: bold;
     -fx-font-size: 13px;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
     -fx-padding: 10 20;
@@ -140,18 +138,17 @@
     -fx-background-color: linear-gradient(to bottom, #1c252e, #0f1923);
 }
 
-/* Primary Button (Accent Red) */
+/* Primary Button (Accent Red) — Tactical "Snipped" Style */
 .primary-button {
-    -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
     -fx-border-color: transparent;
+    -fx-shape: "M 0 0 L 100 0 L 100 80 L 90 100 L 0 100 Z";
 }
 
 .primary-button:hover {
-    -fx-background-color: linear-gradient(to bottom, #ff5a68, #ff4655);
+    -fx-background-color: #ff5e6b;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 12, 0, 0, 0);
 }
 
@@ -164,8 +161,7 @@
     -fx-background-color: transparent;
     -fx-text-fill: #ff4655;
     -fx-font-weight: bold;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+
     -fx-border-color: #ff4655;
     -fx-border-width: 2;
 }
@@ -191,10 +187,10 @@
 .combo-box,
 .setting-combo {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+
 }
 
 .combo-box:hover,
@@ -232,10 +228,10 @@
     -fx-background-color: #1c252e;
     -fx-text-fill: #ece8e1;
     -fx-prompt-text-fill: #9aa0a6;
-    -fx-background-radius: 4;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+
 }
 
 .text-field:focused,
@@ -253,12 +249,12 @@
 /* ========== VALORANT SLIDERS ========== */
 .slider .track {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
 }
 
 .slider .thumb {
     -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
-    -fx-background-radius: 50%;
+
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 6, 0, 0, 0);
 }
 
@@ -278,22 +274,22 @@
 /* ========== VALORANT PROGRESS BARS ========== */
 .progress-bar {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
 }
 
 .progress-bar > .track {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
 }
 
 .progress-bar > .bar {
     -fx-background-color: linear-gradient(to right, #ff4655, #ff6b77);
-    -fx-background-radius: 4;
+
 }
 
 .quota-bar > .bar {
     -fx-background-color: linear-gradient(to right, #ff4655, #ff8a94);
-    -fx-background-radius: 4;
+
 }
 
 /* ========== VALORANT SCROLLBARS ========== */
@@ -305,13 +301,13 @@
 .scroll-bar:vertical .track,
 .scroll-bar:horizontal .track {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
 }
 
 .scroll-bar:vertical .thumb,
 .scroll-bar:horizontal .thumb {
     -fx-background-color: #ff4655;
-    -fx-background-radius: 4;
+
 }
 
 .scroll-bar:vertical .thumb:hover,
@@ -347,10 +343,10 @@
 /* ========== VALORANT STAT BOXES ========== */
 .stat-box {
     -fx-background-color: rgba(255, 70, 85, 0.1);
-    -fx-background-radius: 8;
+
     -fx-border-color: rgba(255, 70, 85, 0.3);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+
 }
 
 .stat-value {
@@ -417,10 +413,10 @@
 /* ========== VALORANT TTS INDICATOR ========== */
 .tts-indicator {
     -fx-background-color: rgba(255, 70, 85, 0.2);
-    -fx-background-radius: 6;
+
     -fx-border-color: #ff4655;
     -fx-border-width: 1;
-    -fx-border-radius: 6;
+
     -fx-padding: 6 12;
 }
 
@@ -437,8 +433,7 @@
 
 /* ========== VALORANT TOAST NOTIFICATIONS ========== */
 .toast {
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
+
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 4);
 }
 
@@ -494,10 +489,10 @@
 
 .routing-status-box {
     -fx-background-color: rgba(0, 0, 0, 0.2);
-    -fx-background-radius: 6;
+
     -fx-padding: 12;
     -fx-border-color: rgba(255, 255, 255, 0.05);
-    -fx-border-radius: 6;
+
 }
 
 /* ============================================================================
@@ -541,8 +536,7 @@
 
 .check-box > .box {
     -fx-background-color: #2a3441;
-    -fx-background-radius: 12;
-    -fx-border-radius: 12;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
     -fx-padding: 2;
@@ -554,7 +548,7 @@
 
 .check-box > .box > .mark {
     -fx-background-color: #9aa0a6;
-    -fx-background-radius: 50%;
+
     -fx-padding: 8;
     -fx-shape: "M0,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0";
     -fx-scale-x: 0.9;
@@ -626,10 +620,10 @@
 .tooltip {
     -fx-background-color: #1c252e;
     -fx-text-fill: #ece8e1;
-    -fx-background-radius: 4;
+
     -fx-border-color: rgba(255, 70, 85, 0.3);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+
     -fx-padding: 8 12;
     -fx-font-size: 12px;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 8, 0, 0, 2);
@@ -638,10 +632,10 @@
 /* ========== CONTEXT MENU STYLING ========== */
 .context-menu {
     -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+
     -fx-padding: 4;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 4);
 }
@@ -698,4 +692,22 @@
 
 .hyperlink:visited {
     -fx-text-fill: #cc3844;
+}
+
+/* ========== PREMIUM HEADER TYPOGRAPHY (Bebas Neue) ========== */
+/* Applied to headers and titles only; body text uses Segoe UI */
+.header-label,
+.title-label,
+.window-title {
+    -fx-font-family: "Bebas Neue";
+}
+
+/* ========== CUSTOM TITLE BAR BUTTON STYLES ========== */
+.title-bar-button:hover {
+    -fx-background-color: rgba(255, 70, 85, 0.2);
+}
+
+.title-bar-close:hover {
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #ffffff;
 }
