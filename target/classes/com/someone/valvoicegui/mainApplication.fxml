@@ -20,6 +20,8 @@
 
     <!-- ========== TOP BAR (Draggable) ========== -->
     <AnchorPane fx:id="topBar" prefHeight="50.0" prefWidth="900.0" styleClass="top-bar"
+                onMousePressed="#handleTitleBarMousePressed"
+                onMouseDragged="#handleTitleBarMouseDragged"
                 AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0">
         <HBox alignment="CENTER_LEFT" prefHeight="50.0" prefWidth="900.0" spacing="10">
             <padding><Insets left="20" /></padding>
@@ -31,12 +33,27 @@
                 </image>
             </ImageView>
 
-            <!-- Title directly (removed unnecessary VBox) -->
-            <Label fx:id="windowTitle" text="ValVoice" styleClass="window-title">
+            <!-- App Title -->
+            <Label fx:id="windowTitle" text="ValVoice" styleClass="window-title header-label">
                 <font>
                     <Font name="System Bold" size="18.0" />
                 </font>
             </Label>
+
+            <!-- Spacer pushes window controls to the right -->
+            <Region HBox.hgrow="ALWAYS" />
+
+            <!-- Minimize Button -->
+            <Button fx:id="minimizeButton" text="_" onAction="#handleMinimize"
+                    styleClass="title-bar-button"
+                    style="-fx-background-color: transparent; -fx-text-fill: #ECE8E1; -fx-font-size: 16px; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 0 14 4 14;"
+                    mouseTransparent="false" />
+
+            <!-- Close Button -->
+            <Button fx:id="closeButton" text="✕" onAction="#handleClose"
+                    styleClass="title-bar-button title-bar-close"
+                    style="-fx-background-color: transparent; -fx-text-fill: #ECE8E1; -fx-font-size: 14px; -fx-font-weight: bold; -fx-cursor: hand; -fx-padding: 0 14 0 14;"
+                    mouseTransparent="false" />
         </HBox>
     </AnchorPane>
 

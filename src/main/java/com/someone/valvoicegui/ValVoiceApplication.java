@@ -9,7 +9,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.layout.Region;
-import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
@@ -112,9 +112,8 @@ public class ValVoiceApplication extends Application {
                 ValVoiceApplication.class.getResource("/com/someone/valvoicegui/setup-wizard.fxml")
         );
         Scene scene = new Scene(fxmlLoader.load());
-        scene.setFill(Color.TRANSPARENT);
 
-        stage.initStyle(StageStyle.TRANSPARENT);
+        stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("ValVoice Setup");
         stage.setScene(scene);
         stage.setResizable(false);
@@ -145,8 +144,17 @@ public class ValVoiceApplication extends Application {
         scene.getStylesheets().add(valorantTheme);
         logger.info("Valorant Protocol theme loaded: {}", valorantTheme);
 
+        // Load premium tactical header font (Bebas Neue)
+        java.io.InputStream fontStream = getClass().getResourceAsStream("/fonts/BebasNeue-Regular.ttf");
+        if (fontStream != null) {
+            Font.loadFont(fontStream, 14);
+            logger.info("Bebas Neue font loaded");
+        } else {
+            logger.warn("BebasNeue-Regular.ttf not found — header font will fall back to system font");
+        }
+
         // Configure stage
-        stage.initStyle(StageStyle.TRANSPARENT);
+        stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("ValVoice");
 
         // Create system tray icon
@@ -155,7 +163,7 @@ public class ValVoiceApplication extends Application {
         // Keep app running when window is closed
         Platform.setImplicitExit(false);
 
-        scene.setFill(Color.TRANSPARENT);
+        scene.setFill(javafx.scene.paint.Color.web("#0F1923"));
         stage.setScene(scene);
         stage.setResizable(false);
         stage.show();

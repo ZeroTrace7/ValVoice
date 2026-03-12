@@ -2,14 +2,17 @@ package com.someone.valvoicegui;
 
 import com.someone.valvoicebackend.EnvironmentValidator;
 import com.someone.valvoicebackend.config.ConfigManager;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
@@ -39,6 +42,8 @@ public class SetupWizardController {
 
     // ========== FXML Fields ==========
 
+    @FXML private HBox titleBar;
+
     @FXML private StackPane wizardPages;
 
     @FXML private VBox page1Welcome;
@@ -49,6 +54,8 @@ public class SetupWizardController {
     @FXML private Button backButton;
     @FXML private Button nextButton;
     @FXML private Button finishButton;
+    @FXML private Button minimizeButton;
+    @FXML private Button closeButton;
 
     // Environment check labels (Step 2)
     @FXML private Label statusVbCable;
@@ -61,6 +68,10 @@ public class SetupWizardController {
 
     /** Cached validation results from environment check */
     private Map<String, Boolean> validationResults;
+
+    // Window drag state
+    private double xOffset = 0;
+    private double yOffset = 0;
 
     /**
      * Called automatically after FXML load.
@@ -98,6 +109,45 @@ public class SetupWizardController {
             currentPage--;
             showPage(currentPage);
         }
+    }
+
+    // ========== Custom Title Bar: Drag & Window Controls ==========
+
+    /**
+     * Records cursor offset when title bar is pressed, enabling drag movement.
+     */
+    @FXML
+    private void handleTitleBarMousePressed(MouseEvent event) {
+        xOffset = event.getSceneX();
+        yOffset = event.getSceneY();
+    }
+
+    /**
+     * Moves the window while the title bar is dragged.
+     */
+    @FXML
+    private void handleTitleBarMouseDragged(MouseEvent event) {
+        Stage stage = (Stage) titleBar.getScene().getWindow();
+        stage.setX(event.getScreenX() - xOffset);
+        stage.setY(event.getScreenY() - yOffset);
+    }
+
+    /**
+     * Minimizes the wizard window to the taskbar.
+     */
+    @FXML
+    private void handleMinimize() {
+        Stage stage = (Stage) minimizeButton.getScene().getWindow();
+        stage.setIconified(true);
+    }
+
+    /**
+     * Closes the wizard window and exits the application.
+     */
+    @FXML
+    private void handleClose() {
+        Platform.exit();
+        System.exit(0);
     }
 
     /**
@@ -224,12 +274,20 @@ public class SetupWizardController {
         String valorantTheme = getClass().getResource("/css/valorant-theme.css").toExternalForm();
         scene.getStylesheets().add(valorantTheme);
 
+        // Load premium tactical header font (Bebas Neue)
+        java.io.InputStream fontStream = getClass().getResourceAsStream("/fonts/BebasNeue-Regular.ttf");
+        if (fontStream != null) {
+            Font.loadFont(fontStream, 14);
+        } else {
+            logger.warn("[Wizard] BebasNeue-Regular.ttf not found — header font will fall back to system font");
+        }
+
         // Configure new stage (same as ValVoiceApplication.launchMainApp)
         Stage mainStage = new Stage();
-        mainStage.initStyle(StageStyle.TRANSPARENT);
+        mainStage.initStyle(StageStyle.UNDECORATED);
         mainStage.setTitle("ValVoice");
 
-        scene.setFill(Color.TRANSPARENT);
+        scene.setFill(javafx.scene.paint.Color.web("#0F1923"));
         mainStage.setScene(scene);
         mainStage.setResizable(false);
 
@@ -249,4 +307,3 @@ public class SetupWizardController {
         logger.info("[Wizard] Main application launched successfully");
     }
 }
-

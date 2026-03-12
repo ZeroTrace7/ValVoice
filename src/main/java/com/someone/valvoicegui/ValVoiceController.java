@@ -105,8 +105,16 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     // TTS Speaking indicator (visual feedback)
     @FXML public HBox ttsIndicator;
 
+    // Custom title bar window controls
+    @FXML public Button minimizeButton;
+    @FXML public Button closeButton;
+
     // ========== State Variables ==========
     private boolean isLoading = true;
+
+    // Window drag state
+    private double xOffset = 0;
+    private double yOffset = 0;
 
     private InbuiltVoiceSynthesizer inbuiltSynth; // persistent System.Speech synthesizer (optional)
 
@@ -1073,6 +1081,45 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             showPanel(panelSettings);
             highlightActiveButton(btnSettings);
         }
+    }
+
+    // ========== Custom Title Bar: Drag & Window Controls ==========
+
+    /**
+     * Records the cursor offset when the title bar is pressed, enabling drag movement.
+     */
+    @FXML
+    public void handleTitleBarMousePressed(javafx.scene.input.MouseEvent event) {
+        xOffset = event.getSceneX();
+        yOffset = event.getSceneY();
+    }
+
+    /**
+     * Moves the window while the title bar is dragged.
+     */
+    @FXML
+    public void handleTitleBarMouseDragged(javafx.scene.input.MouseEvent event) {
+        javafx.stage.Stage stage = (javafx.stage.Stage) topBar.getScene().getWindow();
+        stage.setX(event.getScreenX() - xOffset);
+        stage.setY(event.getScreenY() - yOffset);
+    }
+
+    /**
+     * Minimizes the application window to the taskbar.
+     */
+    @FXML
+    public void handleMinimize() {
+        javafx.stage.Stage stage = (javafx.stage.Stage) minimizeButton.getScene().getWindow();
+        stage.setIconified(true);
+    }
+
+    /**
+     * Cleanly shuts down backend services and exits the application.
+     */
+    @FXML
+    public void handleClose() {
+        shutdownServices();
+        System.exit(0);
     }
 
 
