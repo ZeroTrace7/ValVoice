@@ -1,36 +1,40 @@
-/* ========== VALORANT PROTOCOL THEME ========== */
-/* Dark gamer aesthetic with Valorant red (#FF4655) accents */
+/* ========== VALORANT PROTOCOL THEME — Base Stylesheet ========== */
+/* Sharp tactical aesthetic with Valorant red (#FF4655) accents */
+/* ALL -fx-background-radius and -fx-border-radius set to 0 */
 
 /* ========== ROOT & GLOBAL STYLES ========== */
 .root {
-    -fx-background-color: transparent;
+    -fx-background-color: #0F1923;
     -fx-font-family: 'Segoe UI', 'Arial', sans-serif;
-    -fx-base: #101823;
+    -fx-base: #0F1923;
     -fx-accent: #FF4655;
 }
 
 /* ========== TOP BAR ========== */
 .top-bar {
-    -fx-background-color: linear-gradient(to right, #0d1117, #161b22);
-    -fx-background-radius: 15 15 0 0;
+    -fx-background-color: #0F1923;
+    -fx-background-radius: 0;
     -fx-effect: none;
     -fx-border-color: #FF4655;
     -fx-border-width: 0 0 2 0;
+    -fx-border-radius: 0;
 }
 
 .window-title {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-font-size: 20px;
+    -fx-font-size: 16px;
+    -fx-font-family: 'Bebas Neue';
 }
 
 /* ========== SIDEBAR ========== */
 .sidebar {
-    -fx-background-color: linear-gradient(to bottom, #0d1117, #161b22);
-    -fx-background-radius: 0 0 0 15;
+    -fx-background-color: #0F1923;
+    -fx-background-radius: 0;
     -fx-effect: none;
-    -fx-border-color: #21262d;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 0 1 0 0;
+    -fx-border-radius: 0;
 }
 
 .nav-item {
@@ -39,20 +43,19 @@
 }
 
 .nav-label {
-    -fx-text-fill: #8b949e;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 11px;
     -fx-font-weight: 600;
 }
 
 /************************ NAV BUTTON STABILITY PATCH ************************/
-/* Simplified navigation buttons: no shadow, no opacity or scale changes */
 .nav-button {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
     -fx-border-width: 2;
-    -fx-background-radius: 8;
-    -fx-border-radius: 8;
-    -fx-padding: 0; /* ensure stable size */
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-padding: 0;
     -fx-effect: none;
 }
 .nav-button:hover {
@@ -64,18 +67,16 @@
     -fx-border-color: #FF4655;
     -fx-effect: none;
 }
-/* Ensure icon sizes stay stable */
 .nav-button > .graphic > ImageView {
     -fx-fit-width: 26;
     -fx-fit-height: 26;
 }
 
 /************************ FONT NORMALIZATION ************************/
-/* Slightly harmonize text sizes to avoid perceived layout jumps when switching panels */
 .info-label, .info-value, .setting-label, .hint-label, .stat-label, .stat-value, .quota-label, .card-title, .info-text {
     -fx-font-smoothing-type: lcd;
 }
-.card-title { -fx-font-size: 18px; -fx-font-weight: bold; }
+.card-title { -fx-font-size: 20px; -fx-font-weight: bold; -fx-font-family: 'Bebas Neue'; }
 .info-label, .info-value, .setting-label { -fx-font-size: 14px; }
 .info-text { -fx-font-size: 14px; }
 .stat-label { -fx-font-size: 13px; }
@@ -84,17 +85,14 @@
 .quota-label { -fx-font-size: 15px; -fx-font-weight: 600; }
 
 /************************ REMOVE PERCEIVED SHRINK SOURCES ************************/
-/* Remove drop shadows on frequently hovered structural elements */
 .card { -fx-effect: none; }
 .stat-box { -fx-effect: none; }
 .button, .primary-button, .secondary-button, .discord-button { -fx-effect: none; }
-
-/* Keep pressed state visually consistent without translation */
 .button:pressed, .primary-button:pressed, .secondary-button:pressed, .discord-button:pressed { -fx-translate-y: 0; }
 
 /* ========== CONTENT PANELS ========== */
 .content-panel {
-    -fx-background-color: #101823;
+    -fx-background-color: #0F1923;
     -fx-background-radius: 0;
 }
 
@@ -104,10 +102,9 @@
 }
 
 .scroll-pane > .viewport {
-    -fx-background-color: #101823;
+    -fx-background-color: #0F1923;
 }
 
-/* === FLUSH LAYOUT PATCH (remove internal gaps) === */
 .scroll-pane { -fx-padding: 0; }
 .scroll-pane > .viewport { -fx-padding: 0; }
 .content-panel { -fx-padding: 0; }
@@ -117,13 +114,13 @@
 }
 
 .scroll-pane .scroll-bar:vertical .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 5;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .scroll-pane .scroll-bar:vertical .thumb {
     -fx-background-color: #FF4655;
-    -fx-background-radius: 5;
+    -fx-background-radius: 0;
 }
 
 .scroll-pane .scroll-bar:vertical .thumb:hover {
@@ -132,103 +129,100 @@
 
 /* ========== PAGE HEADERS ========== */
 .page-title {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-font-size: 24px;
+    -fx-font-size: 28px;
+    -fx-font-family: 'Bebas Neue';
 }
 
 .page-subtitle {
-    -fx-text-fill: #8b949e;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 15px;
 }
 
 /* ========== CARDS ========== */
 .card {
-    -fx-background-color: linear-gradient(to bottom right, #161b22, #0d1117);
-    -fx-background-radius: 12;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-effect: none;
-    -fx-border-color: #21262d;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 12;
+    -fx-border-radius: 0;
 }
 
-/* Removed .card:hover variant to prevent any hover-induced visual size change */
-
 .card-title {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-font-size: 18px;
+    -fx-font-size: 20px;
+    -fx-font-family: 'Bebas Neue';
 }
 
 /* ========== SETTINGS CARD VARIANTS ========== */
-/* Subtle accent colors for different setting categories */
-
 .settings-card-voice {
     -fx-border-color: rgba(255, 70, 85, 0.3);
-    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(255, 70, 85, 0.05));
+    -fx-background-color: #1F2E3C;
 }
 
 .settings-card-routing {
     -fx-border-color: rgba(0, 200, 150, 0.3);
-    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(0, 200, 150, 0.05));
+    -fx-background-color: #1F2E3C;
 }
 
 .settings-card-injection {
     -fx-border-color: rgba(100, 150, 255, 0.3);
-    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(100, 150, 255, 0.05));
+    -fx-background-color: #1F2E3C;
 }
 
 .settings-card-sync {
     -fx-border-color: rgba(255, 180, 0, 0.3);
-    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(255, 180, 0, 0.05));
+    -fx-background-color: #1F2E3C;
 }
 
 .settings-card-players {
     -fx-border-color: rgba(180, 100, 255, 0.3);
-    -fx-background-color: linear-gradient(to bottom right, #161b22, rgba(180, 100, 255, 0.05));
+    -fx-background-color: #1F2E3C;
 }
 
-/* Routing status box inside settings card */
 .routing-status-box {
     -fx-background-color: rgba(0, 0, 0, 0.2);
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-padding: 15;
     -fx-border-color: rgba(255, 255, 255, 0.05);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
 }
 
 /* ========== LABELS ========== */
 .section-title {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
     -fx-font-size: 18px;
 }
 
 .info-label {
-    -fx-text-fill: #8b949e;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 14px;
 }
 
 .info-value {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
 }
 
 .setting-label {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-font-weight: 600;
 }
 
 .hint-label {
-    -fx-text-fill: #6e7681;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 12px;
 }
 
 .stat-label {
-    -fx-text-fill: #8b949e;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 13px;
 }
 
@@ -244,7 +238,7 @@
 }
 
 .info-text {
-    -fx-text-fill: #c9d1d9;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-line-spacing: 2px;
 }
@@ -255,104 +249,105 @@
 }
 
 .version-label {
-    -fx-text-fill: #6e7681;
+    -fx-text-fill: #9AA0A6;
 }
 
 /* ========== LOADING SCREEN ========== */
 .loading-label {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 18px;
 }
 
 /* ========== PROGRESS BARS ========== */
 .progress-bar {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 10;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .progress-bar > .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 10;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .progress-bar > .bar {
     -fx-background-color: linear-gradient(to right, #FF4655, #ff6b77);
-    -fx-background-radius: 10;
+    -fx-background-radius: 0;
     -fx-background-insets: 0;
 }
 
 .quota-bar {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 6;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .quota-bar > .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 6;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .quota-bar > .bar {
     -fx-background-color: linear-gradient(to right, #FF4655, #ff8f98);
-    -fx-background-radius: 6;
+    -fx-background-radius: 0;
     -fx-background-insets: 0;
 }
 
 /* ========== BUTTONS ========== */
 .button {
-    -fx-background-color: linear-gradient(to bottom, #21262d, #161b22);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-cursor: hand;
     -fx-padding: 10 20 10 20;
     -fx-effect: none;
-    -fx-border-color: #30363d;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
 }
 
 .button:hover {
-    -fx-background-color: linear-gradient(to bottom, #30363d, #21262d);
+    -fx-background-color: #2A3D50;
     -fx-border-color: #FF4655;
 }
 
 .button:pressed {
-    -fx-background-color: linear-gradient(to bottom, #161b22, #0d1117);
+    -fx-background-color: #0F1923;
     -fx-translate-y: 0;
 }
 
 .primary-button {
-    -fx-background-color: linear-gradient(to bottom, #FF4655, #d63a47);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-cursor: hand;
     -fx-padding: 10 20 10 20;
     -fx-effect: none;
+    -fx-shape: "M 0 0 L 100 0 L 100 80 L 90 100 L 0 100 Z";
 }
 
 .primary-button:hover {
-    -fx-background-color: linear-gradient(to bottom, #ff6b77, #FF4655);
+    -fx-background-color: #ff5e6b;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 10, 0, 0, 2);
 }
 
 .primary-button:pressed {
-    -fx-background-color: linear-gradient(to bottom, #d63a47, #b8303b);
+    -fx-background-color: #cc3844;
 }
 
 .secondary-button {
-    -fx-background-color: linear-gradient(to bottom, #21262d, #161b22);
+    -fx-background-color: transparent;
     -fx-text-fill: #FF4655;
     -fx-font-size: 14px;
     -fx-font-weight: 600;
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-cursor: hand;
     -fx-padding: 10 20 10 20;
     -fx-border-color: #FF4655;
     -fx-border-width: 2;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
     -fx-effect: none;
 }
 
@@ -361,30 +356,30 @@
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 2);
 }
 
-
 .discord-button {
-    -fx-background-color: linear-gradient(to bottom, #5865F2, #4752C4);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #5865F2;
+    -fx-text-fill: #FFFFFF;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-cursor: hand;
     -fx-padding: 10 20 10 20;
     -fx-effect: none;
+    -fx-border-radius: 0;
 }
 
 .discord-button:hover {
-    -fx-background-color: linear-gradient(to bottom, #6875F5, #5865F2);
+    -fx-background-color: #6875F5;
     -fx-effect: dropshadow(gaussian, rgba(88, 101, 242, 0.5), 10, 0, 0, 2);
 }
 
 /* ========== COMBO BOXES ========== */
 .combo-box {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 8;
-    -fx-border-color: #30363d;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 2;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
 }
 
 .combo-box:hover {
@@ -396,13 +391,13 @@
 }
 
 .combo-box .list-cell {
-    -fx-background-color: #161b22;
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
     -fx-padding: 8 12 8 12;
 }
 
 .combo-box .list-cell:hover {
-    -fx-background-color: #21262d;
+    -fx-background-color: #2A3D50;
 }
 
 .combo-box .list-cell:selected {
@@ -410,19 +405,20 @@
 }
 
 .combo-box-popup .list-view {
-    -fx-background-color: #161b22;
-    -fx-border-color: #30363d;
+    -fx-background-color: #1F2E3C;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 2;
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
 }
 
 .setting-combo {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 8;
-    -fx-border-color: #30363d;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 2;
-    -fx-border-radius: 8;
-    -fx-text-fill: #ffffff;
+    -fx-border-radius: 0;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-padding: 10 15 10 15;
 }
@@ -436,20 +432,20 @@
 }
 
 .setting-combo .list-cell {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
 }
 
 /* ========== TEXT FIELDS ========== */
 .text-field {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 8;
-    -fx-border-color: #30363d;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 2;
-    -fx-border-radius: 8;
-    -fx-text-fill: #ffffff;
+    -fx-border-radius: 0;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 14px;
     -fx-padding: 10 15 10 15;
-    -fx-prompt-text-fill: #6e7681;
+    -fx-prompt-text-fill: #9AA0A6;
 }
 
 .text-field:focused {
@@ -458,11 +454,11 @@
 }
 
 .keybind-field {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 8;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-border-color: #FF4655;
     -fx-border-width: 2;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
     -fx-text-fill: #FF4655;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
@@ -476,33 +472,33 @@
 }
 
 .slider .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-pref-height: 8;
 }
 
 .slider .thumb {
-    -fx-background-color: linear-gradient(to bottom, #FF4655, #d63a47);
-    -fx-background-radius: 10;
+    -fx-background-color: #FF4655;
+    -fx-background-radius: 0;
     -fx-pref-width: 20;
     -fx-pref-height: 20;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 8, 0, 0, 0);
 }
 
 .slider .thumb:hover {
-    -fx-background-color: linear-gradient(to bottom, #ff6b77, #FF4655);
+    -fx-background-color: #ff5e6b;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.7), 10, 0, 0, 0);
 }
 
 .setting-slider .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-pref-height: 8;
 }
 
 .setting-slider .thumb {
-    -fx-background-color: linear-gradient(to bottom, #FF4655, #d63a47);
-    -fx-background-radius: 10;
+    -fx-background-color: #FF4655;
+    -fx-background-radius: 0;
     -fx-pref-width: 18;
     -fx-pref-height: 18;
 }
@@ -510,9 +506,9 @@
 /* ========== TOGGLE BUTTONS (JFoenix) ========== */
 .jfx-toggle-button {
     -fx-toggle-color: #FF4655;
-    -fx-toggle-line-color: #161b22;
-    -fx-untoggle-color: #6e7681;
-    -fx-untoggle-line-color: #161b22;
+    -fx-toggle-line-color: #1F2E3C;
+    -fx-untoggle-color: #9AA0A6;
+    -fx-untoggle-line-color: #1F2E3C;
 }
 
 .jfx-toggle-button .thumb {
@@ -525,18 +521,18 @@
 
 /* ========== SEPARATOR ========== */
 .separator .line {
-    -fx-background-color: #21262d;
+    -fx-background-color: rgba(255,255,255,0.1);
     -fx-border-width: 1 0 0 0;
 }
 
 /* ========== STAT BOX ========== */
 .stat-box {
     -fx-background-color: rgba(255, 70, 85, 0.1);
-    -fx-background-radius: 10;
+    -fx-background-radius: 0;
     -fx-padding: 20;
     -fx-border-color: rgba(255, 70, 85, 0.3);
     -fx-border-width: 1;
-    -fx-border-radius: 10;
+    -fx-border-radius: 0;
 }
 
 /* ========== SCROLLBAR ========== */
@@ -547,14 +543,14 @@
 
 .scroll-bar:horizontal .track,
 .scroll-bar:vertical .track {
-    -fx-background-color: #161b22;
-    -fx-background-radius: 5;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .scroll-bar:horizontal .thumb,
 .scroll-bar:vertical .thumb {
     -fx-background-color: #FF4655;
-    -fx-background-radius: 5;
+    -fx-background-radius: 0;
 }
 
 .scroll-bar:horizontal .thumb:hover,
@@ -570,13 +566,12 @@
 
 /* ========== RESPONSIVE ADJUSTMENTS ========== */
 .label {
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
 }
 
 /* ========== STATUS BAR STYLES ========== */
-/* Status bar background and structure */
 #statusBar {
-    -fx-background-color: linear-gradient(to right, #0d1117, #161b22);
+    -fx-background-color: #0F1923;
     -fx-padding: 12 22 12 22;
     -fx-border-color: #FF4655;
     -fx-border-width: 2 0 0 0;
@@ -587,7 +582,7 @@
 
 /* ========== STATUS BAR BADGES ========== */
 .status-label-static {
-    -fx-text-fill: #c9d1d9;
+    -fx-text-fill: #9AA0A6;
     -fx-font-size: 13px;
     -fx-font-weight: bold;
 }
@@ -595,62 +590,58 @@
 .status-label {
     -fx-font-size: 14px;
     -fx-font-weight: 700;
-    -fx-text-fill: #0d1117;
-    -fx-background-color: #e0e7ff;    /* default/info background */
-    -fx-background-radius: 12;        /* pill shape */
-    -fx-padding: 6 10 6 10;           /* comfortable padding */
-    -fx-border-radius: 12;
+    -fx-text-fill: #0F1923;
+    -fx-background-color: #e0e7ff;
+    -fx-background-radius: 0;
+    -fx-padding: 6 10 6 10;
+    -fx-border-radius: 0;
     -fx-border-color: rgba(0,0,0,0.15);
     -fx-border-width: 1;
 }
 
-/* Success (Connected / Detected) */
+/* Success */
 .status-ok {
-    -fx-background-color: #c6f6d5;    /* green 200 */
-    -fx-text-fill: #1f3b2f;           /* dark green text */
-    -fx-border-color: #84e1bc;        /* green 300 */
+    -fx-background-color: #c6f6d5;
+    -fx-text-fill: #1f3b2f;
+    -fx-border-color: #84e1bc;
 }
 
-/* Warning (Missing / Checking / Partial) */
+/* Warning */
 .status-warning {
-    -fx-background-color: #fef3c7;    /* amber 200 */
-    -fx-text-fill: #4a3a19;           /* dark amber text */
-    -fx-border-color: #fcd34d;        /* amber 300 */
+    -fx-background-color: #fef3c7;
+    -fx-text-fill: #4a3a19;
+    -fx-border-color: #fcd34d;
 }
 
-/* Error (Unavailable / Failed) */
+/* Error */
 .status-error {
-    -fx-background-color: #fecaca;    /* red 200 */
-    -fx-text-fill: #4a1f1f;           /* dark red text */
-    -fx-border-color: #fda4a4;        /* red 300 */
+    -fx-background-color: #fecaca;
+    -fx-text-fill: #4a1f1f;
+    -fx-border-color: #fda4a4;
 }
 
-/* Info (Mode, startup, neutral) */
+/* Info */
 .status-info {
-    -fx-background-color: #dbeafe;    /* blue 200 */
-    -fx-text-fill: #10243a;           /* dark blue text */
-    -fx-border-color: #93c5fd;        /* blue 300 */
+    -fx-background-color: #dbeafe;
+    -fx-text-fill: #10243a;
+    -fx-border-color: #93c5fd;
 }
 
-/* Status bar container spacing tweaks for clarity */
 #statusBar {
-    -fx-min-height: 48px;             /* slightly taller for pills */
+    -fx-min-height: 48px;
     -fx-alignment: CENTER_LEFT;
     -fx-spacing: 20;
 }
 
-/* Group boxes inside status bar keep tight alignment */
 #statusBar > HBox {
     -fx-spacing: 6;
     -fx-alignment: CENTER_LEFT;
 }
 
 /* ========== TOAST NOTIFICATIONS ========== */
-/* Non-blocking notification overlays that auto-dismiss */
-
 .toast {
-    -fx-background-radius: 8;
-    -fx-border-radius: 8;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.4), 12, 0, 0, 4);
     -fx-min-height: 50;
 }
@@ -658,18 +649,17 @@
 .toast-title {
     -fx-font-size: 14px;
     -fx-font-weight: bold;
-    -fx-text-fill: #ffffff;
+    -fx-text-fill: #ECE8E1;
 }
 
 .toast-message {
     -fx-font-size: 13px;
-    -fx-text-fill: rgba(255, 255, 255, 0.9);
+    -fx-text-fill: rgba(236, 232, 225, 0.9);
 }
 
-/* Info toast (default) - blue tint */
 .toast-info {
-    -fx-background-color: linear-gradient(to right, #1e3a5f, #2d4a6f);
-    -fx-border-color: #3d7ab8;
+    -fx-background-color: #1F2E3C;
+    -fx-border-color: rgba(255,255,255,0.1);
     -fx-border-width: 1;
 }
 
@@ -677,9 +667,8 @@
     -fx-text-fill: #7ec8e3;
 }
 
-/* Success toast - green tint */
 .toast-success {
-    -fx-background-color: linear-gradient(to right, #1a3d2e, #245a40);
+    -fx-background-color: #1a3d2e;
     -fx-border-color: #3da870;
     -fx-border-width: 1;
 }
@@ -688,9 +677,8 @@
     -fx-text-fill: #6ee7a0;
 }
 
-/* Warning toast - amber tint */
 .toast-warning {
-    -fx-background-color: linear-gradient(to right, #4a3a19, #5c4a22);
+    -fx-background-color: #4a3a19;
     -fx-border-color: #d4a843;
     -fx-border-width: 1;
 }
@@ -699,9 +687,8 @@
     -fx-text-fill: #fcd34d;
 }
 
-/* Error toast - red tint (Valorant accent) */
 .toast-error {
-    -fx-background-color: linear-gradient(to right, #3d1a1a, #4a2222);
+    -fx-background-color: #3d1a1a;
     -fx-border-color: #FF4655;
     -fx-border-width: 1;
 }
@@ -711,14 +698,12 @@
 }
 
 /* ========== TTS SPEAKING INDICATOR ========== */
-/* Visual feedback when TTS is actively speaking */
-
 .tts-indicator {
     -fx-background-color: rgba(255, 70, 85, 0.2);
-    -fx-background-radius: 6;
+    -fx-background-radius: 0;
     -fx-border-color: #FF4655;
     -fx-border-width: 1;
-    -fx-border-radius: 6;
+    -fx-border-radius: 0;
     -fx-padding: 6 12 6 12;
 }
 
@@ -733,4 +718,29 @@
     -fx-text-fill: #FF4655;
     -fx-font-size: 14px;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.8), 8, 0, 0, 0);
+}
+
+/* ========== TITLE BAR BUTTONS ========== */
+.title-bar-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #9AA0A6;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-effect: none;
+}
+
+.title-bar-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.1);
+    -fx-text-fill: #ECE8E1;
+}
+
+.title-bar-close:hover {
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #FFFFFF;
 }

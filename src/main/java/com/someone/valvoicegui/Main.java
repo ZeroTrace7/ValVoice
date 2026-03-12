@@ -293,6 +293,12 @@ public class Main {
      * Application entry point - pure launcher.
      */
     public static void main(String[] args) {
+        // ===== HIGH-DPI RENDERING FIX (must be BEFORE any JavaFX initialization) =====
+        // Ensures crisp text rendering on Windows at 125%/150% display scaling
+        System.setProperty("prism.text", "t2k");
+        System.setProperty("prism.lcdtext", "true");
+        System.setProperty("glass.win.uiScale", "1.0");
+
         // ===== GLOBAL CRASH LOGGING (Architecture-Agnostic) =====
         // Ensure logs directory exists before any logging occurs
         try {

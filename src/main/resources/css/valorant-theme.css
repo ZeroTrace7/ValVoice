@@ -1,220 +1,288 @@
 /*
  * ============================================================================
- * VALORANT PROTOCOL THEME - Phase 1 Visual Skinning
+ * VALORANT PROTOCOL THEME — Premium UI Overhaul
  * ============================================================================
- * Pure CSS overlay for Valorant-inspired dark gamer aesthetic.
- * This file is additive - it enhances the base style.css without replacing it.
+ * 1:1 aesthetic parity with official Riot Client.
+ * Sharp 0px angular geometry. No rounded corners.
  *
- * Color Palette:
- *   Primary Background:   #0f1923
- *   Secondary Panels:     #1c252e
- *   Accent Red:           #ff4655
- *   Text Primary:         #ece8e1
- *   Text Secondary:       #9aa0a6
+ * Color Palette (Riot Official):
+ *   Main Background:      #0F1923 (Valo Dark)
+ *   Secondary Panels:     #1F2E3C (Valo Mid-Grey)
+ *   Accent / Primary:     #FF4655 (Valo Red)
+ *   Text Primary:         #ECE8E1 (Valo Off-White)
+ *   Text Secondary:       #9AA0A6 (Muted)
  *   Borders:              rgba(255,255,255,0.1)
  *
- * Constraints:
- *   - CSS-only changes (no FXML layout modifications)
- *   - No control replacement
- *   - No logic changes
+ * Header Font: Bebas Neue (loaded at runtime)
+ * Body Font:   Segoe UI
  * ============================================================================
  */
 
-/* ========== VALORANT PROTOCOL ROOT ========== */
+/* ========== ROOT ========== */
 .root {
-    -fx-base: #0f1923;
-    -fx-background: #0f1923;
-    -fx-accent: #ff4655;
-    -fx-focus-color: #ff4655;
+    -fx-base: #0F1923;
+    -fx-background: #0F1923;
+    -fx-background-color: #0F1923;
+    -fx-accent: #FF4655;
+    -fx-focus-color: #FF4655;
     -fx-faint-focus-color: rgba(255, 70, 85, 0.3);
-    -fx-default-button: #ff4655;
+    -fx-default-button: #FF4655;
     -fx-font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
 }
 
-/* ========== VALORANT TEXT COLORS ========== */
+/* ========== GLOBAL TEXT ========== */
 .label {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
+    -fx-font-smoothing-type: lcd;
 }
 
 .text {
-    -fx-fill: #ece8e1;
+    -fx-fill: #ECE8E1;
+    -fx-font-smoothing-type: lcd;
 }
 
 /* Secondary/muted text */
 .hint-label,
 .page-subtitle,
 .version-label {
-    -fx-text-fill: #9aa0a6;
+    -fx-text-fill: #9AA0A6;
 }
 
-/* ========== VALORANT TOP BAR REFINEMENT ========== */
+/* ========== PREMIUM HEADER TYPOGRAPHY (Bebas Neue) ========== */
+.title-label,
+.header-label,
+.window-title {
+    -fx-font-family: 'Bebas Neue';
+    -fx-text-fill: #ECE8E1;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+.page-title {
+    -fx-font-family: 'Bebas Neue';
+    -fx-text-fill: #ECE8E1;
+    -fx-font-weight: bold;
+    -fx-font-size: 28px;
+    -fx-letter-spacing: 1px;
+}
+
+.card-title {
+    -fx-font-family: 'Bebas Neue';
+    -fx-text-fill: #ECE8E1;
+    -fx-font-weight: bold;
+    -fx-font-size: 20px;
+}
+
+/* ========== CUSTOM TITLE BAR ========== */
 .top-bar {
-    -fx-background-color: linear-gradient(to right, #0f1923, #1c252e);
-    -fx-border-color: #ff4655;
+    -fx-background-color: #0F1923;
+    -fx-background-radius: 0;
+    -fx-border-color: #FF4655;
     -fx-border-width: 0 0 2 0;
+    -fx-border-radius: 0;
 }
 
 .window-title {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-font-size: 20px;
+    -fx-font-size: 16px;
+    -fx-font-family: 'Bebas Neue';
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 4, 0, 0, 0);
 }
 
-/* ========== VALORANT SIDEBAR ========== */
+/* Title bar window control buttons */
+.title-bar-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #9AA0A6;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-effect: none;
+}
+
+.title-bar-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.1);
+    -fx-text-fill: #ECE8E1;
+}
+
+.title-bar-close:hover {
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #FFFFFF;
+}
+
+/* ========== SIDEBAR ========== */
 .sidebar {
-    -fx-background-color: linear-gradient(to bottom, #0f1923, #1c252e);
+    -fx-background-color: #0F1923;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 0 1 0 0;
+    -fx-border-radius: 0;
 }
 
 .nav-label {
-    -fx-text-fill: #9aa0a6;
+    -fx-text-fill: #9AA0A6;
     -fx-font-weight: 600;
     -fx-font-size: 11px;
 }
 
-/* ========== VALORANT NAVIGATION BUTTONS ========== */
+/* ========== NAVIGATION BUTTONS ========== */
 .nav-button {
     -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 2;
+    -fx-effect: none;
 }
 
 .nav-button:hover {
     -fx-background-color: rgba(255, 70, 85, 0.15);
     -fx-border-color: rgba(255, 70, 85, 0.4);
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 10, 0, 0, 0);
 }
 
 .nav-button-active,
 .nav-button:focused {
-    -fx-background-color: rgba(255, 70, 85, 0.2);
-    -fx-border-color: #ff4655;
+    -fx-background-color: rgba(255, 70, 85, 0.25);
+    -fx-border-color: #FF4655;
+    -fx-border-width: 2;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
 }
 
-/* ========== VALORANT CONTENT PANELS ========== */
+/* ========== CONTENT PANELS ========== */
 .content-panel {
-    -fx-background-color: #0f1923;
+    -fx-background-color: #0F1923;
+    -fx-background-radius: 0;
 }
 
 .scroll-pane > .viewport {
-    -fx-background-color: #0f1923;
+    -fx-background-color: #0F1923;
 }
 
-/* ========== VALORANT CARDS ========== */
+/* ========== CARDS ========== */
 .card {
-    -fx-background-color: linear-gradient(to bottom right, #1c252e, #0f1923);
-    -fx-background-radius: 8;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
+    -fx-effect: none;
 }
 
-.card-title {
-    -fx-text-fill: #ece8e1;
-    -fx-font-weight: bold;
-    -fx-font-size: 16px;
+.card:hover {
+    -fx-border-color: rgba(255, 70, 85, 0.3);
 }
 
-/* ========== VALORANT BUTTONS - TACTICAL STYLE ========== */
+/* ========== BUTTONS — TACTICAL STYLE ========== */
 .button {
-    -fx-background-color: linear-gradient(to bottom, #2a3441, #1c252e);
-    -fx-text-fill: #ece8e1;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
     -fx-font-size: 13px;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
     -fx-padding: 10 20;
     -fx-cursor: hand;
+    -fx-effect: none;
 }
 
 .button:hover {
-    -fx-background-color: linear-gradient(to bottom, #3a4451, #2a3441);
-    -fx-border-color: #ff4655;
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
+    -fx-background-color: #2A3D50;
+    -fx-border-color: #FF4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 12, 0, 0, 0);
 }
 
 .button:pressed {
-    -fx-background-color: linear-gradient(to bottom, #1c252e, #0f1923);
+    -fx-background-color: #0F1923;
 }
 
-/* Primary Button (Accent Red) */
+/* ========== PRIMARY BUTTON — "Snipped" Tactical Cut ========== */
 .primary-button {
-    -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #FF4655;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
     -fx-border-color: transparent;
+    -fx-shape: "M 0 0 L 100 0 L 100 80 L 90 100 L 0 100 Z";
+    -fx-effect: none;
 }
 
 .primary-button:hover {
-    -fx-background-color: linear-gradient(to bottom, #ff5a68, #ff4655);
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 12, 0, 0, 0);
+    -fx-background-color: #ff5e6b;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.6), 15, 0, 0, 0);
 }
 
 .primary-button:pressed {
-    -fx-background-color: linear-gradient(to bottom, #cc3844, #aa2d38);
+    -fx-background-color: #cc3844;
 }
 
-/* Secondary Button (Ghost/Outline) */
+/* ========== SECONDARY BUTTON (Ghost/Outline) ========== */
 .secondary-button {
     -fx-background-color: transparent;
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-weight: bold;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
-    -fx-border-color: #ff4655;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: #FF4655;
     -fx-border-width: 2;
+    -fx-effect: none;
 }
 
 .secondary-button:hover {
     -fx-background-color: rgba(255, 70, 85, 0.15);
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 12, 0, 0, 0);
 }
 
-/* Discord Button */
+/* ========== DISCORD BUTTON ========== */
 .discord-button {
-    -fx-background-color: linear-gradient(to bottom, #5865F2, #4752C4);
-    -fx-text-fill: #ffffff;
+    -fx-background-color: #5865F2;
+    -fx-text-fill: #FFFFFF;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
 }
 
 .discord-button:hover {
-    -fx-background-color: linear-gradient(to bottom, #6875F5, #5865F2);
+    -fx-background-color: #6875F5;
     -fx-effect: dropshadow(gaussian, rgba(88, 101, 242, 0.5), 10, 0, 0, 0);
 }
 
-/* ========== VALORANT FORM CONTROLS ========== */
+/* ========== FORM CONTROLS ========== */
 /* ComboBox */
 .combo-box,
 .setting-combo {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+    -fx-border-radius: 0;
 }
 
 .combo-box:hover,
 .setting-combo:hover {
-    -fx-border-color: #ff4655;
+    -fx-border-color: #FF4655;
 }
 
 .combo-box:focused,
 .setting-combo:focused {
-    -fx-border-color: #ff4655;
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 6, 0, 0, 0);
+    -fx-border-color: #FF4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 8, 0, 0, 0);
 }
 
 .combo-box .list-cell {
-    -fx-background-color: #1c252e;
-    -fx-text-fill: #ece8e1;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
 }
 
 .combo-box .list-cell:hover {
-    -fx-background-color: #2a3441;
+    -fx-background-color: #2A3D50;
 }
 
 .combo-box .list-cell:selected {
@@ -222,81 +290,87 @@
 }
 
 .combo-box-popup .list-view {
-    -fx-background-color: #1c252e;
+    -fx-background-color: #1F2E3C;
     -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
 }
 
 /* TextField */
 .text-field,
 .keybind-field {
-    -fx-background-color: #1c252e;
-    -fx-text-fill: #ece8e1;
-    -fx-prompt-text-fill: #9aa0a6;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
+    -fx-prompt-text-fill: #9AA0A6;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+    -fx-border-radius: 0;
 }
 
 .text-field:focused,
 .keybind-field:focused {
-    -fx-border-color: #ff4655;
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 6, 0, 0, 0);
+    -fx-border-color: #FF4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 8, 0, 0, 0);
 }
 
 .keybind-field {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-weight: bold;
-    -fx-border-color: #ff4655;
+    -fx-border-color: #FF4655;
 }
 
-/* ========== VALORANT SLIDERS ========== */
+/* ========== SLIDERS ========== */
 .slider .track {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .slider .thumb {
-    -fx-background-color: linear-gradient(to bottom, #ff4655, #cc3844);
-    -fx-background-radius: 50%;
+    -fx-background-color: #FF4655;
+    -fx-background-radius: 0;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.5), 6, 0, 0, 0);
 }
 
 .slider .thumb:hover {
-    -fx-background-color: linear-gradient(to bottom, #ff5a68, #ff4655);
+    -fx-background-color: #ff5e6b;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.7), 10, 0, 0, 0);
 }
 
-/* ========== VALORANT TOGGLE BUTTONS (JFoenix) ========== */
-.jfx-toggle-button {
-    -fx-toggle-color: #ff4655;
-    -fx-toggle-line-color: #1c252e;
-    -fx-untoggle-color: #9aa0a6;
-    -fx-untoggle-line-color: #1c252e;
+.slider:focused .thumb {
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.7), 12, 0, 0, 0);
 }
 
-/* ========== VALORANT PROGRESS BARS ========== */
+/* ========== TOGGLE BUTTONS (JFoenix) ========== */
+.jfx-toggle-button {
+    -fx-toggle-color: #FF4655;
+    -fx-toggle-line-color: #1F2E3C;
+    -fx-untoggle-color: #9AA0A6;
+    -fx-untoggle-line-color: #1F2E3C;
+}
+
+/* ========== PROGRESS BARS ========== */
 .progress-bar {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .progress-bar > .track {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .progress-bar > .bar {
-    -fx-background-color: linear-gradient(to right, #ff4655, #ff6b77);
-    -fx-background-radius: 4;
+    -fx-background-color: linear-gradient(to right, #FF4655, #ff6b77);
+    -fx-background-radius: 0;
 }
 
 .quota-bar > .bar {
-    -fx-background-color: linear-gradient(to right, #ff4655, #ff8a94);
-    -fx-background-radius: 4;
+    -fx-background-color: linear-gradient(to right, #FF4655, #ff8a94);
+    -fx-background-radius: 0;
 }
 
-/* ========== VALORANT SCROLLBARS ========== */
+/* ========== SCROLLBARS ========== */
 .scroll-bar:vertical,
 .scroll-bar:horizontal {
     -fx-background-color: transparent;
@@ -304,14 +378,14 @@
 
 .scroll-bar:vertical .track,
 .scroll-bar:horizontal .track {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
 }
 
 .scroll-bar:vertical .thumb,
 .scroll-bar:horizontal .thumb {
-    -fx-background-color: #ff4655;
-    -fx-background-radius: 4;
+    -fx-background-color: #FF4655;
+    -fx-background-radius: 0;
 }
 
 .scroll-bar:vertical .thumb:hover,
@@ -325,126 +399,120 @@
     -fx-padding: 0;
 }
 
-/* ========== VALORANT SEPARATORS ========== */
+/* ========== SEPARATORS ========== */
 .separator .line {
     -fx-background-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 0;
 }
 
-/* ========== VALORANT STATUS BAR ========== */
+/* ========== STATUS BAR ========== */
 #statusBar {
-    -fx-background-color: linear-gradient(to right, #0f1923, #1c252e);
-    -fx-border-color: #ff4655;
+    -fx-background-color: #0F1923;
+    -fx-border-color: #FF4655;
     -fx-border-width: 2 0 0 0;
     -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.2), 8, 0, 0, -2);
 }
 
 .status-label-static {
-    -fx-text-fill: #9aa0a6;
+    -fx-text-fill: #9AA0A6;
     -fx-font-weight: bold;
 }
 
-/* ========== VALORANT STAT BOXES ========== */
+/* ========== STAT BOXES ========== */
 .stat-box {
     -fx-background-color: rgba(255, 70, 85, 0.1);
-    -fx-background-radius: 8;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 70, 85, 0.3);
     -fx-border-width: 1;
-    -fx-border-radius: 8;
+    -fx-border-radius: 0;
 }
 
 .stat-value {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-weight: bold;
 }
 
 .stat-label {
-    -fx-text-fill: #9aa0a6;
+    -fx-text-fill: #9AA0A6;
 }
 
-/* ========== VALORANT PAGE HEADERS ========== */
-.page-title {
-    -fx-text-fill: #ece8e1;
-    -fx-font-weight: bold;
-    -fx-font-size: 24px;
-}
-
+/* ========== PAGE HEADERS ========== */
 .section-title {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
 }
 
-/* ========== VALORANT STEP NUMBERS ========== */
+/* ========== STEP NUMBERS ========== */
 .step-number {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-weight: bold;
     -fx-font-size: 16px;
 }
 
-/* ========== VALORANT INFO TEXT ========== */
+/* ========== INFO TEXT ========== */
 .info-text {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-line-spacing: 2px;
 }
 
 .info-label {
-    -fx-text-fill: #9aa0a6;
+    -fx-text-fill: #9AA0A6;
 }
 
 .info-value {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: bold;
 }
 
-/* ========== VALORANT QUOTA LABEL ========== */
+/* ========== QUOTA LABEL ========== */
 .quota-label {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-weight: bold;
 }
 
-/* ========== VALORANT LOADING SCREEN ========== */
+/* ========== LOADING SCREEN ========== */
 .loading-label {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-font-size: 18px;
 }
 
-/* ========== VALORANT SETTING LABELS ========== */
+/* ========== SETTING LABELS ========== */
 .setting-label {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
     -fx-font-weight: 600;
 }
 
-/* ========== VALORANT TTS INDICATOR ========== */
+/* ========== TTS INDICATOR ========== */
 .tts-indicator {
     -fx-background-color: rgba(255, 70, 85, 0.2);
-    -fx-background-radius: 6;
-    -fx-border-color: #ff4655;
+    -fx-background-radius: 0;
+    -fx-border-color: #FF4655;
     -fx-border-width: 1;
-    -fx-border-radius: 6;
+    -fx-border-radius: 0;
     -fx-padding: 6 12;
 }
 
 .tts-indicator-label {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-font-size: 11px;
     -fx-font-weight: bold;
 }
 
 .tts-pulse {
-    -fx-text-fill: #ff4655;
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.8), 8, 0, 0, 0);
+    -fx-text-fill: #FF4655;
+    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 1.0), 10, 0.5, 0, 0);
 }
 
-/* ========== VALORANT TOAST NOTIFICATIONS ========== */
+/* ========== TOAST NOTIFICATIONS ========== */
 .toast {
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 4);
 }
 
 .toast-title {
     -fx-font-weight: bold;
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
 }
 
 .toast-message {
@@ -452,26 +520,26 @@
 }
 
 .toast-info {
-    -fx-background-color: linear-gradient(to right, #1c3a5f, #2d4a6f);
-    -fx-border-color: #3d7ab8;
+    -fx-background-color: #1F2E3C;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
 }
 
 .toast-success {
-    -fx-background-color: linear-gradient(to right, #1a3d2e, #245a40);
+    -fx-background-color: #1a3d2e;
     -fx-border-color: #3da870;
 }
 
 .toast-warning {
-    -fx-background-color: linear-gradient(to right, #4a3a19, #5c4a22);
+    -fx-background-color: #4a3a19;
     -fx-border-color: #d4a843;
 }
 
 .toast-error {
-    -fx-background-color: linear-gradient(to right, #3d1a1a, #4a2222);
-    -fx-border-color: #ff4655;
+    -fx-background-color: #3d1a1a;
+    -fx-border-color: #FF4655;
 }
 
-/* ========== VALORANT SETTINGS CARD VARIANTS ========== */
+/* ========== SETTINGS CARD VARIANTS ========== */
 .settings-card-voice {
     -fx-border-color: rgba(255, 70, 85, 0.3);
 }
@@ -494,55 +562,21 @@
 
 .routing-status-box {
     -fx-background-color: rgba(0, 0, 0, 0.2);
-    -fx-background-radius: 6;
+    -fx-background-radius: 0;
     -fx-padding: 12;
     -fx-border-color: rgba(255, 255, 255, 0.05);
-    -fx-border-radius: 6;
+    -fx-border-radius: 0;
 }
 
-/* ============================================================================
- * PHASE 2: MICRO-UX ENHANCEMENTS
- * ============================================================================
- * Additional visual polish for modern gaming app feel.
- * All changes are CSS-only - no control replacement or logic changes.
- * ============================================================================
- */
-
-/* ========== ENHANCED HOVER GLOW EFFECTS ========== */
-/* Buttons with breathing glow on hover */
-.button:hover {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 12, 0, 0, 0);
-}
-
-.primary-button:hover {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.6), 15, 0, 0, 0);
-}
-
-.secondary-button:hover {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 12, 0, 0, 0);
-}
-
-.nav-button:hover {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 10, 0, 0, 0);
-}
-
-/* Cards with subtle lift on hover */
-.card:hover {
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.4), 15, 0, 0, 4);
-}
-
-/* ========== CHECKBOX AS TOGGLE SWITCH (CSS-ONLY SKIN) ========== */
-/* Transforms standard CheckBox into modern toggle switch appearance */
-/* No control replacement - same CheckBox control with CSS restyling */
-
+/* ========== CHECKBOX AS TOGGLE (CSS SKIN) ========== */
 .check-box {
     -fx-label-padding: 0 0 0 8;
 }
 
 .check-box > .box {
-    -fx-background-color: #2a3441;
-    -fx-background-radius: 12;
-    -fx-border-radius: 12;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
     -fx-padding: 2;
@@ -553,65 +587,40 @@
 }
 
 .check-box > .box > .mark {
-    -fx-background-color: #9aa0a6;
-    -fx-background-radius: 50%;
+    -fx-background-color: #9AA0A6;
+    -fx-background-radius: 0;
     -fx-padding: 8;
-    -fx-shape: "M0,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0";
+    -fx-shape: "M0,0 H2 V2 H0 Z";
     -fx-scale-x: 0.9;
     -fx-scale-y: 0.9;
     -fx-translate-x: -8;
 }
 
 .check-box:selected > .box {
-    -fx-background-color: #ff4655;
-    -fx-border-color: #ff4655;
+    -fx-background-color: #FF4655;
+    -fx-border-color: #FF4655;
 }
 
 .check-box:selected > .box > .mark {
-    -fx-background-color: #ffffff;
+    -fx-background-color: #FFFFFF;
     -fx-translate-x: 8;
 }
 
 .check-box:hover > .box {
-    -fx-border-color: #ff4655;
+    -fx-border-color: #FF4655;
 }
 
-/* ========== ENHANCED INPUT FOCUS STATES ========== */
-.text-field:focused,
-.combo-box:focused,
-.setting-combo:focused {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.4), 8, 0, 0, 0);
-}
-
-/* ========== SLIDER TRACK FILL (Colored Progress) ========== */
-.slider:focused .thumb {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.7), 12, 0, 0, 0);
-}
-
-/* ========== ACTIVE NAV BUTTON STATE ========== */
-.nav-button-active {
-    -fx-background-color: rgba(255, 70, 85, 0.25);
-    -fx-border-color: #ff4655;
-    -fx-border-width: 2;
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 0.3), 8, 0, 0, 0);
-}
-
-/* ========== STATUS INDICATORS PULSE EFFECT ========== */
-.tts-pulse {
-    -fx-effect: dropshadow(gaussian, rgba(255, 70, 85, 1.0), 10, 0.5, 0, 0);
-}
-
-/* ========== SCROLLPANE SMOOTH APPEARANCE ========== */
+/* ========== SCROLLPANE ========== */
 .scroll-pane {
     -fx-background-color: transparent;
     -fx-padding: 0;
 }
 
 .scroll-pane > .viewport {
-    -fx-background-color: #0f1923;
+    -fx-background-color: #0F1923;
 }
 
-/* ========== SEPARATOR STYLING ========== */
+/* ========== SEPARATOR ========== */
 .separator {
     -fx-padding: 8 0;
 }
@@ -622,26 +631,26 @@
     -fx-background-color: transparent;
 }
 
-/* ========== TOOLTIP STYLING ========== */
+/* ========== TOOLTIP ========== */
 .tooltip {
-    -fx-background-color: #1c252e;
-    -fx-text-fill: #ece8e1;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-text-fill: #ECE8E1;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 70, 85, 0.3);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+    -fx-border-radius: 0;
     -fx-padding: 8 12;
     -fx-font-size: 12px;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 8, 0, 0, 2);
 }
 
-/* ========== CONTEXT MENU STYLING ========== */
+/* ========== CONTEXT MENU ========== */
 .context-menu {
-    -fx-background-color: #1c252e;
-    -fx-background-radius: 4;
+    -fx-background-color: #1F2E3C;
+    -fx-background-radius: 0;
     -fx-border-color: rgba(255, 255, 255, 0.1);
     -fx-border-width: 1;
-    -fx-border-radius: 4;
+    -fx-border-radius: 0;
     -fx-padding: 4;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 12, 0, 0, 4);
 }
@@ -657,22 +666,18 @@
 }
 
 .context-menu .menu-item .label {
-    -fx-text-fill: #ece8e1;
+    -fx-text-fill: #ECE8E1;
 }
 
-/* ========== LOADING SPINNER / PROGRESS INDICATOR ========== */
+/* ========== LOADING / PROGRESS INDICATOR ========== */
 .progress-indicator {
-    -fx-progress-color: #ff4655;
+    -fx-progress-color: #FF4655;
 }
 
-.progress-indicator > .indicator > .spinner {
-    -fx-border-color: #ff4655;
-}
-
-/* ========== DIALOG PANE STYLING ========== */
+/* ========== DIALOG PANE ========== */
 .dialog-pane {
-    -fx-background-color: #0f1923;
-    -fx-border-color: #ff4655;
+    -fx-background-color: #0F1923;
+    -fx-border-color: #FF4655;
     -fx-border-width: 2 0 0 0;
 }
 
@@ -681,13 +686,13 @@
 }
 
 .dialog-pane > .button-bar > .container {
-    -fx-background-color: #1c252e;
+    -fx-background-color: #1F2E3C;
     -fx-padding: 12 20;
 }
 
-/* ========== HYPERLINK STYLING ========== */
+/* ========== HYPERLINKS ========== */
 .hyperlink {
-    -fx-text-fill: #ff4655;
+    -fx-text-fill: #FF4655;
     -fx-border-color: transparent;
 }
 

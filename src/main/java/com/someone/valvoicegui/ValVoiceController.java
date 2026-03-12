@@ -14,6 +14,7 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.AnchorPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,14 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     @FXML public Button btnInfo;
     @FXML public Button btnUser;
     @FXML public Button btnSettings;
+
+    // Title bar window control buttons
+    @FXML public Button btnMinimize;
+    @FXML public Button btnClose;
+
+    // Custom title bar drag offsets
+    private double xOffset = 0;
+    private double yOffset = 0;
 
     // Labels
     @FXML public Label windowTitle;
@@ -199,6 +208,18 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     public void initialize() {
         logger.info("Initializing ValVoiceController");
 
+        // === Custom Title Bar: Drag logic ===
+        if (topBar != null) {
+            topBar.setOnMousePressed(event -> {
+                xOffset = event.getSceneX();
+                yOffset = event.getSceneY();
+            });
+            topBar.setOnMouseDragged(event -> {
+                Stage stage = (Stage) topBar.getScene().getWindow();
+                stage.setX(event.getScreenX() - xOffset);
+                stage.setY(event.getScreenY() - yOffset);
+            });
+        }
 
         // Initialize status labels early (default to info/warning look)
         ensureBaseStatusClass(statusXmpp);
@@ -1046,12 +1067,37 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
         javafx.scene.Parent root = loader.load();
 
         javafx.stage.Stage stage = new javafx.stage.Stage();
+        stage.initStyle(javafx.stage.StageStyle.UNDECORATED);
         stage.setTitle("ValVoice Settings");
-        stage.setScene(new javafx.scene.Scene(root));
+        javafx.scene.Scene settingsScene = new javafx.scene.Scene(root);
+        settingsScene.setFill(javafx.scene.paint.Color.web("#0F1923"));
+        stage.setScene(settingsScene);
         stage.setWidth(420);
         stage.setHeight(520);
         stage.setResizable(false);
         stage.show();
+    }
+
+    // === Custom Title Bar: Window Control Handlers ===
+
+    /**
+     * Minimize window to taskbar (custom title bar button).
+     */
+    @FXML
+    private void handleMinimize() {
+        Stage stage = (Stage) topBar.getScene().getWindow();
+        stage.setIconified(true);
+    }
+
+    /**
+     * Close application (custom title bar button).
+     * Shuts down all backend executors before exiting.
+     */
+    @FXML
+    private void handleClose() {
+        shutdownServices();
+        Platform.exit();
+        System.exit(0);
     }
 
     /**

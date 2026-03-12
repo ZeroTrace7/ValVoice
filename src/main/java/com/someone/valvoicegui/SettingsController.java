@@ -5,6 +5,8 @@ import com.someone.valvoicebackend.config.ConfigManager;
 import com.someone.valvoicebackend.config.ValVoiceConfig;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.layout.HBox;
+import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,12 +33,33 @@ public class SettingsController {
     @FXML private Button saveButton;
     @FXML private Label volumeValueLabel;
 
+    // Custom title bar
+    @FXML private HBox settingsTitleBar;
+    @FXML private Button btnSettingsClose;
+
+    // Custom title bar drag offsets
+    private double xOffset = 0;
+    private double yOffset = 0;
+
     /**
      * Called automatically after FXML is loaded.
      * Populates UI controls from current config.
      */
     @FXML
     public void initialize() {
+        // Custom title bar drag logic
+        if (settingsTitleBar != null) {
+            settingsTitleBar.setOnMousePressed(event -> {
+                xOffset = event.getSceneX();
+                yOffset = event.getSceneY();
+            });
+            settingsTitleBar.setOnMouseDragged(event -> {
+                Stage stage = (Stage) settingsTitleBar.getScene().getWindow();
+                stage.setX(event.getScreenX() - xOffset);
+                stage.setY(event.getScreenY() - yOffset);
+            });
+        }
+
         // Phase 7 Step 3: Reload config from disk to ensure UI reflects latest state
         ConfigManager.reload();
 
@@ -143,6 +166,15 @@ public class SettingsController {
             logger.error("[SelfTest] Failed to run voice test", e);
             showError("Voice test failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Close the settings window (custom title bar button).
+     */
+    @FXML
+    private void handleSettingsClose() {
+        Stage stage = (Stage) settingsTitleBar.getScene().getWindow();
+        stage.close();
     }
 
     /**

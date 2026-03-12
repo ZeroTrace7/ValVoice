@@ -10,6 +10,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
@@ -108,16 +109,24 @@ public class ValVoiceApplication extends Application {
      * The wizard will launch the main application after completion.
      */
     private void launchSetupWizard(Stage stage) throws IOException {
+        // Load premium tactical header font
+        Font.loadFont(getClass().getResourceAsStream("/fonts/BebasNeue-Regular.ttf"), 14);
+
         FXMLLoader fxmlLoader = new FXMLLoader(
                 ValVoiceApplication.class.getResource("/com/someone/valvoicegui/setup-wizard.fxml")
         );
         Scene scene = new Scene(fxmlLoader.load());
-        scene.setFill(Color.TRANSPARENT);
+        scene.setFill(Color.web("#0F1923"));
 
-        stage.initStyle(StageStyle.TRANSPARENT);
+        // Strip native OS frame
+        stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("ValVoice Setup");
         stage.setScene(scene);
         stage.setResizable(false);
+        stage.setMinWidth(520);
+        stage.setMinHeight(480);
+        stage.sizeToScene();
+        stage.centerOnScreen();
         stage.show();
 
         Platform.setImplicitExit(false);
@@ -131,6 +140,9 @@ public class ValVoiceApplication extends Application {
      * or by the wizard after completion.
      */
     private void launchMainApp(Stage stage) throws IOException, AWTException {
+        // Load premium tactical header font
+        Font.loadFont(getClass().getResourceAsStream("/fonts/BebasNeue-Regular.ttf"), 14);
+
         // Load FXML
         FXMLLoader fxmlLoader = new FXMLLoader(
                 ValVoiceApplication.class.getResource("/com/someone/valvoicegui/mainApplication.fxml")
@@ -145,8 +157,8 @@ public class ValVoiceApplication extends Application {
         scene.getStylesheets().add(valorantTheme);
         logger.info("Valorant Protocol theme loaded: {}", valorantTheme);
 
-        // Configure stage
-        stage.initStyle(StageStyle.TRANSPARENT);
+        // Strip native OS frame — custom title bar provides window controls
+        stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("ValVoice");
 
         // Create system tray icon
@@ -155,9 +167,13 @@ public class ValVoiceApplication extends Application {
         // Keep app running when window is closed
         Platform.setImplicitExit(false);
 
-        scene.setFill(Color.TRANSPARENT);
+        scene.setFill(Color.web("#0F1923"));
         stage.setScene(scene);
         stage.setResizable(false);
+        stage.setMinWidth(600);
+        stage.setMinHeight(450);
+        stage.sizeToScene();
+        stage.centerOnScreen();
         stage.show();
 
         // Register shutdown hook to ensure TTS engine stops if System.exit used

@@ -15,33 +15,41 @@
 
     <!-- ========== TOAST NOTIFICATION CONTAINER (overlay, always on top) ========== -->
     <VBox fx:id="toastContainer" alignment="TOP_CENTER" spacing="8" mouseTransparent="true"
-          AnchorPane.topAnchor="60.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0"
+          AnchorPane.topAnchor="45.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0"
           style="-fx-padding: 10 20 0 20;" pickOnBounds="false" />
 
-    <!-- ========== TOP BAR (Draggable) ========== -->
-    <AnchorPane fx:id="topBar" prefHeight="50.0" prefWidth="900.0" styleClass="top-bar"
+    <!-- ========== TOP BAR (Draggable Custom Title Bar) ========== -->
+    <AnchorPane fx:id="topBar" prefHeight="35.0" prefWidth="900.0" styleClass="top-bar"
                 AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0">
-        <HBox alignment="CENTER_LEFT" prefHeight="50.0" prefWidth="900.0" spacing="10">
-            <padding><Insets left="20" /></padding>
+        <HBox alignment="CENTER_LEFT" prefHeight="35.0" prefWidth="900.0" spacing="10"
+              AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0">
+            <padding><Insets left="15" /></padding>
 
             <!-- App Icon -->
-            <ImageView fitHeight="30.0" fitWidth="30.0" preserveRatio="true">
+            <ImageView fitHeight="22.0" fitWidth="22.0" preserveRatio="true">
                 <image>
                     <Image url="@icons/appIcon.png" />
                 </image>
             </ImageView>
 
-            <!-- Title directly (removed unnecessary VBox) -->
-            <Label fx:id="windowTitle" text="ValVoice" styleClass="window-title">
-                <font>
-                    <Font name="System Bold" size="18.0" />
-                </font>
-            </Label>
+            <!-- Title -->
+            <Label fx:id="windowTitle" text="VALVOICE" styleClass="window-title, title-label" />
+
+            <!-- Spacer pushes window controls to the right -->
+            <Region HBox.hgrow="ALWAYS" />
+
+            <!-- Minimize Button -->
+            <Button fx:id="btnMinimize" text="—" onAction="#handleMinimize"
+                    styleClass="title-bar-button" prefWidth="35.0" prefHeight="35.0" />
+
+            <!-- Close Button -->
+            <Button fx:id="btnClose" text="✕" onAction="#handleClose"
+                    styleClass="title-bar-button, title-bar-close" prefWidth="35.0" prefHeight="35.0" />
         </HBox>
     </AnchorPane>
 
     <!-- ========== NAVIGATION SIDEBAR (anchored) ========== -->
-    <VBox AnchorPane.topAnchor="50.0" AnchorPane.leftAnchor="0.0" AnchorPane.bottomAnchor="0.0"
+    <VBox AnchorPane.topAnchor="35.0" AnchorPane.leftAnchor="0.0" AnchorPane.bottomAnchor="0.0"
           prefWidth="100.0" styleClass="sidebar" spacing="20" alignment="TOP_CENTER">
         <padding><Insets top="30" /></padding>
 
@@ -83,7 +91,7 @@
     </VBox>
 
     <!-- ========== PANELS AREA (anchored) ========== -->
-    <AnchorPane AnchorPane.topAnchor="50.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0">
+    <AnchorPane AnchorPane.topAnchor="35.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0">
         <!-- ========== LOGIN PANEL ========== -->
         <AnchorPane fx:id="panelLogin" visible="true" styleClass="content-panel"
                     AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="44.0">

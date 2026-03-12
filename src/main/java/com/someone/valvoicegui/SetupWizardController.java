@@ -7,9 +7,11 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.slf4j.Logger;
@@ -50,6 +52,15 @@ public class SetupWizardController {
     @FXML private Button nextButton;
     @FXML private Button finishButton;
 
+    // Custom title bar
+    @FXML private HBox wizardTitleBar;
+    @FXML private Button btnWizardMinimize;
+    @FXML private Button btnWizardClose;
+
+    // Custom title bar drag offsets
+    private double xOffset = 0;
+    private double yOffset = 0;
+
     // Environment check labels (Step 2)
     @FXML private Label statusVbCable;
     @FXML private Label statusSoundVolumeView;
@@ -69,7 +80,39 @@ public class SetupWizardController {
     @FXML
     public void initialize() {
         logger.info("[Wizard] Setup wizard initialized");
+
+        // Custom title bar drag logic
+        if (wizardTitleBar != null) {
+            wizardTitleBar.setOnMousePressed(event -> {
+                xOffset = event.getSceneX();
+                yOffset = event.getSceneY();
+            });
+            wizardTitleBar.setOnMouseDragged(event -> {
+                Stage stage = (Stage) wizardTitleBar.getScene().getWindow();
+                stage.setX(event.getScreenX() - xOffset);
+                stage.setY(event.getScreenY() - yOffset);
+            });
+        }
+
         showPage(0);
+    }
+
+    /**
+     * Minimize wizard window to taskbar.
+     */
+    @FXML
+    private void handleWizardMinimize() {
+        Stage stage = (Stage) wizardTitleBar.getScene().getWindow();
+        stage.setIconified(true);
+    }
+
+    /**
+     * Close wizard window and exit application.
+     */
+    @FXML
+    private void handleWizardClose() {
+        javafx.application.Platform.exit();
+        System.exit(0);
     }
 
     /**
@@ -213,6 +256,9 @@ public class SetupWizardController {
     private void launchMainApplication(Stage wizardStage) throws IOException, java.awt.AWTException {
         logger.info("[Wizard] Launching main application...");
 
+        // Load premium tactical header font
+        Font.loadFont(getClass().getResourceAsStream("/fonts/BebasNeue-Regular.ttf"), 14);
+
         // Load main FXML
         FXMLLoader fxmlLoader = new FXMLLoader(
                 ValVoiceApplication.class.getResource("/com/someone/valvoicegui/mainApplication.fxml")
@@ -224,14 +270,16 @@ public class SetupWizardController {
         String valorantTheme = getClass().getResource("/css/valorant-theme.css").toExternalForm();
         scene.getStylesheets().add(valorantTheme);
 
-        // Configure new stage (same as ValVoiceApplication.launchMainApp)
+        // Configure new stage — strip native OS frame
         Stage mainStage = new Stage();
-        mainStage.initStyle(StageStyle.TRANSPARENT);
+        mainStage.initStyle(StageStyle.UNDECORATED);
         mainStage.setTitle("ValVoice");
 
-        scene.setFill(Color.TRANSPARENT);
+        scene.setFill(Color.web("#0F1923"));
         mainStage.setScene(scene);
         mainStage.setResizable(false);
+        mainStage.setMinWidth(600);
+        mainStage.setMinHeight(450);
 
         // Create tray icon
         ValVoiceApplication app = new ValVoiceApplication();
@@ -244,6 +292,8 @@ public class SetupWizardController {
 
         // Close wizard, show main app
         wizardStage.close();
+        mainStage.sizeToScene();
+        mainStage.centerOnScreen();
         mainStage.show();
 
         logger.info("[Wizard] Main application launched successfully");
