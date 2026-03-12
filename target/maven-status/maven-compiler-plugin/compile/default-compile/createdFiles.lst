@@ -1,6 +1,7 @@
 com\someone\valvoicebackend\GameStateManager.class
 com\someone\valvoicebackend\RiotClientDetails.class
 com\someone\valvoicebackend\InbuiltVoiceSynthesizer$1.class
+com\someone\valvoicegui\ValVoiceController$VoiceProfile.class
 com\someone\valvoicegui\ValVoiceController$ToastType.class
 com\someone\valvoicebackend\config\ValVoiceConfig.class
 com\someone\valvoicebackend\AudioRouterUtility.class

@@ -156,8 +156,10 @@ public class ValVoiceBackend {
     private static final String ENGINE_EXE_NAME = "valorantNarrator-agentVoices.exe";
     /** Port the TTS engine listens on for HTTP requests. */
     private static final int ENGINE_PORT = 5005;
-    /** Maximum time to wait for engine to become ready (socket poll). */
-    private static final int STARTUP_TIMEOUT_MS = 15_000;
+    /** Maximum time to wait for engine to become ready (socket poll).
+     *  Increased to 300 s (5 min) — cold-booting the 1.87 GB PyTorch VRAM model on slower
+     *  SSDs reliably exceeds 116 s. This ensures reliable startup across varying hardware. */
+    private static final int STARTUP_TIMEOUT_MS = 300_000;
     /** Interval between socket poll attempts during startup. */
     private static final int POLL_INTERVAL_MS = 500;
 
@@ -221,6 +223,30 @@ public class ValVoiceBackend {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.debug("[ValVoiceBackend] Warm-up delay interrupted");
+        }
+
+        // ===== XTTS ENGINE BOOT (FIX: was never called during warm-up) =====
+        // Launch the Python TTS engine in a background daemon thread so it does NOT
+        // block the MITM proxy start. The engine's 15-second socket-polling loop runs
+        // inside startEngine() on this thread while MITM initialises in parallel.
+        // If the config flag is false we degrade immediately instead of launching.
+        com.someone.valvoicebackend.config.ValVoiceConfig cfg =
+                com.someone.valvoicebackend.config.ConfigManager.get();
+        if (cfg != null && cfg.xttsEnabled) {
+            Thread engineBootThread = new Thread(() -> {
+                logger.info("[TTS Engine] Boot thread started — launching {}...", ENGINE_EXE_NAME);
+                boolean ready = startEngine();
+                if (ready) {
+                    logger.info("[TTS Engine] Boot complete — engine READY on port {}", ENGINE_PORT);
+                } else {
+                    logger.warn("[TTS Engine] Boot failed — falling back to Windows SAPI");
+                }
+            }, "xtts-boot");
+            engineBootThread.setDaemon(true);
+            engineBootThread.start();
+        } else {
+            logger.warn("[TTS Engine] xttsEnabled=false in config — skipping engine boot, SAPI will be used");
+            engineState = EngineState.DEGRADED;
         }
 
         launchMitmProxy();
@@ -466,7 +492,7 @@ public class ValVoiceBackend {
             return false;
         }
 
-        // Step 6: Socket polling loop (VN-parity: 15s timeout, 500ms interval)
+        // Step 6: Socket polling loop (300s timeout, 500ms interval)
         long startTime = System.currentTimeMillis();
         long deadline = startTime + STARTUP_TIMEOUT_MS;
 
