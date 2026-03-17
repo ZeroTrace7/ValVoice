@@ -19,7 +19,6 @@ import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.AWTException;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -271,37 +270,30 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             return; // Stop initialization - VB-Cable is required
         }
 
-        // === VN-parity: Route main Java process audio to CABLE Input ===
-        routeMainProcessAudioToVbCable();
-
         if (inbuiltSynth != null && inbuiltSynth.isReady()) {
             // Initialize VoiceGenerator (coordinates TTS + Push-to-Talk)
-            try {
-                VoiceGenerator.initialize(inbuiltSynth);
-                logger.info("✓ VoiceGenerator initialized with keybind: {}", VoiceGenerator.getInstance().getCurrentKeybind());
+            VoiceGenerator.initialize(inbuiltSynth);
+            logger.info("✓ VoiceGenerator initialized with keybind: {}", VoiceGenerator.getInstance().getCurrentKeybind());
 
-                // === UI → VoiceGenerator Propagation Listeners ===
-                // Ensure voice selection changes are always synced to VoiceGenerator
-                if (voices != null) {
-                    voices.valueProperty().addListener((obs, oldVal, newVal) -> {
-                        if (newVal != null && VoiceGenerator.isInitialized()) {
-                            VoiceGenerator.getInstance().setCurrentVoice(newVal.id);
-                            logger.debug("Voice synced to VoiceGenerator: {} (display: {})", newVal.id, newVal.displayName);
-                        }
-                    });
-                }
-
-                // Ensure rate slider changes are synced to VoiceGenerator
-                if (rateSlider != null) {
-                    rateSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
-                        if (newVal != null && VoiceGenerator.isInitialized()) {
-                            VoiceGenerator.getInstance().setCurrentVoiceRate(newVal.shortValue());
-                            logger.debug("Voice rate synced to VoiceGenerator: {}", newVal.shortValue());
-                        }
+            // === UI → VoiceGenerator Propagation Listeners ===
+            // Ensure voice selection changes are always synced to VoiceGenerator
+            if (voices != null) {
+                voices.valueProperty().addListener((obs, oldVal, newVal) -> {
+                    if (newVal != null && VoiceGenerator.isInitialized()) {
+                        VoiceGenerator.getInstance().setCurrentVoice(newVal.id);
+                        logger.debug("Voice synced to VoiceGenerator: {} (display: {})", newVal.id, newVal.displayName);
+                    }
                 });
-                }
-            } catch (AWTException e) {
-                logger.error("Failed to initialize VoiceGenerator (keybind automation disabled)", e);
+            }
+
+            // Ensure rate slider changes are synced to VoiceGenerator
+            if (rateSlider != null) {
+                rateSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+                    if (newVal != null && VoiceGenerator.isInitialized()) {
+                        VoiceGenerator.getInstance().setCurrentVoiceRate(newVal.shortValue());
+                        logger.debug("Voice rate synced to VoiceGenerator: {}", newVal.shortValue());
+                    }
+            });
             }
 
             // === Phase 3: Restore UI from persisted config ===
@@ -1620,82 +1612,18 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
     }
 
     /**
-     * PHASE 2 SECURITY: Locate SoundVolumeView.exe at SINGLE canonical path.
-     * VN-parity: No fallbacks, no PATH search - uses %ProgramFiles%/ValVoice/ exclusively.
+     * PHASE 3: Locate SoundVolumeView.exe using the shared startup router path.
      * Returns null if not found (graceful degradation).
      */
     private Path locateSoundVolumeView() {
-        // PHASE 2 SECURITY: Single canonical path - no fallbacks
-        String programFiles = System.getenv("ProgramFiles");
-        if (programFiles == null) {
-            logger.warn("[AudioRouting] ProgramFiles environment variable not set");
-            return null;
+        Path soundVolumeViewPath = SystemAudioRouter.resolveSoundVolumeViewPath();
+        if (soundVolumeViewPath != null) {
+            logger.debug("[AudioRouting] SoundVolumeView.exe found at startup router path: {}", soundVolumeViewPath);
+            return soundVolumeViewPath;
         }
 
-        Path canonicalPath = Paths.get(programFiles, "ValVoice", SOUND_VOLUME_VIEW_EXE);
-        if (Files.isRegularFile(canonicalPath)) {
-            logger.debug("[AudioRouting] SoundVolumeView.exe found at canonical path: {}", canonicalPath);
-            return canonicalPath;
-        }
-
-        logger.warn("[AudioRouting] SoundVolumeView.exe not found at canonical path: {}", canonicalPath);
+        logger.warn("[AudioRouting] SoundVolumeView.exe not found at startup router path: {}",
+            SystemAudioRouter.getExpectedSoundVolumeViewLocation());
         return null;
-    }
-
-    /**
-     * VN-parity: Route main Java process audio to CABLE Input.
-     * Uses fixed path %ProgramFiles%/ValVoice/SoundVolumeView.exe - no PATH search.
-     * Command format: SoundVolumeView.exe /SetAppDefault "CABLE Input" all PID
-     *
-     * GRACEFUL DEGRADATION: If SoundVolumeView.exe is missing, logs warning and continues.
-     * TTS still works but audio plays through default speakers instead of VB-Cable.
-     */
-    private void routeMainProcessAudioToVbCable() {
-        // PHASE 2 SECURITY: Fixed path construction - no fallbacks, no PATH search
-        String programFiles = System.getenv("ProgramFiles");
-        if (programFiles == null) {
-            logger.warn("[AudioRouting] ProgramFiles environment variable not set - audio routing disabled");
-            Platform.runLater(() -> {
-                if (statusAudioRoute != null) {
-                    updateStatusLabelWithType(statusAudioRoute, "Disabled (env missing)", "warning");
-                }
-            });
-            return;
-        }
-
-        String fileLocation = programFiles.replace("\\", "/") + "/ValVoice/SoundVolumeView.exe";
-
-        // VN-parity: Check if SoundVolumeView.exe exists - graceful degradation if missing
-        if (!new java.io.File(fileLocation).exists()) {
-            logger.warn("[AudioRouting] Disabled: SoundVolumeView.exe not found at %ProgramFiles%/ValVoice/SoundVolumeView.exe");
-            // Update status indicator - do NOT block startup
-            Platform.runLater(() -> {
-                if (statusAudioRoute != null) {
-                    updateStatusLabelWithType(statusAudioRoute, "Disabled (tool missing)", "warning");
-                }
-            });
-            return;
-        }
-
-        try {
-            // Get current Java process PID
-            long pid = ProcessHandle.current().pid();
-
-            // SECURITY HARDENING: Use ProcessBuilder via centralized utility (CWE-78 mitigation)
-            logger.debug("[AudioRouting] Routing Java PID {} via AudioRouterUtility", pid);
-
-            AudioRouterUtility.routeProcessToCable(fileLocation, pid);
-            logger.info("[AudioRouting] ✓ Main Java process (PID {}) routed to CABLE Input", pid);
-
-        } catch (Exception e) {
-            // VN-parity: Wrap in try/catch - log and continue, do not propagate fatal exception
-            logger.error("[AudioRouting] Failed to route main process audio: {}", e.getMessage());
-            Platform.runLater(() -> {
-                if (statusAudioRoute != null) {
-                    updateStatusLabelWithType(statusAudioRoute, "Failed (exec error)", "error");
-                }
-            });
-            // Do NOT crash - TTS still works, just won't be injected into mic
-        }
     }
 }

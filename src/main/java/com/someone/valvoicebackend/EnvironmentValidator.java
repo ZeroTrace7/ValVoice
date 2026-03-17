@@ -7,9 +7,7 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Mixer;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -25,14 +23,11 @@ import java.util.concurrent.TimeUnit;
  * This is a pure diagnostic utility — it never modifies application state,
  * throws exceptions, creates threads, or blocks startup.
  *
- * Called once at startup before AudioRouterUtility and JavaFX launch.
+ * Called once at startup before SystemAudioRouter and JavaFX launch.
  */
 public final class EnvironmentValidator {
 
     private static final Logger logger = LoggerFactory.getLogger(EnvironmentValidator.class);
-
-    /** SoundVolumeView executable name */
-    private static final String SVV_EXECUTABLE = "SoundVolumeView.exe";
 
     /** PowerShell validation timeout (seconds) */
     private static final int POWERSHELL_TIMEOUT_SECONDS = 2;
@@ -104,41 +99,19 @@ public final class EnvironmentValidator {
     /**
      * Check whether SoundVolumeView.exe is available.
      *
-     * Search locations:
-     *   1. Current working directory
-     *   2. Directory containing the running JAR
-     *
-     * Mirrors AudioRouterUtility.resolveSoundVolumeViewPath() logic.
+     * Mirrors the startup router path resolution.
      *
      * @return "OK" if found, "MISSING" if not found
      */
     private static String checkSoundVolumeView() {
-        // Primary: working directory
-        Path workingDir = Paths.get(System.getProperty("user.dir"), SVV_EXECUTABLE);
-        if (Files.exists(workingDir)) {
-            logger.info("[Environment] SoundVolumeView: OK ({})", workingDir);
+        Path resolvedPath = SystemAudioRouter.resolveSoundVolumeViewPath();
+        if (resolvedPath != null) {
+            logger.info("[Environment] SoundVolumeView: OK ({})", resolvedPath);
             return "OK";
         }
 
-        // Fallback: JAR directory
-        try {
-            Path jarDir = Paths.get(
-                    EnvironmentValidator.class.getProtectionDomain()
-                            .getCodeSource()
-                            .getLocation()
-                            .toURI()
-            ).getParent();
-
-            Path jarDirPath = jarDir.resolve(SVV_EXECUTABLE);
-            if (Files.exists(jarDirPath)) {
-                logger.info("[Environment] SoundVolumeView: OK ({})", jarDirPath);
-                return "OK";
-            }
-        } catch (Exception e) {
-            logger.debug("[Environment] Could not resolve JAR directory: {}", e.getMessage());
-        }
-
-        logger.warn("[Environment] SoundVolumeView.exe not found — audio routing will be skipped.");
+        logger.warn("[Environment] SoundVolumeView.exe not found at {} — audio routing will be skipped.",
+            SystemAudioRouter.getExpectedSoundVolumeViewLocation());
         return "MISSING";
     }
 

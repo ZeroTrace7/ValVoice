@@ -21,6 +21,15 @@
 
 > **CRITICAL — These rules are non-negotiable. Any AI agent generating code for this project MUST obey every rule below. Violations will break runtime behavior or trigger anti-cheat detection.**
 
+### XTTS Playback Override — 2026-03-18
+
+- `VoiceGenerator.java` now owns the XTTS HTTP request, `HttpResponse.BodyHandlers.ofInputStream()` response stream, and `dev.mccue.jlayer.player.advanced.AdvancedPlayer` playback lifecycle.
+- XTTS Push-to-Talk is driven by `java.awt.Robot` + `java.awt.event.KeyEvent` inside `VoiceGenerator.java`, not by native `SendInput`.
+- `CustomPlaybackListener` presses the configured PTT key in `playbackStarted()` and releases it in `playbackFinished()`.
+- The XTTS path must not write temp `.mp3` files, use JavaFX `MediaPlayer`, use `CountDownLatch`, or use blind `Thread.sleep()` timers for playback duration.
+- `InbuiltVoiceSynthesizer.java` remains the fallback SAPI/audio-routing service, but VoiceGenerator disables synthesizer-side PTT so the active key lifecycle stays in one place.
+- This override supersedes older JNA/PTT ownership notes elsewhere in this document when they conflict with the current XTTS playback path.
+
 ### Rule 1 — Push-to-Talk (PTT) Key Simulation
 
 - **NEVER** use `java.awt.Robot` for key simulation.
@@ -32,7 +41,10 @@
 
 - **Do NOT** attempt to switch audio devices using Java `Mixer` APIs or `javax.sound.*`.
 - Audio routing is **strictly handled** by executing `SoundVolumeView.exe` via `ProcessBuilder`.
+- Startup must run the automated SoundVolumeView hijack for the **current Java PID** via `SystemAudioRouter.routeApplicationAudio()`.
+- After Riot authentication, the app must inject VB-Cable's hardware GUID into `RiotUserSettings.ini` via `SystemAudioRouter.injectValorantInputDevice(subjectId, deployment)` to automatically override Valorant's in-game Voice Input Device.
 - **Reason:** Java's `Mixer` API cannot target per-process audio output on Windows. `SoundVolumeView.exe` is the only mechanism that routes the JVM's audio output to VB-Audio Virtual Cable at the OS mixer level.
+- `javax.sound.sampled.*` is permitted only for **PlaybackDetector.java** to monitor fallback playback activity via RMS on a capture line. It must never be used to re-route devices.
 - **Affected file:** `InbuiltVoiceSynthesizer.java`
 
 ### Rule 3 — Engine Fallback (XTTS → SAPI)
@@ -44,8 +56,9 @@
 
 ### Rule 4 — Thread Safety
 
-- The JavaFX `MediaPlayer` **MUST** be instantiated inside `Platform.runLater()`. Creating it on a background thread will throw `IllegalStateException` or produce silent failures.
-- All TTS HTTP requests and file caching **MUST** occur on a background daemon consumer thread (the `BlockingQueue` consumer in `VoiceGenerator.java`).
+- XTTS playback **MUST** stream directly from the HTTP response into `dev.mccue.jlayer.player.advanced.AdvancedPlayer` on a background thread. No XTTS temp `.mp3` files may be written to disk.
+- Any remaining JavaFX `MediaPlayer` usage is limited to fallback file playback and **MUST** be instantiated inside `Platform.runLater()`.
+- XTTS routing, stream handling, and playback ownership **MUST** remain inside `InbuiltVoiceSynthesizer.java`. `VoiceGenerator.java` is a lightweight router only.
 - **NEVER** block the JavaFX Application Thread with network I/O, file I/O, or `Thread.sleep()`.
 - **Affected files:** `VoiceGenerator.java`, `InbuiltVoiceSynthesizer.java`, `ValVoiceController.java`
 
@@ -63,8 +76,9 @@
 | Protocol            | XMPP over TLS                                 |
 | XML Parsing         | StAX (javax.xml.stream)                       |
 | JSON                | Gson                                          |
-| Audio Playback      | JavaFX MediaPlayer                            |
-| Audio Routing       | SoundVolumeView.exe (ProcessBuilder)          |
+| Audio Playback      | JLayer `AdvancedPlayer` (XTTS) + JavaFX `MediaPlayer` (fallback file playback) |
+| Audio Detection     | `javax.sound.sampled` RMS monitor (`PlaybackDetector`) for native SAPI fallback |
+| Audio Routing       | SoundVolumeView.exe (startup PID hijack + hardware GUID extraction for RiotUserSettings.ini) |
 | Virtual Audio       | VB-Audio Virtual Cable                        |
 | Key Simulation      | JNA → Windows SendInput API                   |
 | HTTP Client         | java.net.http.HttpClient (SSL bypass)         |
@@ -78,7 +92,8 @@
                               ┌─────────────────────────────────┐
                               │ STARTUP (Main.java)             │
                               │ EnvironmentValidator → diag     │
-                              │ AudioRouterUtility → VB-Cable   │
+                              │ SystemAudioRouter → PID hijack  │
+                              │ + RiotUserSettings.ini inject   │
                               │ ConfigManager.load() → config   │
                               └────────────┬────────────────────┘
                                            │
@@ -102,13 +117,16 @@ ChatDataHandler.java           ← Channel filter, game-state filter, validation
     │
     │  [Message object]
     ▼
-VoiceGenerator.java            ← BlockingQueue consumer, PTT via JNA SendInput
+VoiceGenerator.java            ← Lightweight routing layer (XTTS vs SAPI fallback)
     │
-    ├──► InbuiltVoiceSynthesizer.java  ← HTTP POST to local XTTS engine, MD5 cache
-    │        │                            Queue(10), MediaPlayer playback, PTT injection
+    ├──► InbuiltVoiceSynthesizer.java  ← HTTP POST to local XTTS engine, direct memory stream
+    │        │                            Queue(10), JLayer playback, JNA PTT injection
+    │        │                            PlaybackDetector monitors SAPI fallback line activity
     │        │                            Config reads from ConfigManager.get()
     │        ├──► SoundVolumeView.exe  ← Routes JVM audio → VB Cable (via AudioRouterUtility)
-    │        └──► JavaFX MediaPlayer   ← Plays audio (instantiated in Platform.runLater)
+    │        ├──► JLayer AdvancedPlayer ← Streams MP3 from HTTP InputStream (no temp files)
+    │        ├──► PlaybackDetector     ← RMS-based fallback silence detection via TargetDataLine
+    │        └──► JavaFX MediaPlayer   ← Reserved for fallback file playback only
     │
     └──► SapiVoiceEngine.java          ← Fallback: PowerShell SAPI → .wav file
     │
@@ -160,7 +178,7 @@ ValVoice/
     │   └── com/someone/
     │       ├── valvoicebackend/      # Core backend logic
     │       │   ├── APIHandler.java
-    │       │   ├── AudioRouterUtility.java    # [Phase 5] SoundVolumeView audio routing
+    │       │   ├── AudioRouterUtility.java    # SoundVolumeView process routing helpers
     │       │   ├── Chat.java
     │       │   ├── ChatDataHandler.java
     │       │   ├── ChatUtilityHandler.java
@@ -169,10 +187,11 @@ ValVoice/
     │       │   ├── EnvironmentValidator.java   # [Phase 8] Startup dependency diagnostics
     │       │   ├── GameStateManager.java
     │       │   ├── HtmlEscape.java
-    │       │   ├── InbuiltVoiceSynthesizer.java  # HTTP + Cache + Queue + Playback + PTT
+    │       │   ├── InbuiltVoiceSynthesizer.java  # HTTP stream + Queue + Playback + PTT
     │       │   ├── LockFileHandler.java
     │       │   ├── Message.java
     │       │   ├── ParsedMessage.java
+    │       │   ├── PlaybackDetector.java         # RMS-based playback activity monitor for SAPI fallback
     │       │   ├── PlayerAccount.java
     │       │   ├── RiotClientDetails.java
     │       │   ├── RiotUtilityHandler.java
@@ -262,25 +281,40 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 - **Pattern:** Singleton, State Machine
 
 ### `VoiceGenerator.java`
-- **Role:** Serialized speech queue with PTT automation.
-- **Behavior:** Maintains `BlockingQueue<Message>` consumed by a daemon thread. For each message: (1) presses PTT key via JNA `SendInput`, (2) waits pre-transmission delay, (3) calls `InbuiltVoiceSynthesizer` for audio, (4) waits for playback completion, (5) releases PTT key. Falls back to `SapiVoiceEngine` if engine state is `DEGRADED`. Persists config (PTT key, voice, delays) to disk.
-- **Depends on:** `InbuiltVoiceSynthesizer`, `SapiVoiceEngine`, `Message`, JNA
+- **Role:** XTTS playback owner, fallback router, and config persistence shim.
+- **Behavior:** Receives narration requests, evaluates XTTS readiness/config, performs the XTTS `HttpClient` POST directly, streams the `InputStream` into JLayer `AdvancedPlayer`, and binds `java.awt.Robot` PTT DOWN/UP to `PlaybackListener` start/finish callbacks. Falls back to inbuilt SAPI speech when XTTS is disabled or unavailable.
+- **Depends on:** `InbuiltVoiceSynthesizer`, `Message`, `HttpClient`, JLayer `AdvancedPlayer`, `java.awt.Robot`
 - **Depended on by:** `ChatDataHandler`, `ValVoiceController`
 - **Pattern:** Producer-Consumer, Command Queue
 
 ### `InbuiltVoiceSynthesizer.java`
-- **Role:** Local TTS HTTP client with MD5 audio cache, sequential queue, playback, and PTT injection.
+- **Role:** Local fallback speech engine, audio-router bootstrap, and voice enumeration service.
 - **Behavior:**
-  - **HTTP Layer (Phase 4):** HTTP POST to local XTTS engine on `http://127.0.0.1:5005/speak` with 15s timeout. Sends JSON payload: `{agent, text, language}`. ConnectException triggers permanent `DEGRADED` state via `ValVoiceBackend.markDegraded()`.
-  - **Cache Layer (Phase 4):** MD5 hash of `agent|text|language` → `.mp3` file in `%LOCALAPPDATA%\ValVoice\cache\`. Atomic `.tmp → .mp3` rename. 100MB eviction by `lastModified` (oldest first).
+  - **Fallback Layer:** Windows SAPI speech generation and playback remain here for XTTS-disabled or XTTS-unavailable cases.
   - **Queue Layer (Phase 4):** `LinkedBlockingQueue(10)`, drop newest on full. Daemon consumer thread. DEGRADED state routes to SAPI fallback.
-  - **Playback (Phase 5):** JavaFX `MediaPlayer` created inside `Platform.runLater()` with `CountDownLatch` sync. Fresh MediaPlayer per clip, always disposed. 60s latch timeout prevents permanent blocking.
-  - **PTT Injection (Phase 5):** JNA `SendInput` via `user32.dll`. Key DOWN before playback (50ms pre-delay), key UP after playback (100ms tail delay) in `finally` block. `AtomicBoolean isPttPressed` prevents stuck keys.
+  - **Playback (Phase 5):** File-based fallback playback may still use JavaFX `MediaPlayer` inside `Platform.runLater()`.
+  - **PTT Injection (Phase 5):** When VoiceGenerator is active it disables synthesizer-side PTT so `Robot` ownership stays in one place. Legacy JNA fallback hooks remain here for direct synthesizer use.
+  - **Fallback Sync (Phase 2):** Direct PowerShell SAPI speech uses `PlaybackDetector.java`, which samples a capture line via `javax.sound.sampled.TargetDataLine` and RMS thresholds. Fallback PTT release waits for playback start and then hardware silence instead of blind timers.
+  - **Audio Routing (Phase 3):** Uses the shared SoundVolumeView path from `SystemAudioRouter.java` so startup JVM routing and PowerShell child routing stay aligned.
   - **Recovery Probe (Phase 6):** Every 10s during DEGRADED, probes port 5005 via TCP socket (500ms timeout). On success, restores READY state.
   - **Config Integration (Phase 7):** Reads `ConfigManager.get()` for PTT key, playback volume, language, XTTS/SAPI toggles. No config writes.
-- **Depends on:** `ValVoiceBackend` (engine state), `SapiVoiceEngine` (fallback), `ConfigManager` (settings), `SoundVolumeView.exe`, JavaFX `MediaPlayer`, JNA
+- **Depends on:** `ValVoiceBackend` (engine state), `SapiVoiceEngine` (fallback), `ConfigManager` (settings), `SoundVolumeView.exe`, `PlaybackDetector`, JLayer `AdvancedPlayer`, JavaFX `MediaPlayer`, JNA
 - **Depended on by:** `VoiceGenerator`
-- **Pattern:** Service Client, Cache-Aside, Producer-Consumer, JNA Bridge
+- **Pattern:** Service Client, Producer-Consumer, JNA Bridge
+
+### `SystemAudioRouter.java`
+- **Role:** Windows audio routing and Valorant device-config bootstrap utility.
+- **Behavior:** Resolves `%ProgramFiles%/ValorantNarrator/SoundVolumeView.exe`, gets the current JVM PID, and sequentially executes `/SetAppDefault`, `/SetPlaybackThroughDevice`, `/SetListenToThisDevice`, and `/unmute` without crashing startup if the tool is missing. After Riot authentication, it also extracts the VB-Cable hardware GUID via `/GetColumnValue` and injects `EAresStringSettingName::VoiceDeviceCaptureHandle="{GUID}"` into `%LOCALAPPDATA%\\VALORANT\\Saved\\Config\\<subjectId>-<deployment>\\Windows\\RiotUserSettings.ini`, automatically overriding Valorant's in-game Voice Input Device.
+- **Depends on:** `SoundVolumeView.exe`, Windows process PID
+- **Depended on by:** `Main`, `EnvironmentValidator`, `InbuiltVoiceSynthesizer`, `ValVoiceController`, `ValVoiceBackend`
+- **Pattern:** Bootstrap Utility, Process Runner
+
+### `PlaybackDetector.java`
+- **Role:** Hardware-level playback activity monitor for native SAPI fallback.
+- **Behavior:** Opens a `TargetDataLine` (prefers VB-Cable capture mixers), reads PCM buffers on a daemon thread, computes RMS/dB levels, and exposes a volatile `isPlaying` flag with sustained-silence debouncing. Used only to delay JNA PTT release until fallback audio is actually silent.
+- **Depends on:** `javax.sound.sampled`, VB-Cable capture line
+- **Depended on by:** `InbuiltVoiceSynthesizer`
+- **Pattern:** Monitor, Signal Detector
 
 ### `LockFileHandler.java`
 - **Role:** Riot Client lockfile reader.
@@ -361,7 +395,7 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 
 ### `SapiVoiceEngine.java` *(Phase 6)*
 - **Role:** Windows SAPI fallback — generates `.wav` audio files when XTTS backend is unavailable.
-- **Behavior:** Pure utility class (`final`, private constructor, all static methods). Generates speech via PowerShell command: `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('path'); $s.Speak('text'); $s.Dispose();`. Text sanitized for PowerShell injection (`'` → `''`). Text truncated to 300 chars. MD5-hashed filenames (`sapi_<hash>.wav`). Cache in `%LOCALAPPDATA%\ValVoice\cache\` (shared with XTTS cache). Rate limiter: 250ms minimum between PowerShell spawns (only after cache miss). 10s process timeout with `destroyForcibly()`.
+- **Behavior:** Pure utility class (`final`, private constructor, all static methods). Generates speech via PowerShell command: `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('path'); $s.Speak('text'); $s.Dispose();`. Text sanitized for PowerShell injection (`'` → `''`). Text truncated to 300 chars. MD5-hashed filenames (`sapi_<hash>.wav`). Cache in `%LOCALAPPDATA%\ValVoice\cache\` for fallback `.wav` reuse. Rate limiter: 250ms minimum between PowerShell spawns (only after cache miss). 10s process timeout with `destroyForcibly()`.
 - **Depends on:** PowerShell, filesystem
 - **Depended on by:** `InbuiltVoiceSynthesizer` (queue consumer routes here when DEGRADED)
 - **Pattern:** Utility, Fallback Strategy
@@ -581,16 +615,20 @@ Step 2: valvoice-mitm.exe intercepts via local TLS proxy → outputs JSON to std
 Step 3: ValVoiceBackend.java reads stdout stream → extracts raw XML string.
 Step 4: XmppStreamParser.java parses XML → produces ParsedMessage DTO.
 Step 5: ChatDataHandler.java validates message → checks channel flags + game state → produces Message.
-Step 6: VoiceGenerator.java dequeues Message → calls InbuiltVoiceSynthesizer.enqueueTts().
+Step 6: VoiceGenerator.java evaluates XTTS routing and delegates playback ownership to InbuiltVoiceSynthesizer.java.
 Step 7: InbuiltVoiceSynthesizer queue consumer:
-        [if READY]  → HTTP POST to XTTS engine → receives MP3 → caches with MD5 hash.
+        [if READY]  → HTTP POST to XTTS engine → streams MP3 bytes directly from memory into JLayer.
         [if DEGRADED] → SapiVoiceEngine generates .wav via PowerShell SAPI.
         [if DEGRADED + probe cooldown] → probes port 5005, restores READY on success.
-Step 8: playAudio() → pressPtt() (JNA SendInput KEY_DOWN, 50ms delay)
-        → MediaPlayer.play() (Platform.runLater, CountDownLatch)
-        → [wait for clip end] → sleep 100ms → releasePtt() (KEY_UP, in finally block).
-Step 9: Audio flows: JavaFX MediaPlayer → CABLE Input → CABLE Output → Valorant Mic Input.
-Step 10: Teammates hear TTS in Valorant voice chat.
+Step 8: XTTS playback → JLayer `playbackStarted()` → JNA `SendInput` KEY_DOWN
+        → JLayer streams frames from HTTP InputStream
+        → `playbackFinished()` → JNA `SendInput` KEY_UP.
+Step 9: Direct SAPI fallback → PowerShell `SpeechSynthesizer.Speak(...)`
+        → `PlaybackDetector` waits for RMS activity on the capture line
+        → waits for sustained silence
+        → JNA `SendInput` KEY_UP.
+Step 10: Audio flows: JLayer/Java audio output → CABLE Input → CABLE Output → Valorant Mic Input.
+Step 11: Teammates hear TTS in Valorant voice chat.
 ```
 
 ---
@@ -600,7 +638,7 @@ Step 10: Teammates hear TTS in Valorant voice chat.
 ```
 Main.java
   ├─► EnvironmentValidator.runAllChecks()     ← Phase 8 diagnostics
-  ├─► AudioRouterUtility.routeAudioToVirtualCable()  ← Phase 5 audio routing
+  ├─► SystemAudioRouter.routeApplicationAudio()      ← Phase 3 startup audio hijack
   ├─► ConfigManager.load()                    ← Phase 7 config
   └─► ValVoiceApplication.java
         │
@@ -623,10 +661,11 @@ Main.java
               │     │     └─► VoiceGenerator.java
               │     │           └─► InbuiltVoiceSynthesizer.java
               │     │                 ├─► HTTP POST → 127.0.0.1:5005/speak
-              │     │                 ├─► MD5 cache (%LOCALAPPDATA%\ValVoice\cache\)
+              │     │                 ├─► JLayer direct memory stream (no XTTS temp files)
+              │     │                 ├─► PlaybackDetector.java (SAPI fallback silence detection)
               │     │                 ├─► SapiVoiceEngine.java (SAPI fallback)
-              │     │                 ├─► JavaFX MediaPlayer (playback)
-              │     │                 ├─► JNA SendInput (PTT injection)
+              │     │                 ├─► JavaFX MediaPlayer (fallback file playback)
+              │     │                 ├─► JNA SendInput synced to JLayer lifecycle
               │     │                 ├─► ConfigManager.java (runtime config reads)
               │     │                 └─► SoundVolumeView.exe (via AudioRouterUtility)
               │     ├─► APIHandler.java
@@ -674,7 +713,7 @@ Main.java
 | JNA                      | Included via Maven dependency             |
 | Gson                     | Included via Maven dependency             |
 | Config storage           | `%LOCALAPPDATA%\ValVoice\config.json`      |
-| Cache storage            | `%LOCALAPPDATA%\ValVoice\cache\`           |
+| Cache storage            | `%LOCALAPPDATA%\ValVoice\cache\` (SAPI fallback only) |
 
 ---
 
@@ -738,8 +777,8 @@ java -jar ValVoice.jar
 |----------------------|-----------------|-------|
 | MITM Proxy           | 🟢 Stable       | —     |
 | TTS Engine Lifecycle | 🟢 Stable       | 1–3   |
-| HTTP + Cache + Queue | 🟢 Stable       | 4     |
-| MediaPlayer Playback | 🟢 Stable       | 5.1   |
+| HTTP + Streaming + Queue | 🟢 Stable       | 4     |
+| Fallback File Playback | 🟢 Stable       | 5.1   |
 | PTT Injection (JNA)  | 🟢 Stable       | 5.2   |
 | VB-Cable Routing     | 🟢 Stable       | 5.3   |
 | SAPI Fallback        | 🟢 Stable       | 6     |
@@ -767,12 +806,14 @@ java -jar ValVoice.jar
 | 1 | Engine State Machine | `EngineState` enum, `volatile` state field, `AtomicBoolean` guard, `markDegraded()`, `isEngineReady()` | `ValVoiceBackend.java` |
 | 2 | Engine Process Launch | `startEngine()` with taskkill, hidden ProcessBuilder, 15s socket polling, log gobbler. `stopEngine()` with escalation kill | `ValVoiceBackend.java` |
 | 3 | Shutdown Lifecycle | Shutdown hook, reaper integration for `valorantNarrator-agentVoices.exe`, hardened `stopEngine()` idempotency | `ValVoiceBackend.java` |
-| 4.1 | HTTP Layer | `requestTts()` — Java 11 HttpClient, 5s connect / 15s request timeout, ConnectException → DEGRADED | `InbuiltVoiceSynthesizer.java` |
-| 4.2 | Cache Layer | MD5 hash (`agent\|text\|language`), 100MB eviction, atomic `.tmp → .mp3` rename, `%LOCALAPPDATA%\ValVoice\cache\` | `InbuiltVoiceSynthesizer.java` |
+| 4.1 | HTTP Layer | `speakXttsVoice()` — Java HttpClient, 5s connect / 120s request timeout, POST to `/speak`, ConnectException → DEGRADED | `InbuiltVoiceSynthesizer.java` |
+| 4.2 | Streaming Layer | `HttpResponse.BodyHandlers.ofInputStream()` piped directly into JLayer `AdvancedPlayer`; zero XTTS temp `.mp3` files | `InbuiltVoiceSynthesizer.java` |
 | 4.3 | Queue Layer | `LinkedBlockingQueue(10)`, daemon consumer, drop newest, graceful degrade routing | `InbuiltVoiceSynthesizer.java` |
-| 5.1 | MediaPlayer Playback | `Platform.runLater()` + `CountDownLatch`, fresh MediaPlayer per clip, 60s timeout, always dispose | `InbuiltVoiceSynthesizer.java` |
-| 5.2 | PTT Injection | JNA `SendInput` via `user32.dll`, 50ms pre-delay, 100ms tail delay, `AtomicBoolean` stuck-key guard, shutdown failsafe | `InbuiltVoiceSynthesizer.java` |
-| 5.3 | Audio Routing | `SoundVolumeView.exe /SetAppDefault` for `java.exe` + `javaw.exe`, fire-and-forget startup call | `AudioRouterUtility.java`, `Main.java` |
+| 5.1 | Fallback File Playback | `Platform.runLater()` + `CountDownLatch`, fresh MediaPlayer per clip, 60s timeout, always dispose | `InbuiltVoiceSynthesizer.java` |
+| 5.2 | PTT Injection | JNA `SendInput` via `user32.dll`, JLayer playback lifecycle binding, `AtomicBoolean` stuck-key guard, shutdown failsafe | `InbuiltVoiceSynthesizer.java` |
+| 5.3 | Hardware-Level Fallback Sync | `PlaybackDetector` uses `javax.sound.sampled.TargetDataLine` + RMS thresholds to release SAPI fallback PTT on sustained silence | `PlaybackDetector.java`, `InbuiltVoiceSynthesizer.java` |
+| 5.4 | Audio Routing | Startup SoundVolumeView hijack for the current Java PID plus listen-through commands (`/SetAppDefault`, `/SetPlaybackThroughDevice`, `/SetListenToThisDevice`, `/unmute`) | `SystemAudioRouter.java`, `Main.java`, `InbuiltVoiceSynthesizer.java` |
+| 5.5 | Valorant Input Device Injection | Automated override of Valorant's in-game Voice Input Device via SoundVolumeView hardware GUID extraction and `RiotUserSettings.ini` injection at `%LOCALAPPDATA%\\VALORANT\\Saved\\Config\\<subjectId>-<deployment>\\Windows\\RiotUserSettings.ini` | `SystemAudioRouter.java`, `ValVoiceBackend.java`, `RiotClientDetails.java` |
 | 6.1 | SAPI Fallback | PowerShell WAV generation, MD5 cache, text sanitization, 10s timeout | `SapiVoiceEngine.java`, `InbuiltVoiceSynthesizer.java` |
 | 6.2 | Fallback Hardening | Rate limiter (250ms), text truncation (300 chars), null-safety in queue, improved logging | `SapiVoiceEngine.java`, `InbuiltVoiceSynthesizer.java` |
 | 6.3 | Auto Recovery | Port 5005 probe every 10s during DEGRADED, `setEngineReady()` on success | `InbuiltVoiceSynthesizer.java`, `ValVoiceBackend.java` |
@@ -785,7 +826,6 @@ java -jar ValVoice.jar
 | — | Global Crash Logging | Architecture-agnostic crash logging. `%LOCALAPPDATA%\ValVoice\logs\valvoice.log` with daily rotation (7 days) via logback `CRASH_LOG` appender. Dedicated `crash.log` file at same location captures full stack traces with timestamps via `Thread.setDefaultUncaughtExceptionHandler`. Logs directory created at startup. Crash entries appended with `StandardOpenOption.APPEND`. No engine/queue/playback changes | `Main.java`, `logback.xml` |
 | — | Cache Temp Cleanup | Startup cleanup of stale `.tmp` files in `%LOCALAPPDATA%\ValVoice\cache\`. `cleanupTempCacheFiles()` runs once after config load, before JavaFX launch. Only deletes `.tmp` files — never touches `.mp3` or `.wav`. Fail-safe: never throws exceptions. Prevents leftover partial files from interrupted audio generation | `Main.java` |
 | — | Restart Guard | Automatic TTS engine crash recovery. Daemon watcher thread detects unexpected process exit (non-zero exit code). `handleProcessCrash()` attempts `stopEngine()` + `startEngine()` once (`MAX_RESTART_ATTEMPTS=1`). If restart fails → permanent `DEGRADED` state. Intentional shutdowns (`STOPPING`/`STOPPED` state) are ignored by the watcher. `restartAttempts` resets to 0 inside `setEngineReady()` after successful recovery. No queue/playback/PTT changes | `ValVoiceBackend.java` |
-| — | Stale Cache Cleanup | `cleanupStaleTempFiles()` in `InbuiltVoiceSynthesizer.java` removes orphaned `.tmp` files older than 3 minutes from `%LOCALAPPDATA%\ValVoice\cache\`. Runs asynchronously at startup via `CompletableFuture.runAsync()` — never blocks constructor or UI. Uses `getCacheDirectory()` for path resolution. Only deletes `.tmp` files; never touches `.mp3`/`.wav`. 3-minute age threshold prevents race conditions with active atomic writes. Best-effort: all exceptions caught | `InbuiltVoiceSynthesizer.java` |
 | — | Voice Pipeline Self-Test | "Test Voice" button in Settings UI. `handleTestVoice()` calls `VoiceGenerator.getInstance().speak()` to route through the full pipeline: Queue → PTT press → Synthesizer → Playback → VB-Cable → PTT release. Checks `VoiceGenerator.isInitialized()` before calling. Green Catppuccin-styled button alongside Save. No VoiceGenerator/queue/PTT/playback logic modified — purely reuses existing pipeline | `SettingsController.java`, `settings.fxml` |
 | — | Security Hardening (CWE-78) | Eliminated all `Runtime.getRuntime().exec(String)` usage (command injection vulnerability). Replaced with `ProcessBuilder` and separated argument lists. Centralized SoundVolumeView PID routing into `AudioRouterUtility.routeProcessToCable(path, pid)`. Both `InbuiltVoiceSynthesizer.routeAudioToVbCable()` and `ValVoiceController.routeMainProcessAudioToVbCable()` now delegate to this method. Handles paths with spaces. Output consumed to prevent blocking. 2-second timeout with `destroyForcibly()`. Zero `Runtime.exec()` calls remain in the codebase | `AudioRouterUtility.java`, `InbuiltVoiceSynthesizer.java`, `ValVoiceController.java` |
 | — | Roster Pattern Optimization | Hoisted 3 `Pattern.compile()` calls out of the `parseRosterItemsFallback()` loop into `private static final` class-level constants: `ITEM_TAG_PATTERN`, `JID_PATTERN`, `NAME_ATTR_PATTERN`. Eliminates repeated regex compilation during 100–200 friend roster bursts, reducing CPU spikes and GC pressure. Zero `Pattern.compile()` calls remain inside any method body. Parsing behavior unchanged | `Roster.java` |
@@ -797,3 +837,5 @@ java -jar ValVoice.jar
 | — | PowerShell Injection Fix (CWE-78) | Eliminated command injection vulnerability in both `InbuiltVoiceSynthesizer.speakInbuiltVoice()` and `SapiVoiceEngine.generateWavWithPowerShell()`. Chat text was previously inserted into PowerShell commands via string escaping (`replace("'","''")`), which is bypassable (e.g. `'); Invoke-WebRequest malicious.exe; #`). Replaced with Base64 encoding: Java encodes text via `Base64.getEncoder().encodeToString()`, PowerShell decodes internally via `[System.Convert]::FromBase64String()` before speaking. Text never appears as a raw string in any PowerShell command. Removed unused `sanitizeForPowerShell()` method from `SapiVoiceEngine.java` | `InbuiltVoiceSynthesizer.java`, `SapiVoiceEngine.java` |
 | — | Process Deadlock Prevention | Fixed 3 `ProcessBuilder` locations where stderr/stdout could fill the OS pipe buffer and deadlock the child process. (1) `InbuiltVoiceSynthesizer.initializePowerShell()`: added missing `redirectErrorStream(true)` to the persistent PowerShell process — stderr from SAPI/.NET errors could freeze the TTS pipeline. (2) `InbuiltVoiceSynthesizer.executeAndLog()`: added output drain loop before `waitFor()` — `pb.start().waitFor()` without consuming output deadlocks if merged stream fills buffer. (3) `Main.java` shutdown reaper: added output drain before `waitFor(2s)`. All 14 `ProcessBuilder` instances across the codebase now have `redirectErrorStream(true)` AND output consumption verified | `InbuiltVoiceSynthesizer.java`, `Main.java` |
 | — | JSON Safety: Gson Serialization | Replaced manual JSON string construction in `buildJsonPayload()` with Gson serialization. Previously used chained `.replace("\\", "\\\\").replace("\"", "\\\"")` escaping and `String.format()` to build the XTTS request payload — fragile and could produce malformed JSON with unexpected characters. Now uses `new Gson().toJson(Map)` which guarantees valid JSON encoding for all Unicode, control characters, and special characters. Gson was already a project dependency (used by `ConfigManager`). No changes to HTTP client, timeout, routing, or queue logic | `InbuiltVoiceSynthesizer.java` |
+| — | XTTS VoiceGenerator Streaming Refactor | Moved XTTS HTTP POST + `BodyHandlers.ofInputStream()` consumption + JLayer `AdvancedPlayer` ownership into `VoiceGenerator.java`. Added `Robot`-driven `PlaybackListener` callbacks for exact PTT key DOWN/UP timing and disabled synthesizer-side PTT when VoiceGenerator drives playback. Updated build metadata to use the aggregate `dev.mccue:jlayer` artifact. | `VoiceGenerator.java`, `pom.xml`, `module-info.java`, `README.md`, `ReadFirst.md` |
+    │       │   ├── SystemAudioRouter.java        # Startup SoundVolumeView hijack for current Java PID

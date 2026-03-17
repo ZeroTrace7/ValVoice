@@ -1,5 +1,6 @@
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\APIHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\EntitlementsTokenResponse.java
+C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\NativePttController.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\VoiceGenerator.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\ChatUtilityHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\config\ValVoiceConfig.java
@@ -22,6 +23,7 @@ C:\Users\HP\IdeaProjects\ValVoice\src\main\java\module-info.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\AudioRouterUtility.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicegui\SetupWizardController.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\PlayerAccount.java
+C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\SystemAudioRouter.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\ParsedMessage.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\ConnectionHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\Roster.java
@@ -29,4 +31,5 @@ C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\Sour
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\RiotClientDetails.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\RiotUtilityHandler.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\HtmlEscape.java
+C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\PlaybackDetector.java
 C:\Users\HP\IdeaProjects\ValVoice\src\main\java\com\someone\valvoicebackend\GameStateManager.java

@@ -47,6 +47,15 @@ Ever wished your chat messages could be **heard** instead of just read? ValVoice
 
 <br>
 
+## ⚙️ XTTS Playback Pipeline
+
+- `VoiceGenerator.java` now streams XTTS audio directly from `HttpResponse.BodyHandlers.ofInputStream()` into JLayer `AdvancedPlayer`.
+- Push-to-talk is event-driven with `java.awt.Robot`: `playbackStarted()` presses the configured key and `playbackFinished()` releases it.
+- The XTTS path no longer writes temp `.mp3` files or uses JavaFX `MediaPlayer`, which removes the disk and JavaFX startup latency from live playback.
+- `InbuiltVoiceSynthesizer.java` remains the fallback SAPI/audio-routing service, but VoiceGenerator now owns the active PTT lifecycle.
+
+<br>
+
 ## 📥 Get Started in 3 Steps
 
 <table>

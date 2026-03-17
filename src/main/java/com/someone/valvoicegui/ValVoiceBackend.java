@@ -367,7 +367,7 @@ public class ValVoiceBackend {
      * @return true if engine is in READY state, false otherwise
      */
     public boolean isEngineReady() {
-        return engineState == EngineState.READY;
+        return this.engineRunning != null && this.engineRunning.get();
     }
 
     /**
@@ -1046,7 +1046,55 @@ public class ValVoiceBackend {
 
             // Update UI status via listener (Phase 5: Event-Driven UI)
             fireIdentityCaptured(puuid);
+
+            // Phase 4: Inject VB-Cable capture GUID into RiotUserSettings.ini after auth.
+            scheduleValorantInputDeviceInjection(puuid);
         }
+    }
+
+    private void scheduleValorantInputDeviceInjection(String puuid) {
+        mitmIoPool.submit(() -> {
+            try {
+                String lockfilePath = LockFileHandler.findDefaultLockfile();
+                if (lockfilePath == null || lockfilePath.isBlank()) {
+                    logger.warn("[AudioRouting] Skipping RiotUserSettings.ini injection: Riot lockfile not found");
+                    return;
+                }
+
+                APIHandler apiHandler = APIHandler.getInstance();
+                if (!apiHandler.isReady() && !apiHandler.loadLockfile(lockfilePath)) {
+                    logger.warn("[AudioRouting] Skipping RiotUserSettings.ini injection: local Riot API not ready");
+                    return;
+                }
+
+                for (int attempt = 1; attempt <= 10; attempt++) {
+                    java.util.Optional<RiotClientDetails> details = apiHandler.fetchClientDetails();
+                    if (details.isPresent()) {
+                        RiotClientDetails riotClientDetails = details.get();
+                        String subjectId = riotClientDetails.getSubjectId();
+                        String deployment = riotClientDetails.getDeployment();
+
+                        if ((subjectId == null || subjectId.isBlank()) && puuid != null && !puuid.isBlank()) {
+                            subjectId = puuid;
+                        }
+
+                        if (subjectId != null && !subjectId.isBlank() && deployment != null && !deployment.isBlank()) {
+                            SystemAudioRouter.injectValorantInputDevice(subjectId, deployment);
+                            return;
+                        }
+                    }
+
+                    Thread.sleep(500);
+                }
+
+                logger.warn("[AudioRouting] Skipping RiotUserSettings.ini injection: could not resolve Riot deployment after authentication");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("[AudioRouting] RiotUserSettings.ini injection interrupted");
+            } catch (Exception e) {
+                logger.warn("[AudioRouting] RiotUserSettings.ini injection scheduling failed: {}", e.getMessage());
+            }
+        });
     }
 
     /**

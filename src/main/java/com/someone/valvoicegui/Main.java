@@ -1,9 +1,9 @@
 package com.someone.valvoicegui;
 
-import com.someone.valvoicebackend.AudioRouterUtility;
 import com.someone.valvoicebackend.Chat;
 import com.someone.valvoicebackend.EnvironmentValidator;
 import com.someone.valvoicebackend.Source;
+import com.someone.valvoicebackend.SystemAudioRouter;
 import com.someone.valvoicebackend.config.ConfigManager;
 import javafx.application.Application;
 import org.slf4j.Logger;
@@ -419,9 +419,9 @@ public class Main {
         // Checks SoundVolumeView, PowerShell, and VB-Cable before any audio operations
         EnvironmentValidator.runAllChecks();
 
-        // Phase 5 Step 3: Route Java audio to VB-Cable for Valorant voice injection
-        // Must run BEFORE any TTS playback occurs
-        AudioRouterUtility.routeAudioToVirtualCable();
+        // Phase 3: Startup SoundVolumeView hijack for the current Java PID.
+        // Must run BEFORE any TTS playback occurs.
+        SystemAudioRouter.routeApplicationAudio();
 
         // Phase 7: Load persistent JSON configuration (%LOCALAPPDATA%\ValVoice\config.json)
         // Must execute before JavaFX launch so config values are available to all systems

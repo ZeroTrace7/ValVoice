@@ -9,7 +9,7 @@ import java.util.Objects;
  */
 public class RiotClientDetails {
     private final String subjectId; // PUUID
-    private final String region;    // e.g. na, eu, ap
+    private final String region;    // deployment / affinity, e.g. na, eu, ap
     private final String clientVersion; // e.g. release-09.05-shipping-xxxxx
     private final Instant fetchedAt;
 
@@ -22,6 +22,7 @@ public class RiotClientDetails {
 
     public String getSubjectId() { return subjectId; }
     public String getRegion() { return region; }
+    public String getDeployment() { return region; }
     public String getClientVersion() { return clientVersion; }
     public Instant getFetchedAt() { return fetchedAt; }
 

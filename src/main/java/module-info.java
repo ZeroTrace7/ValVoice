@@ -20,9 +20,11 @@ module com.someone.valvoice {
     // Java modules
     requires java.desktop;
     requires java.net.http;
+    requires dev.mccue.jlayer;
 
     // JNA for native Windows API (automatic module)
     requires com.sun.jna;
+    requires com.sun.jna.platform;
 
     // Open packages to JavaFX for FXML reflection
     opens com.someone.valvoicegui to javafx.fxml, javafx.graphics;
