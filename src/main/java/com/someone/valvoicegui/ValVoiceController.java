@@ -1622,8 +1622,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
             return soundVolumeViewPath;
         }
 
-        logger.warn("[AudioRouting] SoundVolumeView.exe not found at startup router path: {}",
-            SystemAudioRouter.getExpectedSoundVolumeViewLocation());
+        logger.warn("[AudioRouting] SoundVolumeView.exe not found at any candidate path");
+        SystemAudioRouter.getCandidatePaths().forEach(p ->
+            logger.warn("[AudioRouting]   Checked: {}", p));
         return null;
     }
 }

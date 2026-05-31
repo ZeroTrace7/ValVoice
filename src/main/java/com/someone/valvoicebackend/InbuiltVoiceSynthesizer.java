@@ -58,7 +58,7 @@ public class InbuiltVoiceSynthesizer {
 
     public InbuiltVoiceSynthesizer(boolean strictMode) {
         initializePowerShell();
-        soundVolumeViewPath = resolveSoundVolumeViewPath();
+        soundVolumeViewPath = SystemAudioRouter.resolveSoundVolumeViewPath();
 
         if (strictMode) {
             validateDependencies();
@@ -132,26 +132,8 @@ public class InbuiltVoiceSynthesizer {
         }
     }
 
-    private Path resolveSoundVolumeViewPath() {
-        String programFiles = System.getenv("ProgramFiles");
-        if (programFiles != null && !programFiles.isBlank()) {
-            Path expected = Paths.get(programFiles, "ValorantNarrator", "SoundVolumeView.exe");
-            if (Files.exists(expected)) {
-                return expected;
-            }
-        }
-
-        Path localCopy = Paths.get("SoundVolumeView.exe").toAbsolutePath();
-        if (Files.exists(localCopy)) {
-            return localCopy;
-        }
-
-        if (programFiles == null || programFiles.isBlank()) {
-            return null;
-        }
-
-        return Paths.get(programFiles, "ValorantNarrator", "SoundVolumeView.exe");
-    }
+    // Path resolution is now centralized in SystemAudioRouter.resolveSoundVolumeViewPath()
+    // which searches: user.dir → JAR dir → %ProgramFiles%/ValVoice/ → %ProgramFiles%/ValorantNarrator/
 
     private void routePowerShellAudio() {
         if (!isReady()) {
@@ -167,10 +149,17 @@ public class InbuiltVoiceSynthesizer {
         }
 
         long pid = powershellProcess.pid();
-        String command = "\"" + soundVolumeViewPath + "\" /SetAppDefault \"CABLE Input\" all " + pid;
 
         try {
-            Process routingProcess = Runtime.getRuntime().exec(command);
+            ProcessBuilder pb = new ProcessBuilder(
+                soundVolumeViewPath.toString(),
+                "/SetAppDefault",
+                "CABLE Input",
+                "all",
+                String.valueOf(pid)
+            );
+            pb.redirectErrorStream(true);
+            Process routingProcess = pb.start();
             try (BufferedReader routingReader =
                      new BufferedReader(new InputStreamReader(routingProcess.getInputStream()))) {
                 while (routingReader.readLine() != null) {

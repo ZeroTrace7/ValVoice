@@ -110,8 +110,11 @@ public final class EnvironmentValidator {
             return "OK";
         }
 
-        logger.warn("[Environment] SoundVolumeView.exe not found at {} — audio routing will be skipped.",
-            SystemAudioRouter.getExpectedSoundVolumeViewLocation());
+        java.util.List<Path> candidates = SystemAudioRouter.getCandidatePaths();
+        logger.warn("[Environment] SoundVolumeView.exe not found — audio routing will be skipped. Checked {} locations:", candidates.size());
+        for (int i = 0; i < candidates.size(); i++) {
+            logger.warn("[Environment]   {}. {}", i + 1, candidates.get(i));
+        }
         return "MISSING";
     }
 

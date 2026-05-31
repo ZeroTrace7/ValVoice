@@ -331,7 +331,7 @@ For Valorant to transmit the TTS audio to teammates, the PTT key must be held do
 - Shutdown hook forces key release as a failsafe
 
 > [!NOTE]
-> A JNA `SendInput` implementation also exists in `NativePttController.java` as staged infrastructure, but the **active runtime uses `java.awt.Robot`** for PTT simulation.
+> PTT simulation uses `java.awt.Robot` exclusively. There is no native `SendInput` path in the codebase.
 
 ---
 

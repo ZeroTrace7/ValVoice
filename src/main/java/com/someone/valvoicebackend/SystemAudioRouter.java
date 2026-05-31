@@ -6,11 +6,13 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedWriter;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,7 +28,7 @@ public final class SystemAudioRouter {
 
     private static final Logger logger = LoggerFactory.getLogger(SystemAudioRouter.class);
 
-    private static final String SOUND_VOLUME_VIEW_TEMPLATE = "%s/ValorantNarrator/SoundVolumeView.exe";
+    private static final String SVV_FILENAME = "SoundVolumeView.exe";
     private static final String VB_CABLE_CAPTURE_DEVICE = "VB-Audio Virtual Cable\\Device\\CABLE Output\\Capture";
     private static final String RIOT_INPUT_DEVICE_KEY = "EAresStringSettingName::VoiceDeviceCaptureHandle=";
     private static final int COMMAND_TIMEOUT_SECONDS = 2;
@@ -45,7 +47,8 @@ public final class SystemAudioRouter {
         try {
             Path soundVolumeViewPath = resolveSoundVolumeViewPath();
             if (soundVolumeViewPath == null) {
-                logger.warn("[AudioRouting] Startup audio hijack skipped: SoundVolumeView.exe not found at {}", getExpectedSoundVolumeViewLocation());
+                logger.warn("[AudioRouting] Startup audio hijack skipped: SoundVolumeView.exe not found");
+                logCandidatePathsChecked();
                 return;
             }
 
@@ -68,27 +71,78 @@ public final class SystemAudioRouter {
         }
     }
 
+    /**
+     * Resolve SoundVolumeView.exe using a deterministic 4-location search.
+     *
+     * Search order (first match wins):
+     *   1. Working directory (user.dir) — development / portable use
+     *   2. Application/JAR directory — packaged distribution
+     *   3. %ProgramFiles%/ValVoice/ — ValVoice installer location
+     *   4. %ProgramFiles%/ValorantNarrator/ — legacy VN backward compat
+     *
+     * @return Resolved path to SoundVolumeView.exe, or null if not found
+     */
     public static Path resolveSoundVolumeViewPath() {
-        String fileLocation = getExpectedSoundVolumeViewLocation();
-        if (fileLocation == null) {
-            return null;
+        for (Path candidate : getCandidatePaths()) {
+            if (Files.isRegularFile(candidate)) {
+                logger.debug("[AudioRouting] SoundVolumeView.exe resolved: {}", candidate);
+                return candidate;
+            }
         }
-
-        Path soundVolumeViewPath = Paths.get(fileLocation);
-        if (Files.isRegularFile(soundVolumeViewPath)) {
-            return soundVolumeViewPath;
-        }
-
         return null;
     }
 
-    public static String getExpectedSoundVolumeViewLocation() {
-        String programFiles = System.getenv("ProgramFiles");
-        if (programFiles == null || programFiles.isBlank()) {
-            return null;
+    /**
+     * Build the ordered list of candidate paths to check for SoundVolumeView.exe.
+     *
+     * Duplicate paths are suppressed (e.g. if JAR dir == working dir).
+     *
+     * @return Unmodifiable list of candidate paths (may be empty if no env vars are set)
+     */
+    public static List<Path> getCandidatePaths() {
+        List<Path> candidates = new ArrayList<>();
+
+        // 1. Working directory (user.dir)
+        Path workingDir = Paths.get(System.getProperty("user.dir", ".")).resolve(SVV_FILENAME).toAbsolutePath().normalize();
+        candidates.add(workingDir);
+
+        // 2. Application/JAR directory (if different from working dir)
+        try {
+            URI codeSourceUri = SystemAudioRouter.class.getProtectionDomain().getCodeSource().getLocation().toURI();
+            Path codeSourcePath = Paths.get(codeSourceUri);
+            Path jarDir = Files.isDirectory(codeSourcePath) ? codeSourcePath : codeSourcePath.getParent();
+            if (jarDir != null) {
+                Path jarCandidate = jarDir.resolve(SVV_FILENAME).toAbsolutePath().normalize();
+                if (!jarCandidate.equals(workingDir)) {
+                    candidates.add(jarCandidate);
+                }
+            }
+        } catch (Exception e) {
+            // ProtectionDomain may be unavailable in some classloader configs — skip this candidate
+            logger.debug("[AudioRouting] Could not resolve JAR directory for SVV lookup: {}", e.getMessage());
         }
 
-        return String.format(SOUND_VOLUME_VIEW_TEMPLATE, programFiles.replace("\\", "/"));
+        // 3. %ProgramFiles%/ValVoice/
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null && !programFiles.isBlank()) {
+            candidates.add(Paths.get(programFiles, "ValVoice", SVV_FILENAME));
+            // 4. %ProgramFiles%/ValorantNarrator/ (legacy backward compat)
+            candidates.add(Paths.get(programFiles, "ValorantNarrator", SVV_FILENAME));
+        }
+
+        return Collections.unmodifiableList(candidates);
+    }
+
+    /**
+     * Log all candidate paths that were checked when SoundVolumeView.exe was not found.
+     * Provides honest diagnostic output instead of reporting only the legacy VN path.
+     */
+    private static void logCandidatePathsChecked() {
+        List<Path> candidates = getCandidatePaths();
+        logger.warn("[AudioRouting] SoundVolumeView.exe not found. Checked {} locations:", candidates.size());
+        for (int i = 0; i < candidates.size(); i++) {
+            logger.warn("[AudioRouting]   {}. {}", i + 1, candidates.get(i));
+        }
     }
 
     public static void injectValorantInputDevice(String subjectId, String deployment) {
@@ -100,8 +154,8 @@ public final class SystemAudioRouter {
 
             Path soundVolumeViewPath = resolveSoundVolumeViewPath();
             if (soundVolumeViewPath == null) {
-                logger.warn("[AudioRouting] Skipping RiotUserSettings.ini injection: SoundVolumeView.exe not found at {}",
-                    getExpectedSoundVolumeViewLocation());
+                logger.warn("[AudioRouting] Skipping RiotUserSettings.ini injection: SoundVolumeView.exe not found");
+                logCandidatePathsChecked();
                 return;
             }
 

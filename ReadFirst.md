@@ -28,14 +28,13 @@
 - `CustomPlaybackListener` presses the configured PTT key in `playbackStarted()` and releases it in `playbackFinished()`.
 - The XTTS path must not write temp `.mp3` files, use JavaFX `MediaPlayer`, use `CountDownLatch`, or use blind `Thread.sleep()` timers for playback duration.
 - `InbuiltVoiceSynthesizer.java` remains the fallback SAPI/audio-routing service, but VoiceGenerator disables synthesizer-side PTT so the active key lifecycle stays in one place.
-- This override supersedes older JNA/PTT ownership notes elsewhere in this document when they conflict with the current XTTS playback path.
+- This override supersedes older PTT ownership notes elsewhere in this document when they conflict with the current XTTS playback path.
 
 ### Rule 1 — Push-to-Talk (PTT) Key Simulation
 
 - **Current active runtime:** PTT is driven by `java.awt.Robot` inside `VoiceGenerator.java`.
 - `CustomPlaybackListener.playbackStarted()` presses the configured key and `playbackFinished()` releases it.
-- `NativePttController.java` provides a staged JNA `SendInput` implementation, but it is not wired into active runtime code.
-- Do not describe active PTT as JNA/SendInput unless `VoiceGenerator.java` is changed to call `NativePttController`.
+- PTT is implemented exclusively via `java.awt.Robot`. There is no native SendInput path.
 - **Affected file:** `VoiceGenerator.java`
 
 ### Rule 2 — Audio Routing
@@ -81,7 +80,7 @@
 | Audio Detection     | Java Sound APIs for diagnostics; `PlaybackDetector` is staged/unused |
 | Audio Routing       | SoundVolumeView.exe (startup PID hijack + hardware GUID extraction for RiotUserSettings.ini) |
 | Virtual Audio       | VB-Audio Virtual Cable                        |
-| Key Simulation      | Active: `java.awt.Robot`; staged: JNA `NativePttController` |
+| Key Simulation      | `java.awt.Robot`                          |
 | HTTP Client         | java.net.http.HttpClient (SSL bypass)         |
 | OS                  | Windows 10+ only                              |
 
@@ -91,7 +90,7 @@
 
 | Area | Active Runtime | Staged / Unused |
 |------|----------------|-----------------|
-| PTT | `VoiceGenerator` uses `java.awt.Robot` with JLayer playback callbacks | `NativePttController` JNA `SendInput` helper |
+| PTT | `VoiceGenerator` uses `java.awt.Robot` with JLayer playback callbacks | — |
 | XTTS playback | `VoiceGenerator` streams HTTP `InputStream` into JLayer `AdvancedPlayer` | JavaFX `MediaPlayer` fallback-file path |
 | SAPI fallback | `InbuiltVoiceSynthesizer` speaks directly through persistent PowerShell | `SapiVoiceEngine` `.wav` generation/cache utility |
 | Fallback timing | Blocking SAPI call wrapped by `VoiceGenerator` PTT press/release | `PlaybackDetector` RMS/silence monitor |
@@ -137,7 +136,6 @@ VoiceGenerator.java            ← XTTS stream owner, fallback router, Robot PTT
     │        │                            Config reads from ConfigManager.get()
     │        ├──► SoundVolumeView.exe  ← Routes PowerShell audio → VB Cable
     │        ├──► JLayer AdvancedPlayer ← Streams MP3 from HTTP InputStream (no temp files)
-    │        ├──► NativePttController  ← Staged JNA SendInput implementation (unused)
     │        └──► PlaybackDetector     ← Staged RMS detector (unused)
     │
     └──► SapiVoiceEngine.java          ← Staged fallback: PowerShell SAPI → .wav file (unused)
@@ -540,12 +538,12 @@ Each entry follows the format: `File` → Responsibility → Key behavior → De
 
 ### `pom.xml`
 - **Role:** Maven build config.
-- **Key details:** Java 23 target/release. Dependencies: JavaFX controls/media/fxml, Gson, JNA/JNA Platform, JLayer, logging. Shade Plugin produces the fat JAR during `mvn package`.
+- **Key details:** Java 23 target/release. Dependencies: JavaFX controls/media/fxml, Gson, JLayer, logging. Shade Plugin produces the fat JAR during `mvn package`.
 
 ### `module-info.java`
 - **Role:** JPMS module descriptor.
 - **Exports:** `com.someone.valvoicebackend`, `com.someone.valvoicegui`, `com.someone.valvoicebackend.config`
-- **Requires:** `javafx.base`, `javafx.controls`, `javafx.fxml`, `javafx.graphics`, `javafx.media`, `com.jfoenix`, `org.slf4j`, `ch.qos.logback.classic`, `ch.qos.logback.core`, `com.google.gson`, `java.desktop`, `java.net.http`, `com.sun.jna`
+- **Requires:** `javafx.base`, `javafx.controls`, `javafx.fxml`, `javafx.graphics`, `javafx.media`, `com.jfoenix`, `org.slf4j`, `ch.qos.logback.classic`, `ch.qos.logback.core`, `com.google.gson`, `java.desktop`, `java.net.http`, `dev.mccue.jlayer`
 - **Opens:** `com.someone.valvoicegui` → `javafx.fxml, javafx.graphics`; `com.someone.valvoicebackend` → `javafx.fxml, javafx.graphics, com.google.gson`; `com.someone.valvoicebackend.config` → `com.google.gson`
 
 ### `SoundVolumeView.exe`
@@ -702,7 +700,7 @@ Main.java
 | SSL bypass scope            | SSL validation bypass limited to `127.0.0.1` only          |
 | Process cleanup             | Reaper kills orphaned processes on startup + shutdown hook  |
 | No credential logging       | `APIHandler` suppresses token output in logs                |
-| PTT implementation          | Active: `java.awt.Robot`; staged: JNA `NativePttController` |
+| PTT implementation          | `java.awt.Robot` via `VoiceGenerator.java`                  |
 
 ---
 
@@ -717,7 +715,7 @@ Main.java
 | SoundVolumeView.exe      | Active startup path: `%ProgramFiles%/ValorantNarrator/SoundVolumeView.exe`; local fallback missing in `SystemAudioRouter` |
 | XTTS Engine              | `engine/valorantNarrator-agentVoices.exe`  |
 | Valorant + Riot Client   | Installed and accessible                  |
-| JNA                      | Included via Maven dependency             |
+
 | Gson                     | Included via Maven dependency             |
 | Config storage           | `%LOCALAPPDATA%\ValVoice\config.json`      |
 | Cache storage            | `%LOCALAPPDATA%\ValVoice\cache\` (SAPI fallback only) |
@@ -786,7 +784,7 @@ java -jar target/valvoice-1.0.0.jar
 | TTS Engine Lifecycle | 🟢 Stable       | 1–3   |
 | HTTP + Streaming | 🟢 Stable       | 4     |
 | Direct SAPI Fallback | 🟢 Stable       | 5.1 / 6 |
-| PTT Injection (Robot active, JNA staged) | 🟢 Stable       | 5.2   |
+| PTT Injection (`java.awt.Robot`)         | 🟢 Stable       | 5.2   |
 | VB-Cable Routing     | 🟢 Stable       | 5.3   |
 | SAPI Fallback        | 🟢 Stable       | 6     |
 | Auto Recovery        | 🟢 Stable       | 6.3   |
@@ -817,7 +815,7 @@ java -jar target/valvoice-1.0.0.jar
 | 4.2 | Streaming Layer | `HttpResponse.BodyHandlers.ofInputStream()` piped directly into JLayer `AdvancedPlayer`; zero XTTS temp `.mp3` files | `VoiceGenerator.java` |
 | 4.3 | Queue Layer | Single-threaded `ttsExecutor` gives FIFO narration with no overlapping speech | `VoiceGenerator.java` |
 | 5.1 | Direct SAPI Fallback | Blocking `InbuiltVoiceSynthesizer.speakInbuiltVoice(...)` through persistent PowerShell `SpeechSynthesizer.Speak(...)`; no active `.wav` playback path | `VoiceGenerator.java`, `InbuiltVoiceSynthesizer.java` |
-| 5.2 | PTT Injection | Active `java.awt.Robot` PTT synchronized to JLayer playback lifecycle with `AtomicBoolean` stuck-key guard. `NativePttController` is staged but unused | `VoiceGenerator.java`, `NativePttController.java` |
+| 5.2 | PTT Injection | `java.awt.Robot` PTT synchronized to JLayer playback lifecycle with `AtomicBoolean` stuck-key guard | `VoiceGenerator.java` |
 | 5.3 | Hardware-Level Fallback Sync | `PlaybackDetector` exists as staged RMS-based fallback monitor but is not wired into active runtime | `PlaybackDetector.java` |
 | 5.4 | Audio Routing | Startup SoundVolumeView hijack for the current Java PID plus listen-through commands (`/SetAppDefault`, `/SetPlaybackThroughDevice`, `/SetListenToThisDevice`, `/unmute`) | `SystemAudioRouter.java`, `Main.java`, `InbuiltVoiceSynthesizer.java` |
 | 5.5 | Valorant Input Device Injection | Automated override of Valorant's in-game Voice Input Device via SoundVolumeView hardware GUID extraction and `RiotUserSettings.ini` injection at `%LOCALAPPDATA%\\VALORANT\\Saved\\Config\\<subjectId>-<deployment>\\Windows\\RiotUserSettings.ini` | `SystemAudioRouter.java`, `ValVoiceBackend.java`, `RiotClientDetails.java` |
