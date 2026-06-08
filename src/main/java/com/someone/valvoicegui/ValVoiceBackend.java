@@ -1547,7 +1547,7 @@ public class ValVoiceBackend {
      * Notify all listeners of a status change.
      * Thread-safe - can be called from any thread.
      */
-    private void fireStatusChanged(String component, String status, boolean ok) {
+    public void fireStatusChanged(String component, String status, boolean ok) {
         for (ValVoiceEventListener l : listeners) {
             try {
                 l.onStatusChanged(component, status, ok);
