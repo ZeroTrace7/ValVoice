@@ -202,6 +202,26 @@ public class VoiceGenerator {
         speak(msg.getContent());
     }
 
+    /**
+     * Queue plain text for TTS narration from the OCR pipeline.
+     *
+     * Phase 0 (OCR migration): The existing queueNarration(Message) requires an XMPP Message
+     * object which does not exist in the OCR path. This overload accepts raw text directly
+     * and delegates to speak(String). All PTT, XTTS, SAPI, and keybind logic is unchanged.
+     *
+     * @param text The text to narrate (must not be null or blank)
+     */
+    public void queueNarration(String text) {
+        if (text == null || text.isBlank()) {
+            logger.debug("queueNarration(String): null/blank - skipped");
+            return;
+        }
+        logger.info("TTS [OCR] QUEUED: \"{}\": voice={}, rate={}, PTT={}",
+            text.length() > 50 ? text.substring(0, 47) + "..." : text,
+            currentVoice, currentVoiceRate, pttEnabled);
+        speak(text);
+    }
+
     public void setKeybind(int keyCode) {
         this.keyEvent = keyCode;
         saveConfig();

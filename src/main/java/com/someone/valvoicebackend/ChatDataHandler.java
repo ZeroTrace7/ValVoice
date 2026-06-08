@@ -513,6 +513,76 @@ public class ChatDataHandler {
     /**
      * Clear all listeners (cleanup)
      */
+    /**
+     * Handle an OCR-sourced chat message from the ValVoiceOCR.exe sidecar.
+     *
+     * Filter chain:
+     *  1. Null / blank guard
+     *  2. Chat globally disabled guard
+     *  3. Channel filter (PARTY / TEAM / ALL based on Chat state flags)
+     *  4. GameState smart-mute gate (clutch mode)
+     *  5. Content cleaning (slash strip, truncate)
+     *  6. TTS dispatch via VoiceGenerator.queueNarration(String)
+     *  7. Stats update via existing statsCallback
+     *
+     * Phase 0 (OCR migration): Added first; XMPP message() pipeline removed separately
+     * in a later cleanup commit after compile+test confirmation.
+     *
+     * @param msg OCR chat event from sidecar
+     */
+    public void handleOcrMessage(OcrMessage msg) {
+        if (msg == null || msg.body() == null || msg.body().isBlank()) return;
+
+        Chat chat = Chat.getInstance();
+        if (chat.isDisabled()) return;
+
+        // Channel filter
+        boolean allowed = switch (msg.channel()) {
+            case "PARTY" -> chat.isPartyState();
+            case "TEAM"  -> chat.isTeamState();
+            case "ALL"   -> chat.isAllState();
+            default      -> false;
+        };
+        if (!allowed) {
+            logger.debug("[OCR] Filtered channel={}: {}", msg.channel(), msg.body());
+            return;
+        }
+
+        // Clutch mode gate
+        if (GameStateManager.getInstance().shouldSuppressNarration()) {
+            logger.info("[OCR] Clutch mode suppressed (state={})",
+                GameStateManager.getInstance().getCurrentState());
+            return;
+        }
+
+        // Content cleaning
+        String body = msg.body().replace("/", "").replace("\\", "").trim();
+        if (body.isBlank()) return;
+        if (body.length() > 300) body = body.substring(0, 300);
+
+        logger.info("TTS [OCR] channel={} name={} body='{}'",
+            msg.channel(), msg.name(),
+            body.length() > 40 ? body.substring(0, 37) + "..." : body);
+
+        final String ttsText = body;
+        CompletableFuture.runAsync(() -> {
+            try {
+                if (VoiceGenerator.isInitialized()) {
+                    VoiceGenerator.getInstance().queueNarration(ttsText);
+                }
+            } catch (Exception e) {
+                logger.error("[OCR] TTS dispatch failed", e);
+            }
+        });
+
+        // Stats
+        StatsUpdateCallback cb = this.statsCallback;
+        if (cb != null) {
+            chat.incrementMessageStats(body.length());
+            cb.onStatsUpdated(chat.getMessagesSent(), chat.getCharactersSent());
+        }
+    }
+
     public void clearListeners() {
         selfIdListeners.clear();
     }
