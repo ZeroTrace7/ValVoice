@@ -39,17 +39,10 @@ namespace OcrProbe;
 /// </summary>
 internal class Program
 {
-    // Win32 imports for window finding
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr FindWindow(string? lpClassName, string lpWindowName);
-
+    // Win32 imports
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindow(IntPtr hWnd);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
@@ -287,33 +280,36 @@ internal class Program
 
     private static IntPtr FindValorantWindow()
     {
-        // Method 1: Find by process name
+        // ONLY use the shipping process. Never use FindWindow.
+        // Riot creates multiple tiny invisible helper/overlay windows
+        // that hijack FindWindow and return ghost HWNDs (e.g. 159x27).
         var procs = Process.GetProcessesByName("VALORANT-Win64-Shipping");
+
+        Console.WriteLine($"[INFO] Found {procs.Length} VALORANT-Win64-Shipping process(es)");
+
         foreach (var proc in procs)
         {
+            Console.WriteLine($"[INFO]   PID={proc.Id}  MainWindowHandle=0x{proc.MainWindowHandle:X}  Title=\"{proc.MainWindowTitle}\"");
+
             if (proc.MainWindowHandle != IntPtr.Zero)
             {
-                Console.WriteLine($"[INFO] Found via process: PID={proc.Id}");
-                return proc.MainWindowHandle;
+                GetWindowRect(proc.MainWindowHandle, out RECT rect);
+                Console.WriteLine($"[INFO]   Window size: {rect.Width}x{rect.Height}");
+
+                // Sanity check: real game window is at least 640x480
+                if (rect.Width >= 640 && rect.Height >= 480)
+                {
+                    Console.WriteLine($"[+] Found real Valorant window: PID={proc.Id} HWND=0x{proc.MainWindowHandle:X}");
+                    return proc.MainWindowHandle;
+                }
+                else
+                {
+                    Console.WriteLine($"[WARN] Skipping — too small ({rect.Width}x{rect.Height}), likely a ghost/helper window");
+                }
             }
         }
 
-        // Method 2: FindWindow by title
-        IntPtr hwnd = FindWindow(null, "VALORANT");
-        if (hwnd != IntPtr.Zero && IsWindow(hwnd))
-        {
-            Console.WriteLine($"[INFO] Found via FindWindow(\"VALORANT\")");
-            return hwnd;
-        }
-
-        // Method 3: Try alternative title
-        hwnd = FindWindow(null, "VALORANT  ");
-        if (hwnd != IntPtr.Zero && IsWindow(hwnd))
-        {
-            Console.WriteLine($"[INFO] Found via FindWindow(\"VALORANT  \") (trailing spaces)");
-            return hwnd;
-        }
-
+        Console.WriteLine("[-] Valorant is not running or window is not ready.");
         return IntPtr.Zero;
     }
 
@@ -346,9 +342,10 @@ internal class Program
         if (hr != 0)
             throw new COMException($"CreateDirect3D11DeviceFromDXGIDevice failed", hr);
 
-        var device = MarshalInterface<IDirect3DDevice>.FromAbi(inspectable);
+        var device = (IDirect3DDevice)Marshal.GetObjectForIUnknown(inspectable);
 
         // Release COM refs
+        Marshal.Release(inspectable);
         Marshal.Release(dxgiDevice);
         Marshal.Release(d3dDevice);
 
@@ -368,19 +365,11 @@ internal class Program
 
         var session = pool.CreateCaptureSession(item);
 
-        // Optional: suppress yellow border (non-blocking, version-gated)
-        if (Environment.OSVersion.Version.Build >= 20348)
-        {
-            try
-            {
-                session.IsBorderRequired = false;
-                Console.WriteLine("[INFO] IsBorderRequired set to false (build >= 20348)");
-            }
-            catch
-            {
-                Console.WriteLine("[INFO] IsBorderRequired not available (non-blocking)");
-            }
-        }
+        // IsBorderRequired: not available in 19041 TFM projection.
+        // Non-blocking cosmetic property — yellow border doesn't affect OCR.
+        // Production sidecar will version-gate this with reflection.
+        // Prototype skips it entirely.
+        Console.WriteLine("[INFO] IsBorderRequired: skipped (prototype, non-blocking)");
 
         var tcs = new TaskCompletionSource<Direct3D11CaptureFrame?>();
 
@@ -454,7 +443,7 @@ internal class Program
                     int dstOffset = dstDesc.StartIndex + (row * dstDesc.Stride);
                     int copyBytes = w * 4;
 
-                    Buffer.MemoryCopy(srcPtr + srcOffset, dstPtr + dstOffset, dstCap - dstOffset, copyBytes);
+                    System.Buffer.MemoryCopy(srcPtr + srcOffset, dstPtr + dstOffset, dstCap - dstOffset, copyBytes);
                 }
             }
         }
