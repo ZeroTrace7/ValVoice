@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-1. **Inno Setup 6** - Download from https://jrsoftware.org/isdl.php
-2. **Java 23+** - Required for running ValVoice
-3. **Maven** - For building the JAR
+1. **Inno Setup 6** — Download from https://jrsoftware.org/isdl.php
+2. **Java 23+** — Required for running ValVoice
+3. **Maven** — For building the JAR
 
 ## Build Steps
 
@@ -18,7 +18,7 @@ mvn clean package -DskipTests
 ```bash
 cd mitm
 npm install
-npm run build:all
+npm run build:exe
 ```
 
 ### 3. Compile the Installer
@@ -46,7 +46,11 @@ The installer packages these files into `%ProgramFiles%\ValVoice\`:
 | `valvoice-1.0.0.jar` | Main Java application |
 | `valvoice-mitm.exe` | MITM proxy (bundled Node.js runtime) |
 | `SoundVolumeView.exe` | Audio routing utility |
-| `README.md` | Documentation |
+| `engine/` | XTTS voice engine (`valorantNarrator-agentVoices.exe` + agents) |
+| `mitm/certs/` | TLS certificates for MITM proxy |
+| `run-valvoice.bat` | Silent Windows launcher |
+| `README.txt` | End-user documentation |
+| `LICENSE` | License information |
 
 ## Start Menu Shortcut
 
@@ -57,6 +61,7 @@ javaw.exe -jar "C:\Program Files\ValVoice\valvoice-1.0.0.jar"
 
 ## Requirements for End Users
 
-- Windows 10/11
-- Java 23+ (must be installed separately)
-- VB-CABLE Virtual Audio Device (for voice chat integration)
+- Windows 10/11 (64-bit)
+- Java 23+
+- VB-Audio Virtual Cable (for voice chat integration)
+- SoundVolumeView (bundled with release)

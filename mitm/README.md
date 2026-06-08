@@ -1,10 +1,11 @@
 # ValVoice XMPP MITM Proxy
 
-This is the MITM (Man-in-the-Middle) proxy layer for ValVoice. It intercepts Valorant XMPP chat traffic by:
-1. Launching the Riot client with a custom config URL
+The MITM (Man-in-the-Middle) proxy layer for ValVoice. Compiled as `valvoice-mitm.exe`, it intercepts Valorant XMPP chat traffic by:
+
+1. Launching the Riot Client with a custom config URL
 2. Intercepting the config request and redirecting chat servers to localhost
-3. Acting as a TLS proxy between Riot client and Riot servers
-4. Logging all decrypted XMPP traffic to STDOUT
+3. Acting as a TLS proxy between Riot Client and Riot XMPP servers
+4. Outputting decrypted XMPP traffic as JSON to stdout
 
 ## Architecture
 
@@ -21,8 +22,8 @@ Real Riot XMPP Server
 ## Build Instructions
 
 ### Prerequisites
-- Node.js 18+ installed
-- npm installed
+- Node.js 18+
+- npm
 
 ### Build Steps
 
@@ -35,19 +36,19 @@ Real Riot XMPP Server
    ```bash
    npm run build
    ```
-   This creates compiled JavaScript in `dist/` folder
+   This creates compiled JavaScript in `dist/` folder.
 
-3. **Package as executable (Optional):**
+3. **Package as executable:**
    ```bash
-   npm run package
+   npm run build:exe
    ```
-   This creates `valvoice-xmpp.exe` in `../target/` folder using `pkg`
+   This creates `valvoice-mitm.exe`.
 
 4. **Build everything:**
    ```bash
    npm run build:all
    ```
-   Compiles TypeScript AND packages the executable
+   Compiles TypeScript AND packages the executable.
 
 ## File Structure
 
@@ -67,40 +68,18 @@ mitm/
 └── tsconfig.json
 ```
 
-## Integration with Java
+## Integration with Java Backend
 
-The Java `Main.java` should:
+`ValVoiceBackend.java` manages the MITM proxy as a child process:
 
-1. **Kill Riot if running:**
-   ```java
-   Runtime.getRuntime().exec("taskkill /F /IM RiotClientServices.exe");
-   Thread.sleep(2000);
-   ```
-
-2. **Launch the MITM proxy:**
-   ```java
-   ProcessBuilder pb = new ProcessBuilder("mitm/target/valvoice-xmpp.exe");
-   // OR if using Node directly:
-   // ProcessBuilder pb = new ProcessBuilder("node", "mitm/dist/main.js");
-   Process mitmProcess = pb.start();
-   ```
-
-3. **Read STDOUT for XMPP traffic:**
-   ```java
-   BufferedReader reader = new BufferedReader(
-       new InputStreamReader(mitmProcess.getInputStream())
-   );
-   
-   String line;
-   while ((line = reader.readLine()) != null) {
-       // Parse JSON log entries
-       // Extract XML from "incoming" and "outgoing" types
-   }
-   ```
+1. Launches `valvoice-mitm.exe` via `ProcessBuilder`
+2. Reads JSON lines from stdout via `BufferedReader`
+3. Extracts raw XML from the `"data"` field
+4. Passes XML to `XmppStreamParser.java` for StAX parsing
 
 ## Output Format
 
-The MITM proxy outputs JSON to STDOUT:
+The MITM proxy outputs JSON to stdout:
 
 ```json
 {"type":"incoming","time":1234567890,"data":"<message>...</message>"}
@@ -113,33 +92,27 @@ The MITM proxy outputs JSON to STDOUT:
 ```
 
 Key types:
-- `incoming` - Traffic from Riot server → Riot client (XMPP stanzas)
-- `outgoing` - Traffic from Riot client → Riot server (XMPP stanzas)
-- `error` - Errors (e.g., Riot already running, Valorant not installed)
+- `incoming` — Traffic from Riot server → Riot Client (XMPP stanzas)
+- `outgoing` — Traffic from Riot Client → Riot server (XMPP stanzas)
+- `error` — Errors (e.g., Riot already running, Valorant not installed)
 
-## Critical Configuration
+## Configuration
 
 ### Ports (hardcoded in main.ts)
 - **HTTP Config Server:** `35479`
 - **XMPP TLS Proxy:** `35478`
 
 ### Config Rewrites (ConfigMITM.ts)
-When Riot requests config, we change:
-```json
-{
-  "chat.host": "jp1.chat.si.riotgames.com",  // ← Real Riot server
-  "chat.port": 5223,
-  "chat.allow_bad_cert.enabled": false
-}
-```
-To:
-```json
-{
-  "chat.host": "127.0.0.1",                   // ← Localhost
-  "chat.port": 35478,                          // ← Our MITM port
-  "chat.allow_bad_cert.enabled": true          // ← CRITICAL for self-signed cert
-}
-```
+
+When Riot requests its config, the proxy rewrites chat server details:
+
+| Field | Original | Rewritten |
+|-------|----------|-----------|
+| `chat.host` | `jp1.chat.si.riotgames.com` | `127.0.0.1` |
+| `chat.port` | `5223` | `35478` |
+| `chat.allow_bad_cert.enabled` | `false` | `true` |
+
+This forces the Riot Client to connect to the local TLS proxy instead of the real server.
 
 ## Troubleshooting
 
@@ -149,11 +122,10 @@ To:
 - Check if ports 35478 and 35479 are available
 
 ### No XMPP traffic logged
-- Verify Riot client was launched by the MITM (not manually)
+- Verify Riot Client was launched by ValVoice (not manually)
 - Check if config was properly intercepted
-- Look for error messages in STDOUT
+- Look for error messages in stdout
 
 ### "Riot client is running" error
-- The MITM must launch Riot itself
-- Close Riot before starting the MITM
-- Java should kill Riot before launching MITM
+- ValVoice must start **before** Riot Client
+- Close Riot before starting ValVoice

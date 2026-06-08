@@ -279,7 +279,7 @@ stateDiagram-v2
 ```
 
 - **Start:** `ProcessBuilder` launches the EXE with `redirectErrorStream(true)`, no `inheritIO()`
-- **Health poll:** TCP socket poll on `127.0.0.1:5005` every 500ms, **300s (5 min) timeout** — the 1.87 GB PyTorch model can take over 2 minutes to cold-boot on slower SSDs
+- **Health poll:** TCP socket poll on `127.0.0.1:5005` every 500ms, **300s (5 min) timeout** — the XTTS engine typically takes approximately 90–100 seconds to cold-boot
 - **Stop:** Escalation kill — `destroy()` → 500ms wait → `destroyForcibly()` → `taskkill /F /IM`
 - **Recovery from DEGRADED:** `setEngineReady()` can be called externally to transition `DEGRADED → READY` and reset restart attempts
 - **Crash restart:** Daemon watcher thread detects unexpected exit → attempts one restart (`MAX_RESTART_ATTEMPTS=1`)
@@ -576,3 +576,15 @@ Success → READY | Failure → permanent DEGRADED
 | [InbuiltVoiceSynthesizer.java](file:///c:/Users/HP/IdeaProjects/ValVoice/src/main/java/com/someone/valvoicebackend/InbuiltVoiceSynthesizer.java) | `valvoicebackend` | SAPI fallback + queue |
 | [SystemAudioRouter.java](file:///c:/Users/HP/IdeaProjects/ValVoice/src/main/java/com/someone/valvoicebackend/SystemAudioRouter.java) | `valvoicebackend` | Audio routing bootstrap |
 | [ConfigManager.java](file:///c:/Users/HP/IdeaProjects/ValVoice/src/main/java/com/someone/valvoicebackend/config/ConfigManager.java) | `config` | Persistent JSON config |
+
+---
+
+## 9. Runtime Validation Pending
+
+The following items require live runtime testing and have **not** been confirmed:
+
+- **VB-Cable meter confirmation** — Visual verification that audio flows through the virtual cable device.
+- **Valorant loopback confirmation** — Verification that Valorant receives audio from VB-Cable Output.
+- **End-to-end teammate confirmation** — Verification that a teammate hears the TTS output in voice chat.
+
+These items should not be treated as completed facts until runtime testing is performed.

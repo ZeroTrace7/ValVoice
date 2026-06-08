@@ -12,7 +12,7 @@ voice chat so your teammates can hear callouts instantly.
   INSTALLATION
 ═══════════════════════════════════════════════════════════════
 
-Step 1 — Install Java 17+
+Step 1 — Install Java 23+
   Download from: https://adoptium.net/
   Verify: Open a terminal and run "java -version"
 
@@ -106,9 +106,9 @@ Step 4 — Verify Contents
   • Smart Mute
     Automatically mutes TTS during certain game states.
 
-  • Audio Caching
-    Previously generated speech is cached locally for
-    instant playback. Cache limit: 100MB.
+  • XTTS Engine
+    The local XTTS engine takes approximately 90–100
+    seconds to start on first launch. This is normal.
 
 
 ═══════════════════════════════════════════════════════════════
@@ -116,7 +116,7 @@ Step 4 — Verify Contents
 ═══════════════════════════════════════════════════════════════
 
   Problem: "Java not found" error
-  Solution: Install Java 17+ from https://adoptium.net/
+  Solution: Install Java 23+ from https://adoptium.net/
 
   Problem: No sound in Valorant voice chat
   Solution: Set Valorant microphone to "CABLE Output"
@@ -148,8 +148,9 @@ Step 4 — Verify Contents
 ═══════════════════════════════════════════════════════════════
 
   • Windows 10 or later (64-bit)
-  • Java 17 or later
+  • Java 23 or later
   • VB-Audio Virtual Cable
+  • SoundVolumeView (bundled with release)
   • Valorant + Riot Client installed
 
 

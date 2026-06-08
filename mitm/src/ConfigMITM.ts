@@ -44,6 +44,7 @@ export class ConfigMITM {
             const proxiedHeaders = new Headers(req.headers as HeadersInit)
             proxiedHeaders.delete('host')
 
+
             try {
                 const response = await fetch(`https://clientconfig.rpg.riotgames.com${req.url}`, {
                     method: req.method,
@@ -51,10 +52,12 @@ export class ConfigMITM {
                 })
                 const text = await response.text()
 
+
                 res.writeHead(response.status)
                 if (req.url?.startsWith('/api/v1/config/player') && response.status === 200) {
                     const data = JSON.parse(text) satisfies PlayerConfigAffinities
                     if (data.hasOwnProperty('chat.affinities')) {
+
                         for (const [region, ip] of Object.entries(data['chat.affinities'])) {
                             const existingMapping = this.affinityMappings.find(mapping => mapping.riotHost === ip)
                             if (existingMapping !== undefined) {
@@ -72,6 +75,7 @@ export class ConfigMITM {
                         data['chat.port'] = this._xmppPort
                         data['chat.host'] = this._host
                         data['chat.allow_bad_cert.enabled'] = true
+
                     }
                     res.write(JSON.stringify(data))
                 } else {
@@ -87,6 +91,7 @@ export class ConfigMITM {
                     code: 500,
                     reason: `Fetch error: ${err.message || err}`
                 }) + '\n')
+
 
                 // Send error response to client
                 try {

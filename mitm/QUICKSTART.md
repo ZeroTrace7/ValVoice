@@ -1,19 +1,14 @@
-# 🚀 QUICK START GUIDE - Integrating MITM into ValVoice
+# 🚀 MITM Proxy — Quick Start Guide
 
-## ✅ What You Have Now
+## ✅ Overview
 
-This `valvoice-mitm/` folder contains everything you need to replace the old Direct XMPP approach with MITM.
+The `mitm/` directory contains the XMPP Man-in-the-Middle proxy that intercepts Valorant's chat traffic. This proxy is the first stage of the ValVoice pipeline.
 
-## 📂 Where to Put This Folder
-
-**Copy this entire `valvoice-mitm/` folder into your ValVoice project:**
+## 📂 Directory Structure
 
 ```
-ValVoice/                          (your existing project)
-├── src/main/java/...              (existing Java code)
-├── pom.xml                        (existing)
-├── target/                        (existing)
-├── mitm/                          ← PASTE THE valvoice-mitm FOLDER HERE (rename to just "mitm")
+ValVoice/
+├── mitm/                          ← MITM Proxy subsystem
 │   ├── src/
 │   │   ├── main.ts
 │   │   ├── ConfigMITM.ts
@@ -43,140 +38,53 @@ ValVoice/                          (your existing project)
    ```
    This creates `mitm/dist/main.js`
 
-4. **Package as Windows executable (optional but recommended):**
+4. **Package as Windows executable:**
    ```bash
-   npm run package
+   npm run build:exe
    ```
-   This creates `ValVoice/target/valvoice-xmpp.exe`
+   This creates `valvoice-mitm.exe`
 
-## ✂️ Delete Old Code from Java
+## 🔄 How It Works
 
-### Files to DELETE (if they exist):
-- ❌ `valvoice-xmpp.exe` (old direct client)
-- ❌ `xmpp-bridge/` folder (old bridge source)
+The MITM proxy outputs JSON to stdout, which `ValVoiceBackend.java` consumes via `BufferedReader`:
 
-### Code to REMOVE from `Main.java`:
-
-**REMOVE THIS:**
-```java
-// OLD: Direct XMPP client launch
-logger.info("Starting XMPP bridge (direct client approach)...");
-ProcessBuilder pb = new ProcessBuilder("valvoice-xmpp.exe");
-Process xmppProcess = pb.start();
+```json
+{"type":"incoming","time":1234567890,"data":"<message>...</message>"}
+{"type":"outgoing","time":1234567890,"data":"<iq>...</iq>"}
 ```
 
-**REPLACE WITH THIS:**
-```java
-// NEW: MITM proxy launch
-logger.info("Killing Riot if running...");
-Runtime.getRuntime().exec("taskkill /F /IM RiotClientServices.exe");
-Thread.sleep(2000);
+The Java backend extracts the raw XML from the `"data"` field and passes it to `XmppStreamParser.java` for StAX parsing.
 
-logger.info("Starting MITM proxy...");
-ProcessBuilder pb = new ProcessBuilder("target/valvoice-xmpp.exe");
-// OR for development: new ProcessBuilder("node", "mitm/dist/main.js");
-pb.redirectErrorStream(true);
-Process mitmProcess = pb.start();
-```
-
-### KEEP THIS (STDOUT reading is the same):
-```java
-// This stays exactly the same
-BufferedReader reader = new BufferedReader(
-    new InputStreamReader(mitmProcess.getInputStream())
-);
-
-String line;
-while ((line = reader.readLine()) != null) {
-    handleIncomingStanza(line); // Your existing parser
-}
-```
-
-## 🔄 Update Your STDOUT Parser
-
-The MITM outputs **JSON** instead of raw XML. Update your parser:
-
-**BEFORE (Direct Client - Raw XML):**
-```java
-String xml = reader.readLine(); // "<message>...</message>"
-Message msg = Message.fromXml(xml);
-```
-
-**AFTER (MITM - JSON with XML inside):**
-```java
-String jsonLine = reader.readLine();
-// {"type":"incoming","time":123,"data":"<message>...</message>"}
-
-if (jsonLine.contains("\"type\":\"incoming\"")) {
-    String xml = extractXmlFromJson(jsonLine);
-    Message msg = Message.fromXml(xml);
-}
-```
-
-**Helper method:**
-```java
-private static String extractXmlFromJson(String jsonLine) {
-    int dataStart = jsonLine.indexOf("\"data\":\"") + 8;
-    int dataEnd = jsonLine.lastIndexOf("\"");
-    
-    if (dataStart > 8 && dataEnd > dataStart) {
-        String data = jsonLine.substring(dataStart, dataEnd);
-        return data.replace("\\\"", "\"")
-                  .replace("\\\\", "\\")
-                  .replace("\\n", "\n");
-    }
-    return null;
-}
-```
-
-## ✅ Test It Works
+## ✅ Verification
 
 1. **Make sure Riot/Valorant is CLOSED**
-2. **Run your Java app**
+2. **Run ValVoice** (which starts the MITM automatically)
 3. **Watch for these logs:**
    ```
-   Killing Riot if running...
    Starting MITM proxy...
    MITM proxy started
    Riot client connected to MITM
    MITM connected to Riot server
    ```
-
-4. **Launch Valorant** (MITM will do this automatically)
+4. **Valorant launches automatically**
 5. **Send a chat message in-game**
-6. **Check if TTS reads it aloud** ✅
+6. **TTS reads it aloud** ✅
 
 ## 🐛 Troubleshooting
 
 ### "Riot client is running" error
 - The MITM **must** launch Riot itself
-- Make sure Java kills Riot before starting MITM
-- Check: `taskkill /F /IM RiotClientServices.exe`
+- ValVoice kills Riot before starting the MITM
+- Ensure Riot Client is closed before starting ValVoice
 
 ### No XMPP traffic
-- Check if `valvoice-xmpp.exe` exists in `target/`
-- Run `npm run package` in `mitm/` folder
+- Run `npm run build:exe` in `mitm/` folder
 - Verify certificates exist in `mitm/certs/`
 
 ### Certificate errors
-- Make sure `chat.allow_bad_cert.enabled = true` in ConfigMITM
 - Verify `certs/server.key` and `certs/server.cert` exist
+- `chat.allow_bad_cert.enabled` is set to `true` in ConfigMITM
 
 ### Port conflicts
 - Ports 35478 and 35479 must be free
 - Close any other proxies/servers using these ports
-
-## 📞 Final Checklist
-
-- [ ] `mitm/` folder copied into ValVoice project
-- [ ] `npm install` completed in `mitm/`
-- [ ] `npm run build` or `npm run package` completed
-- [ ] Old `valvoice-xmpp.exe` (direct client) deleted
-- [ ] `Main.java` updated to kill Riot and launch MITM
-- [ ] STDOUT parser updated to handle JSON format
-- [ ] Tested with Valorant closed first
-- [ ] TTS works when chat messages arrive ✅
-
----
-
-**You're now running ValVoice with MITM architecture - the same proven approach as ValorantNarrator!** 🎉
