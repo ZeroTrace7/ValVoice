@@ -373,6 +373,19 @@ public class Chat {
         if (c != null) legacyCharactersSent.addAndGet(c.length());
     }
 
+    /**
+     * OCR pipeline stats update.
+     * The existing updateMessageStats(Message) requires a Message object and cannot be used
+     * from the OCR path (which has no XMPP Message). This overload takes a plain char count
+     * and increments the same legacy counters.
+     *
+     * @param charCount Number of characters in the narrated text body
+     */
+    public void incrementMessageStats(int charCount) {
+        legacyMessagesSent.incrementAndGet();
+        if (charCount > 0) legacyCharactersSent.addAndGet(charCount);
+    }
+
 
     public boolean toggleState() { disabled = !disabled; return disabled; }
     public boolean isDisabled() { return disabled; }

@@ -65,44 +65,27 @@ public class Main {
     private static RandomAccessFile lockFileAccess;
     private static FileLock instanceLock;
 
-    /**
-     * Phase 1: Startup Guard (Cold Boot Check)
-     * Checks if Riot Client or Valorant is already running.
-     * ValVoice must start BEFORE Riot Client to intercept XMPP traffic.
-     */
-    private static boolean isRiotOrValorantRunning() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("tasklist", "/FO", "CSV", "/NH");
-            pb.redirectErrorStream(true);
-            Process proc = pb.start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    String lower = line.toLowerCase(Locale.ROOT);
-                    if (lower.contains("riotclientservices.exe") || lower.contains("valorant.exe")) {
-                        logger.warn("Detected running process: {}", line);
-                        return true;
-                    }
-                }
-            }
-            proc.waitFor();
-        } catch (Exception e) {
-            logger.error("Failed to check for Riot/Valorant processes", e);
-            // If we can't check, allow startup (best-effort)
-        }
-        return false;
-    }
+    // Phase 0A (OCR migration): isRiotOrValorantRunning() removed.
+    // OCR mode has no startup ordering requirement with Riot or Valorant.
+    // ValVoiceOCR.exe finds the Valorant window via polling after launch.
 
     /**
-     * VN-parity Process Reaper: Cold Boot Cleanup.
-     * Kills orphaned processes from previous sessions to ensure ports are free.
+     * Process Reaper: Cold Boot Cleanup.
+     * Kills orphaned ValVoice-owned processes from previous crashed sessions.
+     *
+     * Phase 0A (OCR migration):
+     *   - ValVoiceOCR.exe: killed to clean up orphaned OCR sidecar from a previous crash
+     *   - valvoice-mitm.exe: kept during transition period; remove after MITM fully retired
+     *   - RiotClientServices.exe: NEVER killed (killing Riot destroys user's active game session)
+     *   - VALORANT-Win64-Shipping.exe: NEVER killed (same reason)
+     *
      * Best-effort: failures are non-fatal (process may not exist).
      */
     private static void runProcessReaper() {
         String[] processesToKill = {
-            "valvoice-mitm.exe",
-            "RiotClientServices.exe",
-            "VALORANT-Win64-Shipping.exe"
+            "ValVoiceOCR.exe",      // Orphaned OCR sidecar from previous crash
+            "valvoice-mitm.exe"     // Transition period: remove after MITM fully retired
+            // DO NOT add RiotClientServices.exe or VALORANT-Win64-Shipping.exe here
         };
 
         logger.info("[Reaper] Running Cold Boot Process Reaper (best-effort)...");
@@ -131,15 +114,7 @@ public class Main {
             }
         }
 
-        // Wait for OS to release ports (avoid EADDRINUSE race condition)
-        logger.debug("[Reaper] Waiting 1s for port release...");
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.debug("[Reaper] Port wait interrupted");
-        }
-
+        // Phase 0A: Port-release sleep removed — OCR sidecar has no TCP network stack.
         logger.info("[Reaper] Cold Boot cleanup complete");
     }
 
@@ -348,27 +323,20 @@ public class Main {
 
         logger.info("Starting {} Application", APP_NAME);
 
-        // Phase 1: Startup Guard (Cold Boot Check)
-        // ValVoice must start BEFORE Riot Client to intercept XMPP traffic
-        if (isRiotOrValorantRunning()) {
-            logger.error("Riot Client or Valorant is already running - cannot start ValVoice");
-            showStartupError(APP_NAME + " - Cannot Start",
-                "Riot Client or Valorant is already running.\n\n" +
-                "ValVoice must be started BEFORE launching Riot Client.\n" +
-                "Please close Valorant and Riot Client, then restart ValVoice.");
-            System.exit(0);
-        }
+        // Phase 0A (OCR migration): Startup guard removed.
+        // OCR mode reads the Valorant window directly — Riot/Valorant may already be running.
+        // The OCR sidecar polls for the window handle and waits; no launch ordering is required.
+        logger.info("[Startup] OCR mode — no startup ordering requirement with Riot or Valorant.");
 
-        // VN-parity: Cold Boot Process Reaper
-        // Kill any zombie processes from previous crashed sessions
-        // Includes: valvoice-mitm.exe, RiotClientServices.exe, VALORANT-Win64-Shipping.exe
+        // Cold Boot Process Reaper: cleans up orphaned ValVoice-owned processes.
+        // Never kills RiotClientServices.exe or VALORANT-Win64-Shipping.exe.
         runProcessReaper();
 
-        // VN-parity: Shutdown Reaper Hook
-        // Safety net to kill orphaned processes on exit
+        // Shutdown Reaper Hook: safety net to kill orphaned ValVoice-owned processes on exit.
+        // Phase 0A: targets ValVoiceOCR.exe (OCR sidecar). Never kills Riot or Valorant.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             logger.info("[Reaper] Running Shutdown Reaper...");
-            String[] processesToKill = {"valvoice-mitm.exe"};
+            String[] processesToKill = {"ValVoiceOCR.exe", "valvoice-mitm.exe"};
             for (String processName : processesToKill) {
                 try {
                     ProcessBuilder pb = new ProcessBuilder("taskkill", "/F", "/IM", processName);

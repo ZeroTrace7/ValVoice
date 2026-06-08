@@ -57,6 +57,18 @@ public enum Source {
             return getDefault();
         }
 
+        // Phase 0 (OCR migration): Strip SELF from any persisted config.
+        // SELF is kept as a parseable enum value for backward compatibility, but OCR mode
+        // cannot determine who sent a message — SELF filtering is meaningless.
+        // Old configs like "SELF+PARTY+TEAM" become "PARTY+TEAM" transparently.
+        if (result.contains(SELF)) {
+            result.remove(SELF);
+            // If stripping SELF left the set empty (e.g. config was "SELF" only), apply default
+            if (result.isEmpty()) {
+                result = getDefault();
+            }
+        }
+
         return result;
     }
 
@@ -83,16 +95,15 @@ public enum Source {
 
     /**
      * Get default source configuration.
-     * ValVoice default: SELF+PARTY+TEAM (excludes ALL chat by default).
      *
-     * This ensures a clean default experience for new users:
-     * - ALL chat is excluded to reduce noise
-     * - User can enable ALL chat in settings if desired
-     * - Existing users with persisted config are NOT affected
+     * Phase 0 (OCR migration): Default changed from SELF+PARTY+TEAM to PARTY+TEAM.
+     * OCR reads all visible players — SELF has no meaning without player identity context.
+     * Existing users with persisted SELF+PARTY+TEAM config are automatically migrated
+     * to PARTY+TEAM by the fromString() SELF-stripping logic.
      *
-     * @return Default EnumSet (SELF, PARTY, TEAM enabled; ALL disabled)
+     * @return Default EnumSet (PARTY, TEAM enabled; SELF and ALL disabled)
      */
     public static EnumSet<Source> getDefault() {
-        return EnumSet.of(SELF, PARTY, TEAM);
+        return EnumSet.of(PARTY, TEAM);
     }
 }
