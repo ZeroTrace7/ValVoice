@@ -558,6 +558,14 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                         updateStatusLabel(statusXmpp, "MITM Active", true);
                     }
                 }
+                case "ocr" -> {
+                    // Temporarily using statusBridgeMode for OCR status 
+                    // because the OCR sidecar is effectively the new chat bridge, 
+                    // and this avoids redesigning the FXML.
+                    if (statusBridgeMode != null) {
+                        statusBridgeMode.setText("OCR: " + status);
+                    }
+                }
                 default -> logger.debug("Unknown status component: {}", component);
             }
         });

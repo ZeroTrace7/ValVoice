@@ -57,6 +57,7 @@ public class ValVoiceBackend {
     // MITM proxy process management
     private Process mitmProcess;
     private RiotLocalApiPoller riotLocalApiPoller;
+    private OcrChatClient ocrChatClient;
     private volatile boolean mitmFatalError = false;
     private volatile String mitmFatalReason = null;
     private final ExecutorService mitmIoPool = Executors.newCachedThreadPool(r -> {
@@ -258,6 +259,16 @@ public class ValVoiceBackend {
         });
         riotLocalApiPoller.start();
 
+        // PHASE 2.4: OCR Runtime Wiring
+        try {
+            logger.info("[ValVoiceBackend] Starting OCR Chat Client...");
+            ocrChatClient = new OcrChatClient();
+            ocrChatClient.setSelfNameSupplier(() -> ChatDataHandler.getInstance().getSelfDisplayName());
+            ocrChatClient.start();
+        } catch (Exception e) {
+            logger.error("[ValVoiceBackend] Failed to start OCR Chat Client: {}", e.getMessage());
+        }
+
         launchMitmProxy();
     }
 
@@ -278,6 +289,16 @@ public class ValVoiceBackend {
         // Stop Riot Local API poller
         if (riotLocalApiPoller != null) {
             riotLocalApiPoller.stop();
+        }
+
+        // PHASE 2.4: OCR Runtime Wiring - Safe Shutdown
+        if (ocrChatClient != null) {
+            try {
+                logger.info("[ValVoiceBackend] Stopping OCR Chat Client...");
+                ocrChatClient.stop();
+            } catch (Exception e) {
+                logger.error("[ValVoiceBackend] Failed to stop OCR Chat Client: {}", e.getMessage());
+            }
         }
 
         // VN-parity: Destroy MITM process with destroyForcibly() for reliable termination
