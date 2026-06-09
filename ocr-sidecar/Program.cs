@@ -46,6 +46,11 @@ class Program
             new System.Threading.Channels.BoundedChannelOptions(2)
             {
                 FullMode = System.Threading.Channels.BoundedChannelFullMode.DropOldest
+            },
+            droppedItem =>
+            {
+                Telemetry.RecordQueueDrop();
+                droppedItem.Dispose();
             });
 
         _ = Task.Run(async () =>
