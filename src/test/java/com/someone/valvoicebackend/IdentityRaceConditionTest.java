@@ -11,14 +11,18 @@ public class IdentityRaceConditionTest {
 
     @BeforeEach
     public void setup() {
-        // Reset singleton for testing (hack using reflection since there is no reset method)
+        // Reset internal state on the existing singleton (Java 23 cannot replace static final)
+        ChatDataHandler handler = ChatDataHandler.getInstance();
         try {
-            java.lang.reflect.Constructor<ChatDataHandler> constructor = ChatDataHandler.class.getDeclaredConstructor();
-            constructor.setAccessible(true);
-            ChatDataHandler newInstance = constructor.newInstance();
-            java.lang.reflect.Field instance = ChatDataHandler.class.getDeclaredField("INSTANCE");
-            instance.setAccessible(true);
-            instance.set(null, newInstance);
+            java.lang.reflect.Field selfIdField = ChatDataHandler.class.getDeclaredField("selfId");
+            selfIdField.setAccessible(true);
+            selfIdField.set(handler, null);
+
+            java.lang.reflect.Field selfDisplayNameField = ChatDataHandler.class.getDeclaredField("selfDisplayName");
+            selfDisplayNameField.setAccessible(true);
+            selfDisplayNameField.set(handler, null);
+
+            handler.clearListeners();
         } catch (Exception e) {
             e.printStackTrace();
         }

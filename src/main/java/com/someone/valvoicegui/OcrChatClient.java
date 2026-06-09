@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * OcrChatClient — manages the ValVoiceOCR.exe sidecar process.
@@ -58,6 +59,20 @@ public class OcrChatClient {
     private volatile boolean running = false;
     private volatile OcrState state = OcrState.STOPPED;
     private int crashCount = 0;
+
+    // Phase 2.2: Supplier for the local player's display name (OCR self-message ownership)
+    private volatile Supplier<String> selfNameSupplier;
+
+    /**
+     * Set the supplier that provides the local player's display name.
+     * Used for OCR self-message ownership evaluation (VN Supplier pattern).
+     *
+     * @param supplier returns current selfDisplayName, or null if not yet captured
+     */
+    public void setSelfNameSupplier(Supplier<String> supplier) {
+        this.selfNameSupplier = supplier;
+        logger.info("[OcrChatClient] Self name supplier wired");
+    }
 
     /**
      * Launch the OCR sidecar and start reading its stdout.
@@ -114,12 +129,27 @@ public class OcrChatClient {
 
             switch (type) {
                 case "chat" -> {
-                    OcrMessage msg = new OcrMessage(
-                        obj.has("channel")   ? obj.get("channel").getAsString()   : "TEAM",
-                        obj.has("name")      ? obj.get("name").getAsString()      : "Unknown",
-                        obj.has("body")      ? obj.get("body").getAsString()      : "",
-                        obj.has("timestamp") ? obj.get("timestamp").getAsLong()   : System.currentTimeMillis()
-                    );
+                    String name    = obj.has("name")      ? obj.get("name").getAsString()      : "Unknown";
+                    String body    = obj.has("body")      ? obj.get("body").getAsString()      : "";
+                    String channel = obj.has("channel")   ? obj.get("channel").getAsString()   : "TEAM";
+                    long   ts      = obj.has("timestamp") ? obj.get("timestamp").getAsLong()   : System.currentTimeMillis();
+                    String direction = obj.has("direction") ? obj.get("direction").getAsString() : null;
+
+                    // Phase 2.2: OCR self-message ownership evaluation (VN pattern)
+                    // Primary: case-insensitive display name comparison
+                    // Override: OCR "direction" field (TO = own, FROM = not own)
+                    Supplier<String> supplier = this.selfNameSupplier;
+                    String self = supplier != null ? supplier.get() : null;
+                    boolean own = self != null && self.equalsIgnoreCase(name);
+                    if ("TO".equalsIgnoreCase(direction)) {
+                        own = true;
+                    } else if ("FROM".equalsIgnoreCase(direction)) {
+                        own = false;
+                    }
+                    logger.debug("[OcrChatClient] Ownership: self='{}' sender='{}' direction='{}' own={}",
+                        self, name, direction, own);
+
+                    OcrMessage msg = new OcrMessage(channel, name, body, ts, own);
                     state = OcrState.RUNNING;
                     ChatDataHandler.getInstance().handleOcrMessage(msg);
                 }

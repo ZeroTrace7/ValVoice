@@ -573,6 +573,23 @@ public class ChatDataHandler {
         Chat chat = Chat.getInstance();
         if (chat.isDisabled()) return;
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // VOICE INJECTOR MODE: SELF-ONLY NARRATION GUARD (OCR Parity)
+        // ═══════════════════════════════════════════════════════════════════════
+        // Voice Injector Policy: Drop everything not sent by me.
+        // OcrChatClient evaluates ownership based on display name and direction.
+        if (!msg.ownMessage()) {
+            // CRITICAL: Sender is NOT the local user - DROP this message
+            // Teammates' messages are logged but NEVER narrated (Voice Injector behavior)
+            logger.info("└─ ❌ FILTERED (SELF-ONLY): OCR Sender '{}' != Self '{}' - not narrating teammate's message",
+                    msg.name(), selfDisplayName != null ? selfDisplayName : "(null)");
+            logger.debug("│ [SELF-ONLY DEBUG] OCR Full comparison match=false");
+            return;
+        }
+
+        // ✅ Sender IS the local user - proceed with channel filter
+        logger.debug("│ ✅ OCR SELF-ONLY: Sender matches local user Display Name");
+
         // Channel filter
         boolean allowed = switch (msg.channel()) {
             case "PARTY" -> chat.isPartyState();

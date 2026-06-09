@@ -48,6 +48,7 @@ public class RiotLocalApiPoller {
     private volatile boolean running = false;
     private Thread pollerThread;
     private String localPuuid = null; // Cached PUUID for deterministic matching
+    private boolean sessionKeysLogged = false; // Phase 2.2: One-time diagnostic flag
     
     // Phase 2.1: Callback for identity capture side-effects
     private java.util.function.Consumer<String> onIdentityCaptured;
@@ -211,8 +212,31 @@ public class RiotLocalApiPoller {
                 String line;
                 while ((line = reader.readLine()) != null) sb.append(line);
                 JsonObject session = JsonParser.parseString(sb.toString()).getAsJsonObject();
+
+                // Phase 2.2: One-time startup diagnostic — log actual field names
+                if (!sessionKeysLogged) {
+                    logger.info("[RiotLocalApiPoller] /chat/v1/session keySet: {}", session.keySet());
+                    sessionKeysLogged = true;
+                }
+
                 if (session.has("puuid")) {
-                    return session.get("puuid").getAsString();
+                    String puuid = session.get("puuid").getAsString();
+
+                    // Phase 2.2: Extract display name from same JSON object
+                    // VN uses s.get("name").getAsString() — we extract both "name" and
+                    // "game_name" and prefer "name" to match VN exactly.
+                    String displayName = null;
+                    if (session.has("name") && !session.get("name").isJsonNull()) {
+                        displayName = session.get("name").getAsString();
+                    }
+                    if (displayName != null && !displayName.isBlank()) {
+                        ChatDataHandler.getInstance().setSelfDisplayName(displayName);
+                        logger.info("[RiotLocalApiPoller] Self display name: '{}'", displayName);
+                    } else {
+                        logger.warn("[RiotLocalApiPoller] 'name' field missing or blank in /chat/v1/session");
+                    }
+
+                    return puuid;
                 }
             }
         } catch (Exception e) {
