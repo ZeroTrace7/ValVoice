@@ -134,6 +134,9 @@ internal class Program
             long memMB = Process.GetCurrentProcess().WorkingSet64 / 1024 / 1024;
             peakMemory = Math.Max(peakMemory, memMB);
 
+            GetWindowRect(hwnd, out RECT winRect);
+            DwmGetWindowAttribute(hwnd, 9 /*DWMWA_EXTENDED_FRAME_BOUNDS*/, out RECT dwmRect, Marshal.SizeOf<RECT>());
+
             var iterSw = Stopwatch.StartNew();
             SoftwareBitmap? fullBitmap = null;
             try
@@ -142,7 +145,7 @@ internal class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[{i:D2}/{iterations}] FAIL: {ex.Message} | Mem: {memMB}MB");
+                Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] [{i:D2}/{iterations}] FAIL: {ex.Message} | Mem: {memMB}MB");
             }
             
             iterSw.Stop();
@@ -194,7 +197,7 @@ internal class Program
             double ocrTime = iterSw.Elapsed.TotalMilliseconds;
             totalOcrTime += ocrTime;
 
-            Console.WriteLine($"[{i:D2}/{iterations}] Mem: {memMB}MB | Cap: {capTime:F0}ms | OCR: {ocrTime:F0}ms | Size: {fullBitmap.PixelWidth}x{fullBitmap.PixelHeight} | {preview}");
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] [HW:0x{hwnd:X}] WR:{winRect.Width}x{winRect.Height} DWM:{dwmRect.Width}x{dwmRect.Height} CI:{captureItem.Size.Width}x{captureItem.Size.Height} | Cap:{capTime:F0}ms OCR:{ocrTime:F0}ms Mem:{memMB}MB | {preview}");
 
             fullBitmap.Dispose();
             if (i < iterations) await Task.Delay(500);
