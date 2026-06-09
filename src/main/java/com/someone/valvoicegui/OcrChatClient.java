@@ -74,7 +74,7 @@ public class OcrChatClient {
         state = OcrState.STARTING;
 
         ocrProcess = new ProcessBuilder(exe.toString())
-                .redirectErrorStream(false)
+                .redirectErrorStream(true)
                 .start();
 
         running = true;

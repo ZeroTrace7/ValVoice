@@ -10,5 +10,6 @@
     <!-- Exclude OcrProbe files — they have their own Main -->
     <Compile Remove="Program.cs" />
     <Compile Remove="Interop.cs" />
+    <Compile Remove="FocusAudit.cs" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,7 @@
 package com.someone.valvoicebackend;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
@@ -46,6 +47,7 @@ public class RiotLocalApiPoller {
 
     private volatile boolean running = false;
     private Thread pollerThread;
+    private String localPuuid = null; // Cached PUUID for deterministic matching
 
     /**
      * Start the polling daemon thread.
@@ -105,6 +107,7 @@ public class RiotLocalApiPoller {
         String lockfilePath = LockFileHandler.findDefaultLockfile();
         if (lockfilePath == null) {
             logger.debug("[RiotLocalApiPoller] Lockfile not found — Riot not running, skipping");
+            localPuuid = null; // Invalidate cache when game exits
             return;
         }
 
@@ -125,10 +128,20 @@ public class RiotLocalApiPoller {
         String password = handler.getPassword();
         String protocol = handler.getProtocol() != null ? handler.getProtocol() : "https";
 
+        // Deterministic matching: ensure we have the local PUUID
+        if (localPuuid == null) {
+            localPuuid = fetchLocalPuuid(port, password, protocol);
+            if (localPuuid == null) {
+                logger.debug("[RiotLocalApiPoller] Failed to acquire local PUUID, skipping presence poll.");
+                return;
+            }
+            logger.debug("[RiotLocalApiPoller] Cached local PUUID: {}", localPuuid);
+        }
+
         String json = fetchPresences(port, password, protocol);
         if (json == null) return;
 
-        String sessionLoopState = extractSessionLoopState(json);
+        String sessionLoopState = extractSessionLoopState(json, localPuuid);
 
         // If sessionLoopState is null (Riot running but no active game), feed UNKNOWN
         // GameStateManager.updateFromSessionLoopState handles unknown string -> UNKNOWN
@@ -141,8 +154,56 @@ public class RiotLocalApiPoller {
     // ── HTTP fetch ─────────────────────────────────────────────────────────────
 
     /**
+     * GET /chat/v1/session to acquire the local player's PUUID deterministically.
+     */
+    private String fetchLocalPuuid(int port, String password, String protocol) {
+        try {
+            TrustManager[] trustAllCerts = new TrustManager[]{
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return null; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                }
+            };
+            SSLContext sc = SSLContext.getInstance("SSL");
+            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+
+            String authHeader = "Basic " + Base64.getEncoder().encodeToString(
+                ("riot:" + password).getBytes(StandardCharsets.UTF_8));
+
+            URL url = new URL(protocol + "://127.0.0.1:" + port + "/chat/v1/session");
+            HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+            
+            // Apply connection-scoped SSL bypass
+            conn.setSSLSocketFactory(sc.getSocketFactory());
+            conn.setHostnameVerifier((h, s) -> true);
+            
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Authorization", authHeader);
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+
+            if (conn.getResponseCode() != 200) return null;
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                JsonObject session = JsonParser.parseString(sb.toString()).getAsJsonObject();
+                if (session.has("puuid")) {
+                    return session.get("puuid").getAsString();
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("[RiotLocalApiPoller] fetchLocalPuuid failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
      * GET /chat/v4/presences with Basic auth riot:<password>.
-     * Uses a localhost-only trust-all SSL context (same pattern as RiotUtilityHandler).
+     * Uses a localhost-only trust-all SSL context.
      *
      * @return JSON response body, or null on HTTP error
      */
@@ -158,8 +219,6 @@ public class RiotLocalApiPoller {
             };
             SSLContext sc = SSLContext.getInstance("SSL");
             sc.init(null, trustAllCerts, new java.security.SecureRandom());
-            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-            HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
 
             // Basic auth: riot:<password>
             String authHeader = "Basic " + Base64.getEncoder().encodeToString(
@@ -167,6 +226,11 @@ public class RiotLocalApiPoller {
 
             URL url = new URL(protocol + "://127.0.0.1:" + port + "/chat/v4/presences");
             HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+            
+            // Apply connection-scoped SSL bypass
+            conn.setSSLSocketFactory(sc.getSocketFactory());
+            conn.setHostnameVerifier((hostname, session) -> true);
+            
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Authorization", authHeader);
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -194,30 +258,31 @@ public class RiotLocalApiPoller {
     // ── Parsing ────────────────────────────────────────────────────────────────
 
     /**
-     * Extract sessionLoopState from /chat/v4/presences JSON response.
+     * Extract sessionLoopState from /chat/v4/presences JSON response for a specific PUUID.
      *
      * Response structure:
-     *   { "presences": [ { "private": "<base64>", ... }, ... ] }
-     *
-     * The "private" Base64 value decodes to:
-     *   { "sessionLoopState": "INGAME"|"MENUS"|"PREGAME", ... }
-     *
-     * sessionLoopState is inside the Base64 blob — NOT at the top-level of the presence object.
-     * The Riot Client always returns the local player as the FIRST entry in the array.
+     *   { "presences": [ { "puuid": "...", "private": "<base64>", ... }, ... ] }
      *
      * @return sessionLoopState string ("INGAME", "MENUS", "PREGAME"), or null if unavailable
      */
-    private String extractSessionLoopState(String json) {
+    private String extractSessionLoopState(String json, String targetPuuid) {
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             JsonArray presences = root.getAsJsonArray("presences");
             if (presences == null || presences.isEmpty()) return null;
 
-            // Riot Client returns local player as first entry
-            JsonObject first = presences.get(0).getAsJsonObject();
-            if (!first.has("private")) return null;
+            JsonObject targetPresence = null;
+            for (JsonElement element : presences) {
+                JsonObject p = element.getAsJsonObject();
+                if (p.has("puuid") && p.get("puuid").getAsString().equals(targetPuuid)) {
+                    targetPresence = p;
+                    break;
+                }
+            }
 
-            String privateB64 = first.get("private").getAsString();
+            if (targetPresence == null || !targetPresence.has("private")) return null;
+
+            String privateB64 = targetPresence.get("private").getAsString();
             if (privateB64 == null || privateB64.isBlank()) return null;
 
             byte[] decoded = Base64.getDecoder().decode(privateB64);

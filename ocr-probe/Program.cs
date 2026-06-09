@@ -7,6 +7,7 @@ using Windows.Graphics.DirectX.Direct3D11;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage.Streams;
+using WinRT;
 
 namespace OcrProbe;
 
@@ -44,6 +45,16 @@ internal class Program
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder sb, int maxCount);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
     {
@@ -74,242 +85,156 @@ internal class Program
     static async Task<int> Main(string[] args)
     {
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
-        Console.WriteLine("║  OcrProbe — Phase 0C Feasibility Prototype      ║");
+        Console.WriteLine("║  OcrProbe — Phase 0C.5 Dynamic Validation       ║");
         Console.WriteLine("║  ValVoice OCR Migration Gate                    ║");
-        Console.WriteLine("╚══════════════════════════════════════════════════╝");
-        Console.WriteLine();
+        Console.WriteLine("╚══════════════════════════════════════════════════╝\n");
 
-        // Parse args
         ParseArgs(args);
 
-        // Check Windows version
         var osVer = Environment.OSVersion.Version;
-        Console.WriteLine($"[INFO] Windows version: {osVer} (build {osVer.Build})");
-        bool versionOk = osVer.Build >= 19041;
-        if (!versionOk)
+        if (osVer.Build < 19041)
         {
-            Console.WriteLine("[FAIL] Windows build < 19041. WGC requires Windows 10 2004+.");
-            PrintGateResults(false, false, false, false);
+            Console.WriteLine("[FAIL] Windows build < 19041.");
             return 1;
         }
-        Console.WriteLine("[OK]   Windows build >= 19041");
-        Console.WriteLine();
 
-        // Step 1: Find Valorant window
-        Console.WriteLine("[STEP 1] Finding Valorant window...");
         IntPtr hwnd = FindValorantWindow();
         if (hwnd == IntPtr.Zero)
         {
-            Console.WriteLine("[FAIL] Could not find Valorant window.");
-            Console.WriteLine("       Make sure Valorant is running in Windowed or Borderless Windowed mode.");
-            PrintGateResults(false, false, false, versionOk);
+            Console.WriteLine("[FAIL] Could not find VALORANTUnrealWindow. Start the game first.");
+            return 1;
+        }
+        Console.WriteLine($"[INFO] Target HWND: 0x{hwnd:X}");
+
+        IDirect3DDevice? d3dDevice = CreateD3D11Device();
+        if (d3dDevice == null) return 1;
+
+        GraphicsCaptureItem captureItem = CaptureHelper.CreateItemForWindow(hwnd);
+        var ocrEngine = OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language("en-US"));
+        if (ocrEngine == null)
+        {
+            Console.WriteLine("[FAIL] OCR engine creation failed. Is en-US language pack installed?");
             return 1;
         }
 
-        GetWindowRect(hwnd, out RECT windowRect);
-        Console.WriteLine($"[OK]   Valorant HWND = 0x{hwnd:X} ({windowRect.Width}x{windowRect.Height})");
-        Console.WriteLine();
+        int iterations = 40;
+        int successfulCaptures = 0;
+        int failedCaptures = 0;
+        int ocrSuccesses = 0;
+        int ocrFailures = 0;
+        long peakMemory = 0;
+        double totalCaptureTime = 0;
+        double totalOcrTime = 0;
 
-        // Step 2: Create WGC capture
-        Console.WriteLine("[STEP 2] Creating WGC capture via CreateForWindow(HWND)...");
-        GraphicsCaptureItem? captureItem;
-        bool captureCreated = false;
-        try
+        Console.WriteLine($"[INFO] Starting {iterations} continuous captures (Gate 0C.5)...");
+        var sw = Stopwatch.StartNew();
+
+        for (int i = 1; i <= iterations; i++)
         {
-            captureItem = CaptureHelper.CreateItemForWindow(hwnd);
-            captureCreated = true;
-            Console.WriteLine($"[OK]   GraphicsCaptureItem created. Size: {captureItem.Size.Width}x{captureItem.Size.Height}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FAIL] WGC CreateForWindow failed: {ex.Message}");
-            Console.WriteLine($"       HRESULT: 0x{ex.HResult:X8}");
-            if (ex.HResult == unchecked((int)0x80070005))
-                Console.WriteLine("       E_ACCESSDENIED — Vanguard may be blocking WGC.");
-            PrintGateResults(false, false, false, versionOk);
-            return 1;
-        }
-        Console.WriteLine();
+            long memMB = Process.GetCurrentProcess().WorkingSet64 / 1024 / 1024;
+            peakMemory = Math.Max(peakMemory, memMB);
 
-        // Step 3: Create D3D device and capture one frame
-        Console.WriteLine("[STEP 3] Setting up Direct3D11 device + frame pool...");
-        IDirect3DDevice? d3dDevice = null;
-        try
-        {
-            d3dDevice = CreateD3D11Device();
-            Console.WriteLine("[OK]   Direct3D11 device created.");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FAIL] D3D11 device creation failed: {ex.Message}");
-            PrintGateResults(captureCreated, false, false, versionOk);
-            return 1;
-        }
-
-        Console.WriteLine();
-        Console.WriteLine("[STEP 4] Capturing one frame...");
-
-        SoftwareBitmap? fullBitmap = null;
-        bool frameCaptured = false;
-
-        try
-        {
-            fullBitmap = await CaptureOneFrame(captureItem, d3dDevice, captureItem.Size);
-            if (fullBitmap != null)
-            {
-                frameCaptured = true;
-                Console.WriteLine($"[OK]   Frame captured: {fullBitmap.PixelWidth}x{fullBitmap.PixelHeight}");
-            }
-            else
-            {
-                Console.WriteLine("[FAIL] Frame capture returned null (timeout or empty).");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FAIL] Frame capture failed: {ex.Message}");
-            Console.WriteLine($"       HRESULT: 0x{ex.HResult:X8}");
-        }
-
-        if (!frameCaptured || fullBitmap == null)
-        {
-            PrintGateResults(captureCreated, false, false, versionOk);
-            return 1;
-        }
-        Console.WriteLine();
-
-        // Step 5: Save full frame PNG
-        Console.WriteLine("[STEP 5] Saving PNGs...");
-        Directory.CreateDirectory(outputDir);
-
-        string fullPath = Path.Combine(outputDir, "ocr_full.png");
-        string cropPath = Path.Combine(outputDir, "ocr_crop.png");
-
-        await SaveBitmapToPng(fullBitmap, fullPath);
-        Console.WriteLine($"[OK]   Full frame saved: {fullPath} ({new FileInfo(fullPath).Length} bytes)");
-
-        // Step 6: Crop chat region
-        int cx = (int)(fullBitmap.PixelWidth * cropX);
-        int cy = (int)(fullBitmap.PixelHeight * cropY);
-        int cw = (int)(fullBitmap.PixelWidth * cropW);
-        int ch = (int)(fullBitmap.PixelHeight * cropH);
-
-        // Clamp to frame bounds
-        cw = Math.Min(cw, fullBitmap.PixelWidth - cx);
-        ch = Math.Min(ch, fullBitmap.PixelHeight - cy);
-
-        Console.WriteLine($"[INFO] Crop region: x={cx}, y={cy}, w={cw}, h={ch} (from {cropX*100}%,{cropY*100}%,{cropW*100}%,{cropH*100}%)");
-
-        bool pngSaved = false;
-        SoftwareBitmap? croppedBitmap = null;
-
-        if (cw > 0 && ch > 0)
-        {
-            croppedBitmap = CropBitmap(fullBitmap, cx, cy, cw, ch);
-            await SaveBitmapToPng(croppedBitmap, cropPath);
-            pngSaved = new FileInfo(cropPath).Length > 0;
-            Console.WriteLine($"[OK]   Cropped region saved: {cropPath} ({new FileInfo(cropPath).Length} bytes)");
-        }
-        else
-        {
-            Console.WriteLine($"[FAIL] Crop region is empty or out of bounds.");
-        }
-        Console.WriteLine();
-
-        // Step 7: Run OCR
-        Console.WriteLine("[STEP 7] Running OCR on cropped region...");
-        bool ocrSuccess = false;
-        string ocrText = "";
-
-        if (croppedBitmap != null)
-        {
+            var iterSw = Stopwatch.StartNew();
+            SoftwareBitmap? fullBitmap = null;
             try
             {
-                var ocrEngine = OcrEngine.TryCreateFromLanguage(
-                    new Windows.Globalization.Language("en-US"));
+                fullBitmap = await CaptureOneFrame(captureItem, d3dDevice, captureItem.Size);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{i:D2}/{iterations}] FAIL: {ex.Message} | Mem: {memMB}MB");
+            }
+            
+            iterSw.Stop();
+            double capTime = iterSw.Elapsed.TotalMilliseconds;
+            totalCaptureTime += capTime;
 
-                if (ocrEngine == null)
+            if (fullBitmap == null)
+            {
+                failedCaptures++;
+                if (i < iterations) await Task.Delay(500);
+                continue;
+            }
+            successfulCaptures++;
+
+            int cx = (int)(fullBitmap.PixelWidth * cropX);
+            int cy = (int)(fullBitmap.PixelHeight * cropY);
+            int cw = (int)(fullBitmap.PixelWidth * cropW);
+            int ch = (int)(fullBitmap.PixelHeight * cropH);
+            cw = Math.Min(cw, fullBitmap.PixelWidth - cx);
+            ch = Math.Min(ch, fullBitmap.PixelHeight - cy);
+
+            iterSw.Restart();
+            string preview = "";
+            try
+            {
+                using var croppedBitmap = CropBitmap(fullBitmap, cx, cy, cw, ch);
+                using var ocrBitmap = SoftwareBitmap.Convert(croppedBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                var result = await ocrEngine.RecognizeAsync(ocrBitmap);
+                
+                if (string.IsNullOrWhiteSpace(result.Text))
                 {
-                    Console.WriteLine("[FAIL] OCR engine creation failed. Is en-US language pack installed?");
-                    Console.WriteLine("       Settings → Time & Language → Language → Add English (United States) → OCR");
+                    ocrFailures++;
+                    preview = "(empty)";
                 }
                 else
                 {
-                    // OcrEngine requires BGRA8 or Gray8
-                    var ocrBitmap = SoftwareBitmap.Convert(croppedBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-                    var result = await ocrEngine.RecognizeAsync(ocrBitmap);
-                    ocrText = result.Text;
-                    ocrSuccess = !string.IsNullOrWhiteSpace(ocrText);
-
-                    Console.WriteLine();
-                    Console.WriteLine("────────────── OCR OUTPUT ──────────────");
-                    if (ocrSuccess)
-                    {
-                        foreach (var line in result.Lines)
-                        {
-                            Console.WriteLine($"  {line.Text}");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("  (empty — no text recognized)");
-                    }
-                    Console.WriteLine("────────────────────────────────────────");
+                    ocrSuccesses++;
+                    preview = result.Text.Replace("\n", " ").Replace("\r", "");
+                    if (preview.Length > 50) preview = preview.Substring(0, 47) + "...";
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FAIL] OCR failed: {ex.Message}");
+                ocrFailures++;
+                preview = $"(ocr err: {ex.Message})";
             }
+            
+            iterSw.Stop();
+            double ocrTime = iterSw.Elapsed.TotalMilliseconds;
+            totalOcrTime += ocrTime;
+
+            Console.WriteLine($"[{i:D2}/{iterations}] Mem: {memMB}MB | Cap: {capTime:F0}ms | OCR: {ocrTime:F0}ms | Size: {fullBitmap.PixelWidth}x{fullBitmap.PixelHeight} | {preview}");
+
+            fullBitmap.Dispose();
+            if (i < iterations) await Task.Delay(500);
         }
+        sw.Stop();
 
-        Console.WriteLine();
+        Console.WriteLine("\n╔══════════════════════════════════════════════════╗");
+        Console.WriteLine("║  GATE 0C.5 SUMMARY                             ║");
+        Console.WriteLine("╠══════════════════════════════════════════════════╣");
+        Console.WriteLine($"║  Runtime Duration:    {sw.Elapsed.TotalSeconds:F1}s");
+        Console.WriteLine($"║  Peak Memory:         {peakMemory} MB");
+        Console.WriteLine($"║  Average Cap Time:    {totalCaptureTime / iterations:F1} ms");
+        Console.WriteLine($"║  Average OCR Time:    {totalOcrTime / iterations:F1} ms");
+        Console.WriteLine($"║  Capture Successes:   {successfulCaptures}/{iterations}");
+        Console.WriteLine($"║  Capture Failures:    {failedCaptures}/{iterations}");
+        Console.WriteLine($"║  OCR Successes:       {ocrSuccesses}/{iterations}");
+        Console.WriteLine($"║  OCR Failures:        {ocrFailures}/{iterations}");
+        Console.WriteLine("╚══════════════════════════════════════════════════╝");
 
-        // Step 8: Print gate results
-        PrintGateResults(captureCreated, pngSaved, ocrSuccess, versionOk);
-
-        // Cleanup
-        fullBitmap?.Dispose();
-        croppedBitmap?.Dispose();
         d3dDevice?.Dispose();
-
-        return (captureCreated && pngSaved && ocrSuccess && versionOk) ? 0 : 1;
+        return failedCaptures == 0 ? 0 : 1;
     }
-
-    // ── Window detection ─────────────────────────────────────────────────
 
     private static IntPtr FindValorantWindow()
     {
-        // ONLY use the shipping process. Never use FindWindow.
-        // Riot creates multiple tiny invisible helper/overlay windows
-        // that hijack FindWindow and return ghost HWNDs (e.g. 159x27).
         var procs = Process.GetProcessesByName("VALORANT-Win64-Shipping");
-
-        Console.WriteLine($"[INFO] Found {procs.Length} VALORANT-Win64-Shipping process(es)");
-
         foreach (var proc in procs)
         {
-            Console.WriteLine($"[INFO]   PID={proc.Id}  MainWindowHandle=0x{proc.MainWindowHandle:X}  Title=\"{proc.MainWindowTitle}\"");
-
-            if (proc.MainWindowHandle != IntPtr.Zero)
+            IntPtr hwnd = proc.MainWindowHandle;
+            if (hwnd != IntPtr.Zero && IsWindowVisible(hwnd))
             {
-                GetWindowRect(proc.MainWindowHandle, out RECT rect);
-                Console.WriteLine($"[INFO]   Window size: {rect.Width}x{rect.Height}");
-
-                // Sanity check: real game window is at least 640x480
-                if (rect.Width >= 640 && rect.Height >= 480)
+                GetWindowRect(hwnd, out RECT rect);
+                var classSb = new System.Text.StringBuilder(256);
+                GetClassName(hwnd, classSb, 256);
+                if (classSb.ToString() == "VALORANTUnrealWindow" && rect.Width > 0 && rect.Height > 0)
                 {
-                    Console.WriteLine($"[+] Found real Valorant window: PID={proc.Id} HWND=0x{proc.MainWindowHandle:X}");
-                    return proc.MainWindowHandle;
-                }
-                else
-                {
-                    Console.WriteLine($"[WARN] Skipping — too small ({rect.Width}x{rect.Height}), likely a ghost/helper window");
+                    return hwnd;
                 }
             }
         }
-
-        Console.WriteLine("[-] Valorant is not running or window is not ready.");
         return IntPtr.Zero;
     }
 
@@ -342,7 +267,7 @@ internal class Program
         if (hr != 0)
             throw new COMException($"CreateDirect3D11DeviceFromDXGIDevice failed", hr);
 
-        var device = (IDirect3DDevice)Marshal.GetObjectForIUnknown(inspectable);
+        var device = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(inspectable);
 
         // Release COM refs
         Marshal.Release(inspectable);
@@ -425,14 +350,16 @@ internal class Program
         // Use buffer access to copy pixel region
         using (var srcBuffer = bgra.LockBuffer(BitmapBufferAccessMode.Read))
         using (var dstBuffer = cropped.LockBuffer(BitmapBufferAccessMode.Write))
+        using (var srcRef = srcBuffer.CreateReference())
+        using (var dstRef = dstBuffer.CreateReference())
         {
-            var srcRef = srcBuffer.CreateReference();
-            var dstRef = dstBuffer.CreateReference();
-
             unsafe
             {
-                ((IMemoryBufferByteAccess)srcRef).GetBuffer(out byte* srcPtr, out uint srcCap);
-                ((IMemoryBufferByteAccess)dstRef).GetBuffer(out byte* dstPtr, out uint dstCap);
+                var srcAccess = srcRef.As<IMemoryBufferByteAccess>();
+                var dstAccess = dstRef.As<IMemoryBufferByteAccess>();
+
+                srcAccess.GetBuffer(out byte* srcPtr, out uint srcCap);
+                dstAccess.GetBuffer(out byte* dstPtr, out uint dstCap);
 
                 var srcDesc = srcBuffer.GetPlaneDescription(0);
                 var dstDesc = dstBuffer.GetPlaneDescription(0);
@@ -454,8 +381,15 @@ internal class Program
 
     private static async Task SaveBitmapToPng(SoftwareBitmap bitmap, string path)
     {
-        // Convert to Bgra8 for encoding
-        var bgraForSave = SoftwareBitmap.Convert(bitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        SoftwareBitmap bgraForSave = bitmap;
+        bool createdNew = false;
+
+        // Convert to Bgra8 for encoding ONLY if it is not already Bgra8 Premultiplied
+        if (bitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || bitmap.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
+        {
+            bgraForSave = SoftwareBitmap.Convert(bitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            createdNew = true;
+        }
 
         using var stream = new InMemoryRandomAccessStream();
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
@@ -471,7 +405,10 @@ internal class Program
         reader.ReadBytes(bytes);
         await fileStream.WriteAsync(bytes);
 
-        bgraForSave.Dispose();
+        if (createdNew)
+        {
+            bgraForSave.Dispose();
+        }
     }
 
     // ── CLI parsing ──────────────────────────────────────────────────────
