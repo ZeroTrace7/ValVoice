@@ -48,6 +48,17 @@ public class RiotLocalApiPoller {
     private volatile boolean running = false;
     private Thread pollerThread;
     private String localPuuid = null; // Cached PUUID for deterministic matching
+    
+    // Phase 2.1: Callback for identity capture side-effects
+    private java.util.function.Consumer<String> onIdentityCaptured;
+
+    /**
+     * Set callback to fire when PUUID is first resolved.
+     * Called by ValVoiceBackend to wire UI update + audio routing.
+     */
+    public void setOnIdentityCaptured(java.util.function.Consumer<String> callback) {
+        this.onIdentityCaptured = callback;
+    }
 
     /**
      * Start the polling daemon thread.
@@ -136,6 +147,15 @@ public class RiotLocalApiPoller {
                 return;
             }
             logger.debug("[RiotLocalApiPoller] Cached local PUUID: {}", localPuuid);
+
+            // Phase 2.1: Propagate identity to central store
+            boolean newlySet = ChatDataHandler.getInstance().setSelfId(localPuuid);
+            logger.info("[RiotLocalApiPoller] Identity propagated to ChatDataHandler: {}", localPuuid);
+
+            // Fire side-effects (UI update, audio routing) ONLY if newly set
+            if (newlySet && onIdentityCaptured != null) {
+                onIdentityCaptured.accept(localPuuid);
+            }
         }
 
         String json = fetchPresences(port, password, protocol);

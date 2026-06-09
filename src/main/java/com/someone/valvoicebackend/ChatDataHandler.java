@@ -21,6 +21,7 @@ public class ChatDataHandler {
     private static final ChatDataHandler INSTANCE = new ChatDataHandler();
 
     private volatile String selfId = null;
+    private volatile String selfDisplayName = null; // Phase 2.2: Display name for OCR self-message ownership
     private final List<Consumer<String>> selfIdListeners = new CopyOnWriteArrayList<>();
 
     // === PHASE 5: EVENT-DRIVEN UI ===
@@ -138,7 +139,7 @@ public class ChatDataHandler {
      *
      * @param id new self ID (PUUID)
      */
-    public synchronized void setSelfId(String id) {
+    public synchronized boolean setSelfId(String id) {
         String oldId = this.selfId;
         this.selfId = id;
 
@@ -149,9 +150,11 @@ public class ChatDataHandler {
             logger.info("║ This identity persists across ECONNRESET reconnects.        ║");
             logger.info("╚══════════════════════════════════════════════════════════════╝");
             notifySelfIdListeners(id);
+            return true;
         } else if (id != null && id.equals(oldId)) {
             logger.debug("[IDENTITY] setSelfId called with same PUUID - no change (reconnect safe)");
         }
+        return false;
     }
 
 

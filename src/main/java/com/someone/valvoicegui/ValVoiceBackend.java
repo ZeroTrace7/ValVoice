@@ -56,6 +56,7 @@ public class ValVoiceBackend {
 
     // MITM proxy process management
     private Process mitmProcess;
+    private RiotLocalApiPoller riotLocalApiPoller;
     private volatile boolean mitmFatalError = false;
     private volatile String mitmFatalReason = null;
     private final ExecutorService mitmIoPool = Executors.newCachedThreadPool(r -> {
@@ -249,6 +250,14 @@ public class ValVoiceBackend {
             engineState = EngineState.DEGRADED;
         }
 
+        // Phase 2.1: Start Riot Local API poller for identity + game state
+        riotLocalApiPoller = new RiotLocalApiPoller();
+        riotLocalApiPoller.setOnIdentityCaptured(puuid -> {
+            fireIdentityCaptured(puuid);
+            scheduleValorantInputDeviceInjection(puuid);
+        });
+        riotLocalApiPoller.start();
+
         launchMitmProxy();
     }
 
@@ -265,6 +274,11 @@ public class ValVoiceBackend {
         }
 
         logger.info("[ValVoiceBackend] Stopping backend services...");
+
+        // Stop Riot Local API poller
+        if (riotLocalApiPoller != null) {
+            riotLocalApiPoller.stop();
+        }
 
         // VN-parity: Destroy MITM process with destroyForcibly() for reliable termination
         if (mitmProcess != null && mitmProcess.isAlive()) {
