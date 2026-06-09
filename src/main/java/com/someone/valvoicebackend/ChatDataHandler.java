@@ -165,6 +165,39 @@ public class ChatDataHandler {
         setSelfId(id);
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 2.2: DISPLAY NAME STORAGE (OCR self-message ownership)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Set the local player's display name for OCR self-message ownership evaluation.
+     * Idempotent: logs "no change" if called with the same value.
+     *
+     * @param name display name from /chat/v1/session "name" field
+     * @return true if the display name was newly set, false if unchanged
+     */
+    public synchronized boolean setSelfDisplayName(String name) {
+        String old = this.selfDisplayName;
+        this.selfDisplayName = name;
+
+        if (name != null && !name.equals(old)) {
+            logger.info("[IDENTITY] Self display name captured: '{}'", name);
+            return true;
+        } else if (name != null && name.equals(old)) {
+            logger.debug("[IDENTITY] setSelfDisplayName called with same value - no change");
+        }
+        return false;
+    }
+
+    /**
+     * Get the local player's display name for OCR ownership comparison.
+     * @return display name, or null if not yet captured
+     */
+    public String getSelfDisplayName() {
+        return selfDisplayName;
+    }
+
+
     /**
      * PHASE 2: Extract sender PUUID from raw JID.
      *
