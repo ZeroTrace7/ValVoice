@@ -28,5 +28,8 @@ public class ValVoiceConfig {
 
     /** Whether the first-run setup wizard has been completed */
     public boolean firstRunCompleted = false;
+
+    /** Whether OCR is the primary chat source (disables MITM chat narration) */
+    public boolean ocrPrimary = true;
 }
 

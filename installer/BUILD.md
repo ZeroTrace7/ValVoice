@@ -5,6 +5,7 @@
 1. **Inno Setup 6** — Download from https://jrsoftware.org/isdl.php
 2. **Java 23+** — Required for running ValVoice
 3. **Maven** — For building the JAR
+4. **.NET 8 SDK** — For building the OCR sidecar
 
 ## Build Steps
 
@@ -21,7 +22,19 @@ npm install
 npm run build:exe
 ```
 
-### 3. Compile the Installer
+### 3. Build the OCR Sidecar
+```bash
+cd ocr-sidecar
+dotnet publish -c Release -o ../ocr
+```
+Expected output in `ocr/` directory:
+- `ValVoiceOCR.exe`
+- `ValVoiceOCR.dll`
+- `ValVoiceOCR.runtimeconfig.json`
+- `ValVoiceOCR.deps.json`
+- dependency dlls
+
+### 4. Compile the Installer
 
 Open Inno Setup and compile `installer/valvoice-installer.iss`
 
@@ -30,7 +43,7 @@ Or from command line:
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\valvoice-installer.iss
 ```
 
-### 4. Output
+### 5. Output
 
 The installer will be created at:
 ```
@@ -47,6 +60,7 @@ The installer packages these files into `%ProgramFiles%\ValVoice\`:
 | `valvoice-mitm.exe` | MITM proxy (bundled Node.js runtime) |
 | `SoundVolumeView.exe` | Audio routing utility |
 | `engine/` | XTTS voice engine (`valorantNarrator-agentVoices.exe` + agents) |
+| `ocr/` | OCR chat parser sidecar and runtime libraries |
 | `mitm/certs/` | TLS certificates for MITM proxy |
 | `run-valvoice.bat` | Silent Windows launcher |
 | `README.txt` | End-user documentation |

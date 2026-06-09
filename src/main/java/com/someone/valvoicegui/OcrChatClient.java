@@ -108,6 +108,11 @@ public class OcrChatClient {
             while (running && (line = reader.readLine()) != null) {
                 handleLine(line.trim());
             }
+            // Phase 2.5.3: OCR Restart Bug Fix (EOF detection)
+            if (running) {
+                logger.warn("[OcrChatClient] Sidecar stdout closed unexpectedly (EOF)");
+                handleSidecarDeath();
+            }
         } catch (IOException e) {
             if (running) {
                 logger.warn("[OcrChatClient] Sidecar stdout closed unexpectedly: {}", e.getMessage());

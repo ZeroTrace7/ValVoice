@@ -269,7 +269,13 @@ public class ValVoiceBackend {
             logger.error("[ValVoiceBackend] Failed to start OCR Chat Client: {}", e.getMessage());
         }
 
-        launchMitmProxy();
+        // PHASE 3.2: Conditional MITM Execution
+        com.someone.valvoicebackend.config.ValVoiceConfig config = com.someone.valvoicebackend.config.ConfigManager.get();
+        if (config != null && config.ocrPrimary) {
+            logger.info("[ValVoiceBackend] Skipping MITM launch (OCR Primary Mode)");
+        } else {
+            launchMitmProxy();
+        }
     }
 
     /**
@@ -1326,7 +1332,14 @@ public class ValVoiceBackend {
                     // (Message class still needs XML for full parsing)
                     Message msg = new Message(parsed.getRawXml());
                     logger.debug("Forwarding message: type={}, from={}", msg.getMessageType(), msg.getUserId());
-                    ChatDataHandler.getInstance().message(msg);
+                    
+                    // PHASE 2.5.3: OCR PRIMARY / MITM CHAT DISABLE
+                    com.someone.valvoicebackend.config.ValVoiceConfig config = com.someone.valvoicebackend.config.ConfigManager.get();
+                    if (config != null && config.ocrPrimary) {
+                        logger.debug("[MITM] Chat message ignored because OCR is primary source");
+                    } else {
+                        ChatDataHandler.getInstance().message(msg);
+                    }
                 } catch (Exception ex) {
                     logger.warn("Failed to create Message object: {}", ex.getMessage());
                 }

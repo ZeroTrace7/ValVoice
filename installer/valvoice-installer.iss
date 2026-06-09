@@ -42,6 +42,9 @@ Source: "..\mitm\valvoice-mitm.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Audio routing utility
 Source: "..\SoundVolumeView.exe"; DestDir: "{app}"; Flags: ignoreversion
 
+; OCR sidecar and runtime
+Source: "..\ocr\*"; DestDir: "{app}\ocr"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; Documentation
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 

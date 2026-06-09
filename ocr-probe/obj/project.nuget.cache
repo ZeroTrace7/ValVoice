@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "k6Cbc5NQ55Y=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\HP\\IdeaProjects\\ValVoice\\ocr-probe\\OcrProbe.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\HP\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.56\\microsoft.windows.sdk.net.ref.10.0.19041.56.nupkg.sha512"
+  ],
+  "logs": []
+}

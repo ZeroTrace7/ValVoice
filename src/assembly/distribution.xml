@@ -82,6 +82,17 @@
             </excludes>
         </fileSet>
 
+        <!-- ===== OCR Sidecar Directory ===== -->
+        <!-- Must be at /ocr/ to match ValVoiceBackend path: workingDir.resolve("ocr/ValVoiceOCR.exe") -->
+        <!-- Preserves ValVoiceOCR.exe, ValVoiceOCR.dll, ValVoiceOCR.runtimeconfig.json, etc. -->
+        <fileSet>
+            <directory>${project.basedir}/ocr</directory>
+            <outputDirectory>/ocr</outputDirectory>
+            <includes>
+                <include>**/*</include>
+            </includes>
+        </fileSet>
+
         <!-- ===== Launcher Script ===== -->
         <fileSet>
             <directory>${project.basedir}</directory>
