@@ -24,8 +24,8 @@
     -fx-background: #0F1923;
     -fx-background-color: #0F1923;
     -fx-accent: #FF4655;
-    -fx-focus-color: #FF4655;
-    -fx-faint-focus-color: rgba(255, 70, 85, 0.3);
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
     -fx-default-button: #FF4655;
     -fx-font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
 }

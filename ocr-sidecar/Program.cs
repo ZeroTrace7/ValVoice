@@ -101,6 +101,7 @@ class Program
             }
         };
 
+        JsonEmitter.EmitDiagnostic("window_searching");
         while (!cts.IsCancellationRequested)
         {
             IntPtr hwnd = detector.FindWindow();
@@ -120,10 +121,6 @@ class Program
                     JsonEmitter.EmitDiagnostic("window_lost");
                     captureManager.StopCapture();
                     currentHwnd = IntPtr.Zero;
-                }
-                else
-                {
-                    JsonEmitter.EmitDiagnostic("window_searching");
                 }
             }
 

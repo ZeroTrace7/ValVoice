@@ -588,12 +588,12 @@
 }
 
 .status-label {
-    -fx-font-size: 14px;
+    -fx-font-size: 12px;
     -fx-font-weight: 700;
     -fx-text-fill: #0F1923;
     -fx-background-color: #e0e7ff;
     -fx-background-radius: 0;
-    -fx-padding: 6 10 6 10;
+    -fx-padding: 6 6 6 6;
     -fx-border-radius: 0;
     -fx-border-color: rgba(0,0,0,0.15);
     -fx-border-width: 1;

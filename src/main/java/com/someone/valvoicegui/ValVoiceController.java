@@ -585,6 +585,9 @@ public class ValVoiceController implements ValVoiceBackend.ValVoiceEventListener
                     applyTooltip(statusSelfId, "Observer mode - player ID not tracked");
                 }
             }
+            if (userIDLabel != null) {
+                userIDLabel.setText(puuid != null && !puuid.isBlank() ? puuid : "Unknown");
+            }
         });
     }
 

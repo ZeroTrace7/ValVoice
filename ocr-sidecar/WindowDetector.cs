@@ -17,19 +17,26 @@ public class WindowDetector : IWindowDetector
             Interop.GetWindowThreadProcessId(hwnd, out uint pid);
             if (pid == 0) return true;
 
+            StringBuilder tempSb = new StringBuilder(256);
+            Interop.GetClassName(hwnd, tempSb, tempSb.Capacity);
+            DiagnosticLogger.Log($"[WindowDetector] Candidate: HWND=0x{hwnd:X}, PID={pid}, ClassName={tempSb}");
+
             try
             {
                 using var process = Process.GetProcessById((int)pid);
                 if (process.ProcessName != "VALORANT-Win64-Shipping") return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                DiagnosticLogger.LogError($"[WindowDetector] PID lookup failed.\nPID={pid}\nHWND=0x{hwnd:X}\nType={ex.GetType().Name}\nMessage={ex.Message}");
                 return true; 
             }
 
             StringBuilder sb = new StringBuilder(256);
             Interop.GetClassName(hwnd, sb, sb.Capacity);
             if (sb.ToString() != "VALORANTUnrealWindow") return true;
+            
+            DiagnosticLogger.Log($"[WindowDetector] Matched VALORANTUnrealWindow HWND=0x{hwnd:X}");
 
             long exStyle = Interop.GetWindowLong(hwnd, Interop.GWL_EXSTYLE);
             if ((exStyle & Interop.WS_EX_TOOLWINDOW) != 0) return true;
@@ -40,6 +47,7 @@ public class WindowDetector : IWindowDetector
             Interop.DwmGetWindowAttribute(hwnd, Interop.DWMWA_EXTENDED_FRAME_BOUNDS, out Interop.RECT rect, System.Runtime.InteropServices.Marshal.SizeOf(typeof(Interop.RECT)));
             if (rect.Width > 0 && rect.Height > 0)
             {
+                DiagnosticLogger.Log($"[WindowDetector] foundHwnd assigned: HWND=0x{hwnd:X}");
                 foundHwnd = hwnd;
                 return false; // Stop enumeration
             }

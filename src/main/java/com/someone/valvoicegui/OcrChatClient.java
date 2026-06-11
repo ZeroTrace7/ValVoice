@@ -89,7 +89,7 @@ public class OcrChatClient {
         state = OcrState.STARTING;
 
         ocrProcess = new ProcessBuilder(exe.toString())
-                .redirectErrorStream(true)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .start();
 
         running = true;

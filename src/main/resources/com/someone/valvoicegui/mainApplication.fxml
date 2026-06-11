@@ -94,7 +94,7 @@
     <AnchorPane AnchorPane.topAnchor="35.0" AnchorPane.leftAnchor="100.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0">
         <!-- ========== LOGIN PANEL ========== -->
         <AnchorPane fx:id="panelLogin" visible="true" styleClass="content-panel"
-                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="44.0">
+                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="55.0">
             <VBox alignment="CENTER" prefHeight="600.0" prefWidth="800.0" spacing="30">
                 <!-- Logo/Icon -->
                 <ImageView fitHeight="100.0" fitWidth="100.0" preserveRatio="true">
@@ -128,7 +128,7 @@
 
         <!-- ========== INFO PANEL ========== -->
         <ScrollPane fx:id="scrollInfo" fitToWidth="true" visible="false" styleClass="scroll-pane"
-                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="44.0">
+                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="55.0">
             <AnchorPane fx:id="panelInfo" prefWidth="780.0" styleClass="content-panel" visible="false">
                 <VBox spacing="25" prefWidth="780.0">
                     <padding><Insets top="0" left="0" right="0" bottom="20" /></padding>
@@ -226,7 +226,7 @@
 
         <!-- ========== USER PANEL ========== -->
         <ScrollPane fx:id="scrollUser" fitToWidth="true" visible="false" styleClass="scroll-pane"
-                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="44.0">
+                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="55.0">
             <AnchorPane fx:id="panelUser" prefWidth="780.0" styleClass="content-panel" visible="false">
                 <VBox spacing="25" prefWidth="780.0">
                     <padding><Insets top="0" left="0" right="0" bottom="20" /></padding>
@@ -328,7 +328,7 @@
 
         <!-- ========== SETTINGS PANEL ========== -->
         <ScrollPane fx:id="scrollSettings" fitToWidth="true" visible="false" styleClass="scroll-pane"
-                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="44.0">
+                    AnchorPane.topAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="55.0">
             <AnchorPane fx:id="panelSettings" prefWidth="780.0" styleClass="content-panel" visible="false">
                 <VBox spacing="25" prefWidth="780.0">
                     <padding><Insets top="0" left="0" right="0" bottom="20" /></padding>
@@ -602,7 +602,7 @@
         </ScrollPane>
 
         <!-- ========== STATUS BAR (Dependency / Runtime Status) ========== -->
-        <HBox fx:id="statusBar" id="statusBar" spacing="20" alignment="CENTER_LEFT"
+        <HBox fx:id="statusBar" id="statusBar" spacing="10" alignment="CENTER_LEFT"
               AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0" AnchorPane.bottomAnchor="0.0"
               prefHeight="50">
 
