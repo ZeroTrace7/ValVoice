@@ -19,7 +19,7 @@ public class WindowDetector : IWindowDetector
 
             StringBuilder tempSb = new StringBuilder(256);
             Interop.GetClassName(hwnd, tempSb, tempSb.Capacity);
-            DiagnosticLogger.Log($"[WindowDetector] Candidate: HWND=0x{hwnd:X}, PID={pid}, ClassName={tempSb}");
+
 
             try
             {
