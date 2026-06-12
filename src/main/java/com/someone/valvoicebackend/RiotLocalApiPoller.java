@@ -222,6 +222,17 @@ public class RiotLocalApiPoller {
                 if (session.has("puuid")) {
                     String puuid = session.get("puuid").getAsString();
 
+                    // Phase 3.4: One-time diagnostic — capture exact identity field values
+                    // TEMPORARY: Remove after confirming game_name matches OCR sender name
+                    String diagName = session.has("name") && !session.get("name").isJsonNull()
+                            ? session.get("name").getAsString() : "(missing)";
+                    String diagGameName = session.has("game_name") && !session.get("game_name").isJsonNull()
+                            ? session.get("game_name").getAsString() : "(missing)";
+                    String diagGameTag = session.has("game_tag") && !session.get("game_tag").isJsonNull()
+                            ? session.get("game_tag").getAsString() : "(missing)";
+                    logger.info("[RiotLocalApiPoller] Session fields: name='{}' game_name='{}' game_tag='{}'",
+                            diagName, diagGameName, diagGameTag);
+
                     // Phase 2.2: Extract display name from same JSON object
                     // VN uses s.get("name").getAsString() — we extract both "name" and
                     // "game_name" and prefer "name" to match VN exactly.
