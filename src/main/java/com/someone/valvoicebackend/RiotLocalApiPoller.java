@@ -222,29 +222,24 @@ public class RiotLocalApiPoller {
                 if (session.has("puuid")) {
                     String puuid = session.get("puuid").getAsString();
 
-                    // Phase 3.4: One-time diagnostic — capture exact identity field values
-                    // TEMPORARY: Remove after confirming game_name matches OCR sender name
-                    String diagName = session.has("name") && !session.get("name").isJsonNull()
-                            ? session.get("name").getAsString() : "(missing)";
-                    String diagGameName = session.has("game_name") && !session.get("game_name").isJsonNull()
-                            ? session.get("game_name").getAsString() : "(missing)";
-                    String diagGameTag = session.has("game_tag") && !session.get("game_tag").isJsonNull()
-                            ? session.get("game_tag").getAsString() : "(missing)";
-                    logger.info("[RiotLocalApiPoller] Session fields: name='{}' game_name='{}' game_tag='{}'",
-                            diagName, diagGameName, diagGameTag);
-
-                    // Phase 2.2: Extract display name from same JSON object
-                    // VN uses s.get("name").getAsString() — we extract both "name" and
-                    // "game_name" and prefer "name" to match VN exactly.
+                    // Phase 3.5: Extract display name from /chat/v1/session
+                    // Primary: "game_name" (Riot ID display name, populated post-2023 migration)
+                    // Fallback: "name" (legacy, deprecated — typically blank on modern accounts)
+                    // Runtime proof: name='' game_name='Inocent Child' game_tag='1352'
+                    //                across 6 identity captures on June 10-12, 2026.
                     String displayName = null;
-                    if (session.has("name") && !session.get("name").isJsonNull()) {
+                    if (session.has("game_name") && !session.get("game_name").isJsonNull()) {
+                        displayName = session.get("game_name").getAsString();
+                    }
+                    if ((displayName == null || displayName.isBlank())
+                            && session.has("name") && !session.get("name").isJsonNull()) {
                         displayName = session.get("name").getAsString();
                     }
                     if (displayName != null && !displayName.isBlank()) {
                         ChatDataHandler.getInstance().setSelfDisplayName(displayName);
                         logger.info("[RiotLocalApiPoller] Self display name: '{}'", displayName);
                     } else {
-                        logger.warn("[RiotLocalApiPoller] 'name' field missing or blank in /chat/v1/session");
+                        logger.warn("[RiotLocalApiPoller] Both 'game_name' and 'name' fields missing or blank in /chat/v1/session");
                     }
 
                     return puuid;
