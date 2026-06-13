@@ -40,7 +40,7 @@ public class OcrChatClient {
     private static final String OCR_EXE_RELATIVE = "ocr/ValVoiceOCR.exe";
 
     /** Maximum automatic restarts after unexpected sidecar death. */
-    private static final int MAX_RESTARTS = 1;
+    private static final int MAX_RESTARTS = 5;
 
     public enum OcrState {
         STOPPED,

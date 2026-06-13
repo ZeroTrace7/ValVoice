@@ -1,0 +1,7 @@
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.exe
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.dll
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.deps.json
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.runtimeconfig.json
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.pdb
+C:\Users\HP\IdeaProjects\ValVoice\ocr\Microsoft.Windows.SDK.NET.dll
+C:\Users\HP\IdeaProjects\ValVoice\ocr\WinRT.Runtime.dll

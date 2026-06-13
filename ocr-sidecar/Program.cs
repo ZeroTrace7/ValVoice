@@ -27,7 +27,7 @@ class Program
         DiagnosticLogger.Log("ValVoice OCR Sidecar starting...");
         Telemetry.Initialize();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(15));
+        using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (s, e) => 
         {
             DiagnosticLogger.Log("Shutdown requested.");
