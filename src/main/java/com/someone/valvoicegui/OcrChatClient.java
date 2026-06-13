@@ -59,6 +59,7 @@ public class OcrChatClient {
     private volatile boolean running = false;
     private volatile OcrState state = OcrState.STOPPED;
     private int crashCount = 0;
+    private long lastLaunchTimestamp = 0;
 
     // Phase 2.2: Supplier for the local player's display name (OCR self-message ownership)
     private volatile Supplier<String> selfNameSupplier;
@@ -93,6 +94,7 @@ public class OcrChatClient {
                 .start();
 
         running = true;
+        lastLaunchTimestamp = System.currentTimeMillis();
         ioPool.submit(this::readLoop);
         logger.info("[OcrChatClient] Sidecar launched (PID may be unavailable on older JVMs)");
     }
@@ -201,6 +203,11 @@ public class OcrChatClient {
     /**
      * Called when the sidecar process exits unexpectedly.
      * Attempts up to MAX_RESTARTS automatic restarts before marking DEGRADED.
+     *
+     * Production hardening (P0):
+     *  - Uptime-based crash-count reset: if sidecar ran >=60s, treat as fresh failure
+     *  - Exponential backoff: 2s, 4s, 8s, 16s, 32s between restart attempts
+     *  - Check-before-increment: preserves exactly MAX_RESTARTS restart attempts
      */
     private void handleSidecarDeath() {
         int exitCode = -1;
@@ -209,18 +216,43 @@ public class OcrChatClient {
         } catch (IllegalThreadStateException ignored) {
             // Process still alive — shouldn't happen here
         }
-        logger.warn("[OcrChatClient] Sidecar exited (code={}). Crash count: {}/{}", exitCode, crashCount + 1, MAX_RESTARTS);
 
-        if (crashCount < MAX_RESTARTS) {
-            crashCount++;
-            logger.info("[OcrChatClient] Restarting sidecar (attempt {}/{})...", crashCount, MAX_RESTARTS);
-            try {
-                start();
-            } catch (IOException e) {
-                logger.error("[OcrChatClient] Restart failed: {}", e.getMessage());
-                degraded();
-            }
-        } else {
+        // Uptime-based crash-count reset:
+        // If the sidecar ran for 60+ seconds before dying, it was stable.
+        // Treat this as a fresh, isolated failure — not a sequential crash.
+        long uptimeMs = System.currentTimeMillis() - lastLaunchTimestamp;
+        if (uptimeMs >= 60_000) {
+            logger.info("[OcrChatClient] Sidecar ran for {}s before crash — resetting crash counter", uptimeMs / 1000);
+            crashCount = 0;
+        }
+
+        // Guard: check BEFORE incrementing to preserve exactly MAX_RESTARTS restart attempts.
+        // With MAX_RESTARTS=5: allows restarts at crashCount 0,1,2,3,4 (5 restarts total).
+        // On the 6th crash (crashCount=5), 5 >= 5 → DEGRADED.
+        if (crashCount >= MAX_RESTARTS) {
+            logger.warn("[OcrChatClient] Sidecar exited (code={}). Restart limit reached ({}/{}) — entering DEGRADED (uptime={}ms)",
+                    exitCode, crashCount, MAX_RESTARTS, uptimeMs);
+            degraded();
+            return;
+        }
+
+        crashCount++;
+        logger.warn("[OcrChatClient] Sidecar exited (code={}). Crash count: {}/{} (uptime={}ms)",
+                exitCode, crashCount, MAX_RESTARTS, uptimeMs);
+
+        // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+        long backoffMs = 2000L * (1L << (crashCount - 1));
+        logger.info("[OcrChatClient] Restarting sidecar after {}ms backoff (attempt {}/{})...",
+                backoffMs, crashCount, MAX_RESTARTS);
+        try {
+            Thread.sleep(backoffMs);
+            start();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("[OcrChatClient] Restart interrupted during backoff");
+            degraded();
+        } catch (IOException e) {
+            logger.error("[OcrChatClient] Restart failed: {}", e.getMessage());
             degraded();
         }
     }
