@@ -1,10 +1,11 @@
 package com.someone.valvoicebackend;
 
-// DESIGN NOTE:
-// ValVoice intentionally uses a single global Push-To-Talk key.
-// Party vs Team voice routing is delegated to the Valorant client
-// based on current context (lobby vs in-game), matching
-// valorantnarrator's proven working behavior.
+// DESIGN NOTE (Phase A):
+// In VOICE_PROXY mode, PTT key selection is delegated to PttRouter,
+// which resolves the key dynamically based on GameState:
+//   MENUS / PREGAME / CUSTOM / UNKNOWN → partyPttKey
+//   INGAME                             → teamPttKey
+// In ACCESSIBILITY mode, the legacy single global key is used.
 
 import com.google.gson.Gson;
 import com.someone.valvoicebackend.config.ConfigManager;
@@ -228,8 +229,19 @@ public class VoiceGenerator {
         logger.debug("Keybind set to: {}", KeyEvent.getKeyText(keyEvent));
     }
 
+    /**
+     * Get the current keybind as a display string.
+     */
     public String getCurrentKeybind() {
         return KeyEvent.getKeyText(keyEvent);
+    }
+
+    /**
+     * Phase A: Get the current keybind as an AWT key code.
+     * Used by PttRouter as fallback for ACCESSIBILITY mode.
+     */
+    public int getCurrentKeybindCode() {
+        return keyEvent;
     }
 
     public void setPushToTalkEnabled(boolean enabled) {
@@ -394,7 +406,7 @@ public class VoiceGenerator {
                 speechStream,
                 FactoryRegistry.systemRegistry().createAudioDevice()
             );
-            player.setPlayBackListener(new CustomPlaybackListener(keyEvent));
+            player.setPlayBackListener(new CustomPlaybackListener(PttRouter.resolveKeyForCurrentState()));
             player.play();
         } catch (JavaLayerException e) {
             throw new IOException("XTTS streaming playback failed", e);
@@ -407,7 +419,7 @@ public class VoiceGenerator {
     }
 
     private void playFallbackVoice(String voice, String text, short rate) {
-        pressPtt(keyEvent);
+        pressPtt(PttRouter.resolveKeyForCurrentState());
         try {
             synthesizer.speakInbuiltVoice(voice, text, rate);
         } finally {

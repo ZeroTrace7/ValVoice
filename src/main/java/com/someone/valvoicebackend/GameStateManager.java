@@ -38,7 +38,8 @@ public class GameStateManager {
         UNKNOWN,    // Initial state or unparseable
         MENUS,      // In main menu / lobby
         PREGAME,    // Agent select
-        INGAME      // Active match (rounds in progress)
+        INGAME,     // Active match (rounds in progress)
+        CUSTOM      // Custom game (uses party PTT, not team PTT)
     }
 
     // Thread-safe state holder using AtomicReference
@@ -110,6 +111,43 @@ public class GameStateManager {
     }
 
     /**
+     * Phase A: Update state from presence payload with provisioningFlow awareness.
+     *
+     * If sessionLoopState is INGAME and provisioningFlow is "CustomGame",
+     * the state is set to CUSTOM instead of INGAME. Custom games use party
+     * voice for coordination, not team voice.
+     *
+     * @param sessionLoopState Raw value from Riot presence JSON
+     * @param provisioningFlow Provisioning flow ("Matchmaking", "CustomGame", "Invalid", etc.)
+     */
+    public void updateFromPresencePayload(String sessionLoopState, String provisioningFlow) {
+        if (sessionLoopState == null || sessionLoopState.isEmpty()) {
+            logger.debug("[GameStateManager] Ignoring null/empty sessionLoopState");
+            return;
+        }
+
+        String upper = sessionLoopState.toUpperCase();
+        GameState newState = switch (upper) {
+            case "MENUS" -> GameState.MENUS;
+            case "PREGAME" -> GameState.PREGAME;
+            case "INGAME" -> {
+                // Phase A: Custom game detection via provisioningFlow
+                if ("CustomGame".equalsIgnoreCase(provisioningFlow)) {
+                    logger.debug("[GameStateManager] INGAME + CustomGame → CUSTOM");
+                    yield GameState.CUSTOM;
+                }
+                yield GameState.INGAME;
+            }
+            default -> {
+                logger.debug("[GameStateManager] Unknown sessionLoopState '{}', treating as UNKNOWN", sessionLoopState);
+                yield GameState.UNKNOWN;
+            }
+        };
+
+        setCurrentState(newState);
+    }
+
+    /**
      * Check if clutch mode is enabled.
      */
     public boolean isClutchModeEnabled() {
@@ -168,6 +206,7 @@ public class GameStateManager {
             return true;
         }
 
+        // Phase A: CUSTOM is NOT suppressed by clutch mode (casual games)
         // Clutch mode ON but not INGAME - allow narration
         return false;
     }

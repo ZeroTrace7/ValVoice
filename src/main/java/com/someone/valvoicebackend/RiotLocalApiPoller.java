@@ -162,14 +162,18 @@ public class RiotLocalApiPoller {
         String json = fetchPresences(port, password, protocol);
         if (json == null) return;
 
-        String sessionLoopState = extractSessionLoopState(json, localPuuid);
+        // Phase A: Extract both sessionLoopState and provisioningFlow for CUSTOM detection
+        String[] presenceData = extractPresencePayload(json, localPuuid);
+        String sessionLoopState = presenceData[0];
+        String provisioningFlow = presenceData[1];
 
-        // If sessionLoopState is null (Riot running but no active game), feed UNKNOWN
-        // GameStateManager.updateFromSessionLoopState handles unknown string -> UNKNOWN
-        GameStateManager.getInstance().updateFromSessionLoopState(
-            sessionLoopState != null ? sessionLoopState : "UNKNOWN");
+        // Feed both fields into GameStateManager for CUSTOM game detection
+        GameStateManager.getInstance().updateFromPresencePayload(
+            sessionLoopState != null ? sessionLoopState : "UNKNOWN",
+            provisioningFlow);
 
-        logger.debug("[RiotLocalApiPoller] sessionLoopState={}", sessionLoopState);
+        logger.debug("[RiotLocalApiPoller] sessionLoopState={} provisioningFlow={}",
+            sessionLoopState, provisioningFlow);
     }
 
     // ── HTTP fetch ─────────────────────────────────────────────────────────────
@@ -305,21 +309,22 @@ public class RiotLocalApiPoller {
         }
     }
 
-    // ── Parsing ────────────────────────────────────────────────────────────────
-
     /**
-     * Extract sessionLoopState from /chat/v4/presences JSON response for a specific PUUID.
+     * Extract sessionLoopState and provisioningFlow from /chat/v4/presences JSON
+     * response for a specific PUUID.
+     *
+     * Phase A: Returns both fields for CUSTOM game detection.
      *
      * Response structure:
      *   { "presences": [ { "puuid": "...", "private": "<base64>", ... }, ... ] }
      *
-     * @return sessionLoopState string ("INGAME", "MENUS", "PREGAME"), or null if unavailable
+     * @return String[2]: [0]=sessionLoopState, [1]=provisioningFlow (either may be null)
      */
-    private String extractSessionLoopState(String json, String targetPuuid) {
+    private String[] extractPresencePayload(String json, String targetPuuid) {
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             JsonArray presences = root.getAsJsonArray("presences");
-            if (presences == null || presences.isEmpty()) return null;
+            if (presences == null || presences.isEmpty()) return new String[]{null, null};
 
             JsonObject targetPresence = null;
             for (JsonElement element : presences) {
@@ -330,22 +335,28 @@ public class RiotLocalApiPoller {
                 }
             }
 
-            if (targetPresence == null || !targetPresence.has("private")) return null;
+            if (targetPresence == null || !targetPresence.has("private")) return new String[]{null, null};
 
             String privateB64 = targetPresence.get("private").getAsString();
-            if (privateB64 == null || privateB64.isBlank()) return null;
+            if (privateB64 == null || privateB64.isBlank()) return new String[]{null, null};
 
             byte[] decoded = Base64.getDecoder().decode(privateB64);
             JsonObject privateJson = JsonParser.parseString(
                 new String(decoded, StandardCharsets.UTF_8)).getAsJsonObject();
 
-            return privateJson.has("sessionLoopState")
+            String sessionLoopState = privateJson.has("sessionLoopState")
                 ? privateJson.get("sessionLoopState").getAsString()
                 : null;
 
+            String provisioningFlow = privateJson.has("provisioningFlow")
+                ? privateJson.get("provisioningFlow").getAsString()
+                : null;
+
+            return new String[]{sessionLoopState, provisioningFlow};
+
         } catch (Exception e) {
-            logger.debug("[RiotLocalApiPoller] Failed to extract sessionLoopState: {}", e.getMessage());
-            return null;
+            logger.debug("[RiotLocalApiPoller] Failed to extract presence payload: {}", e.getMessage());
+            return new String[]{null, null};
         }
     }
 }

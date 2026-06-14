@@ -461,10 +461,15 @@ public class ChatDataHandler {
         // NOTE: HTML entities (&lt;, &amp;, &#39;, etc.) are already unescaped
         // by Message.java during parsing. No additional unescaping needed here.
 
-        // === PHASE 3: WHO IS SPEAKING? ===
-        // Use Roster to look up sender's display name for TTS announcement
-        // Format: "PlayerName says: message" (if name is known)
-        String ttsContent = Roster.getInstance().formatTtsMessage(senderPuuid, cleanContent);
+        // === PHASE A: BODY-ONLY NARRATION (Voice Proxy Mode) ===
+        // VOICE_PROXY: Body only — "rotate A" (user IS the voice, no name prefix needed)
+        // ACCESSIBILITY: Name + body — "PlayerName says: rotate A" (screen reader mode)
+        String ttsContent;
+        if (AppMode.resolve() == AppMode.VOICE_PROXY) {
+            ttsContent = cleanContent;
+        } else {
+            ttsContent = Roster.getInstance().formatTtsMessage(senderPuuid, cleanContent);
+        }
 
         logger.info("🔊 TTS DISPATCH: type={} content='{}'", msgType,
             ttsContent.length() > 40 ? ttsContent.substring(0, 37) + "..." : ttsContent);
@@ -622,6 +627,26 @@ public class ChatDataHandler {
         CompletableFuture.runAsync(() -> {
             try {
                 if (VoiceGenerator.isInitialized()) {
+                    // ═══════════════════════════════════════════════════════════════
+                    // PHASE B DIAGNOSTICS: TTS DISPATCH WIRETAP
+                    // Proves the complete chain:
+                    //   OcrChatClient → ChatDataHandler → VoiceGenerator
+                    // If own=false appears here, a gate bypass exists.
+                    // ═══════════════════════════════════════════════════════════════
+                    logger.info(
+                        "\n=== TTS DISPATCH ===\n" +
+                        "OWN      : {}\n" +
+                        "CHANNEL  : {}\n" +
+                        "NAME     : '{}'\n" +
+                        "BODY     : '{}'\n" +
+                        "TTS TEXT : '{}'\n" +
+                        "====================",
+                        msg.ownMessage(),
+                        msg.channel(),
+                        msg.name(),
+                        msg.body(),
+                        ttsText
+                    );
                     VoiceGenerator.getInstance().queueNarration(ttsText);
                 }
             } catch (Exception e) {

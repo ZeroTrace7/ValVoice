@@ -31,5 +31,18 @@ public class ValVoiceConfig {
 
     /** Whether OCR is the primary chat source (disables MITM chat narration) */
     public boolean ocrPrimary = true;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE A: VOICE PROXY ARCHITECTURE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Application mode: "VOICE_PROXY" or "ACCESSIBILITY" */
+    public String appMode = "VOICE_PROXY";
+
+    /** PTT key for Party voice channel (used in menus, pregame, custom games) */
+    public String partyPttKey = "V";
+
+    /** PTT key for Team voice channel (used during active matches) */
+    public String teamPttKey = "V";
 }
 

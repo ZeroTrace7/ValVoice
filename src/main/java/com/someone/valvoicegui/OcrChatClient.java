@@ -61,6 +61,9 @@ public class OcrChatClient {
     private int crashCount = 0;
     private long lastLaunchTimestamp = 0;
 
+    // Phase B Diagnostics: Sequence counter for OCR wiretap events
+    private final java.util.concurrent.atomic.AtomicLong ocrSeq = new java.util.concurrent.atomic.AtomicLong();
+
     // Phase 2.2: Supplier for the local player's display name (OCR self-message ownership)
     private volatile Supplier<String> selfNameSupplier;
 
@@ -155,6 +158,26 @@ public class OcrChatClient {
                     }
                     logger.debug("[OcrChatClient] Ownership: self='{}' sender='{}' direction='{}' own={}",
                         self, name, direction, own);
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // PHASE B DIAGNOSTICS: OCR WIRETAP
+                    // Logs every OCR chat event with sequence number for forensic
+                    // reconstruction of ownership evaluation bugs.
+                    // ═══════════════════════════════════════════════════════════════
+                    long seq = ocrSeq.incrementAndGet();
+                    logger.info(
+                        "\n=== OCR WIRETAP ===\n" +
+                        "SEQ      : {}\n" +
+                        "RAW JSON : {}\n" +
+                        "SELF REF : '{}'\n" +
+                        "CHANNEL  : '{}'\n" +
+                        "NAME     : '{}'\n" +
+                        "BODY     : '{}'\n" +
+                        "DIRECTION: '{}'\n" +
+                        "OWN      : {}\n" +
+                        "===================",
+                        seq, line, self, channel, name, body, direction, own
+                    );
 
                     OcrMessage msg = new OcrMessage(channel, name, body, ts, own);
                     state = OcrState.RUNNING;
