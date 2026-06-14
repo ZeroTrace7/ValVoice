@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 
 namespace ValVoiceOCR;
+
+public record OcrLineResult(string Text, double Y, double X);
 
 public class OcrEngineProcessor : IOcrEngineProcessor
 {
@@ -19,9 +22,9 @@ public class OcrEngineProcessor : IOcrEngineProcessor
         }
     }
 
-    public async Task<string> ProcessFrameAsync(SoftwareBitmap frame)
+    public async Task<IReadOnlyList<OcrLineResult>> ProcessFrameAsync(SoftwareBitmap frame)
     {
-        if (_ocrEngine == null) return string.Empty;
+        if (_ocrEngine == null) return Array.Empty<OcrLineResult>();
 
         SoftwareBitmap bgraFrame = frame;
         bool createdNew = false;
@@ -38,7 +41,18 @@ public class OcrEngineProcessor : IOcrEngineProcessor
             using var croppedBitmap = CropBitmap(bgraFrame, bounds.X, bounds.Y, bounds.Width, bounds.Height);
             
             var ocrResult = await _ocrEngine.RecognizeAsync(croppedBitmap);
-            return ocrResult.Text;
+            var lines = new List<OcrLineResult>();
+            foreach (var line in ocrResult.Lines)
+            {
+                double y = 0, x = 0;
+                if (line.Words.Count > 0)
+                {
+                    y = line.Words[0].BoundingRect.Y;
+                    x = line.Words[0].BoundingRect.X;
+                }
+                lines.Add(new OcrLineResult(line.Text, y, x));
+            }
+            return lines;
         }
         finally
         {

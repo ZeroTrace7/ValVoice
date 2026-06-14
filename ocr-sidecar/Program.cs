@@ -61,25 +61,39 @@ class Program
                 {
                     using (frame)
                     {
-                        string rawText = await ocrProcessor.ProcessFrameAsync(frame);
-                        bool isEmpty = string.IsNullOrWhiteSpace(rawText);
-                        
-                        var parsed = ChatParser.Parse(rawText);
-                        if (parsed != null)
+                        var ocrLines = await ocrProcessor.ProcessFrameAsync(frame);
+                        bool isEmpty = ocrLines.Count == 0;
+
+                        // Diagnostic: log all lines with coordinates
+                        for (int i = 0; i < ocrLines.Count; i++)
                         {
-                            Telemetry.RecordOcrExecution(true, isEmpty);
-                            if (filter.IsNewMessage(parsed.Value.Channel, parsed.Value.Name, parsed.Value.Body))
+                            DiagnosticLogger.Log($"Line[{i}]: Y={ocrLines[i].Y:F0} X={ocrLines[i].X:F0} TEXT={ocrLines[i].Text}");
+                        }
+
+                        foreach (var ocrLine in ocrLines)
+                        {
+                            var parsed = ChatParser.Parse(ocrLine.Text);
+                            if (parsed != null)
                             {
-                                JsonEmitter.EmitChat(parsed.Value.Channel, parsed.Value.Name, parsed.Value.Body);
+                                Telemetry.RecordOcrExecution(true, false);
+                                if (filter.IsNewMessage(parsed.Value.Channel, parsed.Value.Name, parsed.Value.Body))
+                                {
+                                    JsonEmitter.EmitChat(parsed.Value.Channel, parsed.Value.Name, parsed.Value.Body);
+                                }
+                                else
+                                {
+                                    Telemetry.RecordDuplicateSuppression();
+                                }
                             }
                             else
                             {
-                                Telemetry.RecordDuplicateSuppression();
+                                Telemetry.RecordOcrExecution(false, false);
                             }
                         }
-                        else
+
+                        if (isEmpty)
                         {
-                            Telemetry.RecordOcrExecution(false, isEmpty);
+                            Telemetry.RecordOcrExecution(false, true);
                         }
                     }
                 }

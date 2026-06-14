@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
 
@@ -6,5 +7,5 @@ namespace ValVoiceOCR;
 
 public interface IOcrEngineProcessor : IDisposable
 {
-    Task<string> ProcessFrameAsync(SoftwareBitmap frame);
+    Task<IReadOnlyList<OcrLineResult>> ProcessFrameAsync(SoftwareBitmap frame);
 }
