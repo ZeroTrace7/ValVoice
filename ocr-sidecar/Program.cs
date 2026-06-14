@@ -79,7 +79,21 @@ class Program
 
                         var parseableYValues = new List<double>();
 
-                        foreach (var ocrLine in ocrLines)
+                        var linesToProcess = ocrLines.Count > 0 
+                            ? new[] { ocrLines.OrderByDescending(l => l.Y).First() } 
+                            : Array.Empty<OcrLineResult>();
+
+                        if (ocrLines.Count > 0)
+                        {
+                            var allY = string.Join(",", ocrLines.OrderBy(l => l.Y).Select(l => $"{l.Y:F0}"));
+                            var selected = linesToProcess[0];
+                            DiagnosticLogger.Log($"FRAME={frameNumber}");
+                            DiagnosticLogger.Log($"ALL_Y=[{allY}]");
+                            DiagnosticLogger.Log($"SELECTED_Y={selected.Y:F0}");
+                            DiagnosticLogger.Log($"SELECTED_TEXT={selected.Text}");
+                        }
+
+                        foreach (var ocrLine in linesToProcess)
                         {
                             var parsed = ChatParser.Parse(ocrLine.Text);
                             if (parsed != null)

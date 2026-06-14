@@ -12,7 +12,11 @@ public class DuplicateFilter
 
     public bool IsNewMessage(string channel, string name, string body)
     {
-        string key = $"{channel}|{name}|{body}";
+        string normalizedChannel = Normalize(channel);
+        string normalizedName = Normalize(name);
+        string normalizedBody = Normalize(body);
+
+        string key = $"{normalizedChannel}|{normalizedName}|{normalizedBody}";
         DateTime now = DateTime.UtcNow;
 
         lock (_lock)
@@ -33,5 +37,16 @@ public class DuplicateFilter
             _cache[key] = now;
             return true;
         }
+    }
+
+    private string Normalize(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        
+        text = text.ToLowerInvariant();
+        text = text.Replace("'", "").Replace("’", "");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        
+        return text.Trim();
     }
 }

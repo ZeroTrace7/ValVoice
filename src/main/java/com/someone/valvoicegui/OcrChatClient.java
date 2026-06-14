@@ -150,7 +150,20 @@ public class OcrChatClient {
                     // Override: OCR "direction" field (TO = own, FROM = not own)
                     Supplier<String> supplier = this.selfNameSupplier;
                     String self = supplier != null ? supplier.get() : null;
-                    boolean own = self != null && self.equalsIgnoreCase(name);
+                    
+                    String normSelf = normalizeName(self);
+                    String normName = normalizeName(name);
+                    
+                    boolean own = false;
+                    if (!normSelf.isEmpty()) {
+                        if (normSelf.equals(normName)) {
+                            own = true;
+                        } else if (calculateLevenshteinDistance(normSelf, normName) <= 1) {
+                            own = true;
+                            logger.debug("[OcrChatClient] Ownership match via edit distance <= 1: '{}' ~ '{}'", normSelf, normName);
+                        }
+                    }
+                    
                     if ("TO".equalsIgnoreCase(direction)) {
                         own = true;
                     } else if ("FROM".equalsIgnoreCase(direction)) {
@@ -315,5 +328,27 @@ public class OcrChatClient {
      */
     public boolean isAlive() {
         return running && ocrProcess != null && ocrProcess.isAlive();
+    }
+
+    private String normalizeName(String name) {
+        if (name == null) return "";
+        return name.toLowerCase().replace("'", "").replace("\"", "").trim();
+    }
+
+    private int calculateLevenshteinDistance(String a, String b) {
+        int[] costs = new int[b.length() + 1];
+        for (int j = 0; j < costs.length; j++)
+            costs[j] = j;
+        for (int i = 1; i <= a.length(); i++) {
+            costs[0] = i;
+            int nw = i - 1;
+            for (int j = 1; j <= b.length(); j++) {
+                int cj = Math.min(1 + Math.min(costs[j], costs[j - 1]),
+                        a.charAt(i - 1) == b.charAt(j - 1) ? nw : nw + 1);
+                nw = costs[j];
+                costs[j] = cj;
+            }
+        }
+        return costs[b.length()];
     }
 }
