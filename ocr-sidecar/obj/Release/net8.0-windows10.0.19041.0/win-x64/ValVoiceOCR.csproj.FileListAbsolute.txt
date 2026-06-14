@@ -16,3 +16,8 @@ C:\Users\HP\IdeaProjects\ValVoice\ocr-sidecar\obj\Release\net8.0-windows10.0.190
 C:\Users\HP\IdeaProjects\ValVoice\ocr-sidecar\obj\Release\net8.0-windows10.0.19041.0\win-x64\ValVoiceOCR.pdb
 C:\Users\HP\IdeaProjects\ValVoice\ocr-sidecar\obj\Release\net8.0-windows10.0.19041.0\win-x64\ValVoiceOCR.genruntimeconfig.cache
 C:\Users\HP\IdeaProjects\ValVoice\ocr-sidecar\obj\Release\net8.0-windows10.0.19041.0\win-x64\ref\ValVoiceOCR.dll
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.exe
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.deps.json
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.runtimeconfig.json
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.dll
+C:\Users\HP\IdeaProjects\ValVoice\ocr\ValVoiceOCR.pdb

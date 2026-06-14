@@ -25,6 +25,7 @@ class Program
         }
 
         DiagnosticLogger.Log("ValVoice OCR Sidecar starting...");
+        DiagnosticLogger.Log("=== OCR INSTRUMENTATION BUILD ACTIVE ===");
         Telemetry.Initialize();
 
         using var cts = new CancellationTokenSource();
@@ -53,6 +54,11 @@ class Program
                 droppedItem.Dispose();
             });
 
+        // Phase B2: Y-Coordinate Freshness Audit — instrumentation only
+        int frameNumber = 0;
+        var lastSeenY = new Dictionary<string, double>();
+        var lastSeenFrame = new Dictionary<string, int>();
+
         _ = Task.Run(async () =>
         {
             await foreach (var frame in channel.Reader.ReadAllAsync(cts.Token))
@@ -61,6 +67,7 @@ class Program
                 {
                     using (frame)
                     {
+                        frameNumber++;
                         var ocrLines = await ocrProcessor.ProcessFrameAsync(frame);
                         bool isEmpty = ocrLines.Count == 0;
 
@@ -70,11 +77,33 @@ class Program
                             DiagnosticLogger.Log($"Line[{i}]: Y={ocrLines[i].Y:F0} X={ocrLines[i].X:F0} TEXT={ocrLines[i].Text}");
                         }
 
+                        var parseableYValues = new List<double>();
+
                         foreach (var ocrLine in ocrLines)
                         {
                             var parsed = ChatParser.Parse(ocrLine.Text);
                             if (parsed != null)
                             {
+                                var key = $"{parsed.Value.Channel}|{parsed.Value.Name}|{parsed.Value.Body}";
+                                DiagnosticLogger.Log($"[PARSE] FRAME={frameNumber} Y={ocrLine.Y:F0} TEXT='{ocrLine.Text}' PARSED=true KEY='{key}'");
+                                parseableYValues.Add(ocrLine.Y);
+
+                                // Freshness tracking
+                                if (lastSeenY.ContainsKey(key))
+                                {
+                                    double oldY = lastSeenY[key];
+                                    int oldFrame = lastSeenFrame[key];
+                                    double deltaY = ocrLine.Y - oldY;
+                                    int deltaFrame = frameNumber - oldFrame;
+                                    DiagnosticLogger.Log($"[FRESHNESS] FRAME={frameNumber} BODY='{parsed.Value.Body}' OLD_Y={oldY:F0} NEW_Y={ocrLine.Y:F0} DELTA_Y={deltaY:F0} DELTA_FRAME={deltaFrame} STATUS=RESEEN");
+                                }
+                                else
+                                {
+                                    DiagnosticLogger.Log($"[FRESHNESS] FRAME={frameNumber} BODY='{parsed.Value.Body}' Y={ocrLine.Y:F0} STATUS=FIRST_SEEN");
+                                }
+                                lastSeenY[key] = ocrLine.Y;
+                                lastSeenFrame[key] = frameNumber;
+
                                 Telemetry.RecordOcrExecution(true, false);
                                 if (filter.IsNewMessage(parsed.Value.Channel, parsed.Value.Name, parsed.Value.Body))
                                 {
@@ -87,13 +116,30 @@ class Program
                             }
                             else
                             {
+                                DiagnosticLogger.Log($"[PARSE] FRAME={frameNumber} Y={ocrLine.Y:F0} TEXT='{ocrLine.Text}' PARSED=false");
                                 Telemetry.RecordOcrExecution(false, false);
                             }
+                        }
+
+                        // Per-frame summary
+                        if (parseableYValues.Count > 0)
+                        {
+                            var yStr = string.Join(",", parseableYValues.Select(y => $"{y:F0}"));
+                            DiagnosticLogger.Log($"=== FRAME SUMMARY ===");
+                            DiagnosticLogger.Log($"FRAME={frameNumber}");
+                            DiagnosticLogger.Log($"PARSEABLE_LINES={parseableYValues.Count}");
+                            DiagnosticLogger.Log($"Y_VALUES=[{yStr}]");
+                            DiagnosticLogger.Log($"=====================");
                         }
 
                         if (isEmpty)
                         {
                             Telemetry.RecordOcrExecution(false, true);
+                        }
+
+                        if (frameNumber % 30 == 0)
+                        {
+                            DiagnosticLogger.Log($"[HEARTBEAT] Frame={frameNumber} Flowing. LinesThisFrame={ocrLines.Count}");
                         }
                     }
                 }

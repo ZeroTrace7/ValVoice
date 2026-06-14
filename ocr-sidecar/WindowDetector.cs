@@ -45,9 +45,13 @@ public class WindowDetector : IWindowDetector
             if (owner != IntPtr.Zero) return true;
 
             Interop.DwmGetWindowAttribute(hwnd, Interop.DWMWA_EXTENDED_FRAME_BOUNDS, out Interop.RECT rect, System.Runtime.InteropServices.Marshal.SizeOf(typeof(Interop.RECT)));
-            if (rect.Width > 0 && rect.Height > 0)
+            
+            // Log the size of the found window to diagnose tiny/phantom windows
+            DiagnosticLogger.Log($"[WindowDetector] Inspecting HWND=0x{hwnd:X} size: {rect.Width}x{rect.Height}");
+
+            if (rect.Width >= 800 && rect.Height >= 600)
             {
-                DiagnosticLogger.Log($"[WindowDetector] foundHwnd assigned: HWND=0x{hwnd:X}");
+                DiagnosticLogger.Log($"[WindowDetector] foundHwnd assigned: HWND=0x{hwnd:X} ({rect.Width}x{rect.Height})");
                 foundHwnd = hwnd;
                 return false; // Stop enumeration
             }

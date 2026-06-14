@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ValVoiceOCR")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0af2db31188a7dffccc2915f116065d9d158c5d0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ae028f1e9615f83aece48de244065f36f834d3b3")]
 [assembly: System.Reflection.AssemblyProductAttribute("ValVoiceOCR")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ValVoiceOCR")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
